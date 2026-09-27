@@ -1,0 +1,62 @@
+name: codex-device-hub
+services:
+  hub:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 1.0
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "5"
+    environment:
+      NODE_OPTIONS: --max-old-space-size=128
+      HUB_PUBLIC_ORIGIN: https://${HUB_DOMAIN:?Set HUB_DOMAIN in deploy/.env}
+      HUB_DB_PATH: /data/hub.sqlite
+      HUB_TRUST_PRIVATE_PROXY: "1"
+      PORT: "3000"
+    volumes:
+      - hub_data:/data
+    networks: [backend]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/healthz',{headers:{host:new URL(process.env.HUB_PUBLIC_ORIGIN).host}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "5"
+    environment:
+      HUB_DOMAIN: ${HUB_DOMAIN:?Set HUB_DOMAIN in deploy/.env}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [front, backend]
+    depends_on:
+      hub:
+        condition: service_healthy
+    security_opt: [no-new-privileges:true]
+networks:
+  front: {}
+  backend:
+    internal: true
+volumes:
+  hub_data: {}
+  caddy_data: {}
+  caddy_config: {}

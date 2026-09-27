@@ -1,0 +1,23 @@
+node_modules/
+.local/
+*.log
+.env
+work/
+data/
+dist/
+
+# Local acceptance evidence and machine-specific artifacts.
+docs/verification/
+mobile-uploads/
+coverage/
+.cache/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12

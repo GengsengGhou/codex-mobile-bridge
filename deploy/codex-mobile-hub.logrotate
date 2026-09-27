@@ -1,0 +1,10 @@
+/var/log/codex-mobile-hub/service.log {
+    daily
+    maxsize 1M
+    rotate 5
+    compress
+    missingok
+    notifempty
+    copytruncate
+    su codexhub codexhub
+}

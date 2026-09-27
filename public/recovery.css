@@ -1,0 +1,17 @@
+.drawer-foot #recoveryButton { display: block; min-height: 44px; margin-top: 4px; }
+.recovery-panel { box-sizing: border-box; width: min(600px, calc(100vw - 24px)); max-height: 85dvh; overflow-y: auto; padding: 16px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: max(10px, calc(var(--font-size) * .7)); }
+.recovery-panel::backdrop { background: rgb(0 0 0 / 28%); }
+.recovery-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.recovery-heading h2 { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: max(14px, calc(var(--font-size) * .9)); }
+.recovery-panel button { min-width: 44px; min-height: 44px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 5px; color: var(--ink); background: var(--surface); font: inherit; cursor: pointer; }
+.recovery-heading button { flex-shrink: 0; }
+.recovery-panel button:disabled, .recovery-setting:has(input:disabled) { opacity: .65; }
+.recovery-feedback { color: var(--muted); overflow-wrap: anywhere; }
+.recovery-status { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 8px 12px; }
+.recovery-status dt { color: var(--muted); }
+.recovery-status dd { margin: 0; }
+.recovery-status dt, .recovery-status dd { min-width: 0; overflow-wrap: anywhere; }
+.recovery-setting { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); cursor: pointer; }
+.recovery-setting input { flex: 0 0 22px; width: 22px; height: 22px; margin: 2px 0; accent-color: var(--ink); }
+.recovery-copy { display: grid; min-width: 0; gap: 6px; overflow-wrap: anywhere; }
+.recovery-copy span { color: var(--muted); }

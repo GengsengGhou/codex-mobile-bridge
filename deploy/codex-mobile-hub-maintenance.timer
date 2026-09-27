@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Codex mobile hub backup and log maintenance
+
+[Timer]
+OnCalendar=daily
+OnBootSec=5min
+OnUnitActiveSec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

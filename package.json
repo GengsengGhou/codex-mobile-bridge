@@ -1,0 +1,31 @@
+{
+  "name": "codex-mobile-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local experimental mobile reader for existing Codex desktop tasks",
+  "engines": {
+    "node": ">=22.16"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "start:background": "node scripts/start.mjs",
+    "remote:install": "node scripts/install-cloudflared.mjs",
+    "test": "node --test test/*.test.mjs",
+    "probe": "node scripts/probe.mjs",
+    "hub:start": "node hub/server.mjs",
+    "hub:admin": "node hub/admin.mjs create-admin",
+    "connector:pair": "node scripts/setup-connector.mjs",
+    "connector:start": "node scripts/start-connector.mjs",
+    "connector:background": "node scripts/start-connector.mjs --background",
+    "release:package": "node deploy/package.mjs",
+    "vendor:math": "node scripts/vendor-katex.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1",
+    "katex": "0.18.9"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  }
+}

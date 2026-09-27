@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Codex · 设备</title><link rel="stylesheet" href="/hub.css"><script type="module" src="/hub.js"></script></head>
+<body><header><a class="brand" href="/">Codex</a><span id="accountName"></span><button id="logout" hidden>退出登录</button></header><main>
+<p id="feedback" role="status" aria-live="polite"></p>
+<section id="auth" hidden><h1 id="authTitle">登录</h1><form id="authForm"><label>账户名<input id="username" autocomplete="username" required minlength="3" maxlength="64" pattern="[A-Za-z0-9._-]+"></label><label>密码<input id="password" type="password" autocomplete="current-password" required maxlength="1024"></label><label id="inviteLabel" hidden>邀请码<input id="invite" autocomplete="off"></label><button id="authSubmit" type="submit">登录</button></form><button id="authMode" class="secondary">使用邀请注册</button></section>
+<section id="dashboard" hidden><div class="section-heading"><h1>我的设备</h1><button id="refreshDevices" class="secondary">刷新</button></div><div id="deviceList"></div>
+<section class="pairing"><h2>添加设备</h2><form id="pairForm"><label>设备名称<input id="deviceName" maxlength="80" placeholder="例如：办公室电脑"></label><button id="pairSubmit" type="submit">生成配对码</button></form><div id="pairResult" hidden><label>配对码<input id="pairCode" type="password" readonly autocomplete="off"></label><p id="pairExpiry"></p><div class="actions"><button id="showPair" class="secondary">显示配对码</button><button id="copyPair" class="secondary">复制配对码</button></div></div></section>
+<section id="admin" hidden><h2>邀请账户</h2><button id="createInvite">生成邀请</button><div id="inviteResult" hidden><label>邀请链接<input id="inviteLink" readonly></label><p id="inviteExpiry"></p><button id="copyInvite" class="secondary">复制邀请链接</button></div></section>
+</section></main></body></html>

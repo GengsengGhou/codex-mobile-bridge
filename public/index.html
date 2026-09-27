@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#f8f8f7">
+    <title>Codex 手机桥接</title>
+    <link rel="stylesheet" href="./style.css">
+    <link rel="stylesheet" href="./vendor/katex/katex.min.css">
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <button class="icon-button menu-button" id="menuButton" type="button" aria-label="打开任务列表" aria-expanded="false">
+          <span class="menu-glyph" aria-hidden="true"></span>
+        </button>
+        <div class="brand-block">
+          <div class="brand-line"><span class="brand-mark" aria-hidden="true">C</span><strong>Codex</strong><span class="environment-tag">实验 · 仅本机</span></div>
+        </div>
+        <div class="top-actions">
+          <div class="connection" id="connection" data-state="loading" role="status" aria-live="polite">
+            <span class="connection-dot" aria-hidden="true"></span><span id="connectionText">正在连接</span>
+          </div>
+          <button class="icon-button refresh-button" id="refreshButton" type="button" aria-label="刷新任务和消息" title="刷新">
+            <span class="refresh-glyph" aria-hidden="true">↻</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="main-layout">
+        <div class="drawer-scrim" id="drawerScrim" hidden></div>
+        <aside class="task-drawer" id="taskDrawer" aria-label="任务列表" aria-hidden="true">
+          <div class="drawer-heading"><div><span class="eyebrow">Codex</span><h2>会话</h2></div><button class="new-conversation-button" id="newThreadButton" type="button"><span aria-hidden="true">＋</span> 新建会话</button><button class="icon-button close-drawer" id="closeDrawer" type="button" aria-label="关闭任务列表">×</button></div>
+          <div class="create-capability-state" id="createCapabilityState" role="status" hidden></div>
+          <div class="drawer-tools"><span id="taskCount">任务</span><div class="drawer-actions"><button class="text-button" id="sortToggle" type="button" aria-pressed="false" title="排序项目和会话">排序</button><button class="text-button" id="resetOrder" type="button" title="跟随桌面顺序">跟随桌面</button><button class="text-button" id="refreshTasks" type="button" aria-label="刷新会话列表" title="刷新">刷新</button></div></div>
+          <label class="sr-only" for="taskSearch">搜索任务</label>
+          <div class="task-search-wrap"><span class="search-mark" aria-hidden="true"></span><input class="task-search" id="taskSearch" type="search" placeholder="搜索会话" autocomplete="off"></div>
+          <div class="order-state" id="orderState" role="status" aria-live="polite" hidden></div>
+          <div class="task-list" id="taskList" aria-live="polite"><p class="muted empty-list">正在读取任务…</p></div>
+          <div class="drawer-foot">任务状态来自最近一次快照</div>
+        </aside>
+
+        <section class="conversation" aria-label="对话">
+          <div class="conversation-header">
+            <div class="title-wrap"><h1 id="threadTitle">选择一个会话</h1><div class="conversation-subtitle" id="threadSubtitle">本机 Codex</div></div>
+            <span class="status-pill" id="threadStatus" hidden></span>
+            <button class="files-button" id="filesButton" type="button" aria-label="文件" title="文件" disabled><span aria-hidden="true">▤</span><span class="files-label">文件</span></button>
+            <button class="font-control" id="fontControl" type="button" aria-label="调整字体大小" aria-haspopup="dialog" aria-controls="fontDialog"><span>字号</span><span class="font-size-value" id="fontSizeValue">20</span></button>
+          </div>
+          <details class="thread-details" id="threadDetails" hidden>
+            <summary>任务详情</summary>
+            <div class="detail-content"><span class="detail-label">会话 ID</span><code id="threadId">—</code><span class="detail-label">项目</span><code id="threadProject">—</code><span class="detail-label">工作目录</span><code id="threadCwd">—</code><span class="detail-label">同步</span><span>每 3 秒读取快照</span></div>
+            <section class="historical-questions" id="historicalQuestions" hidden aria-labelledby="historicalQuestionsTitle"><h2 id="historicalQuestionsTitle">历史提问</h2><div id="historicalQuestionsContent"></div></section>
+          </details>
+
+          <div class="notice" id="notice" role="status" aria-live="polite" hidden></div>
+          <div class="creation-result" id="creationResult" role="status" hidden><span id="creationResultText"></span><button class="text-button" id="enterCreatedThread" type="button">进入已创建会话</button></div>
+          <div class="thread-load-state" id="threadLoadState" role="status" aria-live="polite" hidden><span id="threadLoadText"></span><button class="text-button" id="retryThreadButton" type="button" hidden>重试</button></div>
+          <div class="control-state" id="controlState" hidden>
+            <div class="control-state-heading"><span id="controlSummary" role="status" aria-live="polite"></span><button class="text-button" id="refreshControl" type="button" title="刷新待处理交互">刷新状态</button></div>
+            <div class="pending-requests" id="pendingRequests"></div>
+          </div>
+          <button class="new-messages-button" id="newMessagesButton" type="button" hidden>有新消息 · 跳到最新</button>
+          <div class="transcript" id="transcript" aria-live="polite" aria-relevant="additions text">
+            <div class="older-row" id="olderRow" hidden><button class="older-button" id="olderButton" type="button" hidden>↑　较早的消息</button><span class="history-state" id="historyState" role="status"></span></div>
+            <div class="welcome-state" id="welcomeState"><span class="welcome-mark" aria-hidden="true">C</span><p>从任务列表中选择一个对话</p></div>
+          </div>
+          <form class="composer" id="composer">
+            <input id="attachmentPicker" type="file" multiple hidden>
+            <ul id="attachmentList" class="attachment-list"></ul>
+            <div id="attachmentError" class="attachment-error" role="status" hidden></div>
+            <label class="sr-only" for="promptInput">发送消息</label>
+            <textarea id="promptInput" rows="1" placeholder="发送消息…" maxlength="12000" disabled></textarea>
+            <span class="sr-only" id="attachmentHelp">先上传到当前会话目录，发送后供 Codex 读取</span>
+            <div class="composer-footer"><button id="attachButton" type="button" class="icon-button" aria-label="添加附件" aria-describedby="attachmentHelp" title="添加附件：先上传到当前会话目录，发送后供 Codex 读取" disabled>＋</button><button id="modelSettingsButton" type="button" class="model-settings-button" title="模型与推理强度" aria-label="模型与推理强度">沿用桌面 ▾</button><span class="composer-hint" id="composerHint" role="status" aria-live="polite">选择任务后查看发送权限</span><button class="stop-button" id="stopButton" type="button" hidden>停止</button><button class="send-button" id="sendButton" type="submit" disabled><span class="send-icon" aria-hidden="true">↑</span><span>发送</span></button></div>
+          </form>
+        </section>
+      </main>
+    </div>
+    <dialog class="files-panel" id="filesPanel" aria-labelledby="filesTitle">
+      <div class="files-heading"><button id="filesBack" type="button" aria-label="返回上一级" disabled>‹</button><div class="files-title-wrap"><h2 id="filesTitle">文件</h2><div id="filesPath" class="files-path"></div></div><button id="filesRefresh" type="button" aria-label="刷新文件列表">↻</button><button id="filesClose" type="button" aria-label="关闭文件面板">×</button></div>
+      <div id="filesContent" class="files-content">
+        <p id="filesState" class="files-state" role="status" aria-live="polite"></p>
+        <ul id="filesEntries" class="files-entries"></ul>
+        <div id="filesPreview" class="files-preview"></div>
+        <div class="files-preview-actions"><button id="filesDownload" type="button" hidden>下载文件</button></div>
+      </div>
+    </dialog>
+    <dialog id="modelSettingsDialog" class="font-dialog" aria-labelledby="modelSettingsTitle">
+      <h2 id="modelSettingsTitle">下一轮设置</h2>
+      <label class="new-thread-label" for="messageModel">模型</label><select id="messageModel" class="new-thread-control"></select>
+      <label class="new-thread-label" for="messageThinking">推理强度</label><select id="messageThinking" class="new-thread-control"></select>
+      <p id="modelSettingsState" class="model-settings-state" role="status"></p>
+      <div class="font-dialog-footer"><button id="modelSettingsDone" type="button">完成</button></div>
+    </dialog>
+    <dialog id="threadActionDialog" class="font-dialog" aria-labelledby="threadActionTitle" aria-describedby="threadActionHint">
+      <form id="threadActionForm">
+        <h2 id="threadActionTitle">管理会话</h2>
+        <p id="threadActionHint"></p>
+        <label id="threadNameLabel" for="threadNameInput">会话名称</label>
+        <input id="threadNameInput" class="thread-name-input" type="text" maxlength="200" autocomplete="off">
+        <p id="threadActionError" class="thread-action-error" role="status" hidden></p>
+        <div class="font-dialog-footer"><button id="threadActionCancel" type="button">取消</button><button id="threadActionConfirm" type="submit">确认</button></div>
+      </form>
+    </dialog>
+    <dialog id="newThreadDialog" class="font-dialog new-thread-dialog" aria-labelledby="newThreadTitle">
+      <form id="newThreadForm">
+        <div class="new-thread-heading"><h2 id="newThreadTitle">新建会话</h2><button id="newThreadClose" type="button" aria-label="关闭新建会话">×</button></div>
+        <label class="new-thread-label" for="newThreadProject">项目</label>
+        <select id="newThreadProject" class="new-thread-control" required>
+          <option value="">请选择项目或无项目</option>
+          <option value="__none__">无项目</option>
+        </select>
+        <div class="project-selection-detail" id="projectSelectionDetail" hidden></div>
+        <div class="project-load-state" id="projectLoadState" role="status" hidden><span id="projectLoadText"></span><button id="retryProjects" class="text-button" type="button">重试</button></div>
+        <label class="new-thread-label" for="newThreadName">标题 <span>可选</span></label>
+        <input id="newThreadName" class="new-thread-control" type="text" maxlength="200" autocomplete="off">
+        <label class="new-thread-label" for="newThreadPrompt">首条消息</label>
+        <textarea id="newThreadPrompt" class="new-thread-control new-thread-prompt" rows="5" maxlength="12000" required placeholder="描述要完成的任务…"></textarea>
+        <div class="model-create-fields"><div><label class="new-thread-label" for="createModel">模型</label><select id="createModel" class="new-thread-control"></select></div><div><label class="new-thread-label" for="createThinking">推理强度</label><select id="createThinking" class="new-thread-control"></select></div></div>
+        <div class="create-recovery-state" id="createRecoveryState" role="status" aria-live="polite" hidden></div>
+        <div class="create-error" id="createError" role="status" hidden></div>
+        <div class="new-thread-footer"><button id="createCancel" type="button">取消</button><button id="createRetry" type="button" hidden>重试原请求</button><button id="checkCreateReceipt" type="button" hidden>核对状态</button><button id="createSubmit" type="submit">创建会话</button><button id="enterCreatedFromDialog" type="button" hidden>进入已创建会话</button></div>
+      </form>
+    </dialog>
+    <dialog id="fontDialog" class="font-dialog" aria-labelledby="fontDialogTitle" aria-describedby="fontHelp">
+      <div class="font-dialog-heading"><h2 id="fontDialogTitle">字体大小</h2><button id="fontClose" type="button" aria-label="关闭字号设置">×</button></div>
+      <p id="fontHelp">正文、代码、表格和输入框同步调整，自动保存在本浏览器。</p>
+      <div class="font-stepper"><button id="fontDecrease" type="button" aria-label="缩小字体">A−</button><output id="fontReadout" for="fontRange" aria-live="polite">20 px</output><button id="fontIncrease" type="button" aria-label="放大字体">A＋</button></div>
+      <label class="sr-only" for="fontRange">字号，10 到 48 像素</label><input id="fontRange" type="range" min="10" max="48" step="1" value="20">
+      <div class="font-range-labels"><span>10 px</span><span>48 px</span></div>
+      <div class="font-preview"><p>手机阅读，清楚舒适。</p><code>const message = "你好";</code></div>
+      <div class="font-dialog-footer"><button id="fontReset" type="button">恢复默认 · 20 px</button><button id="fontDone" type="button">完成</button></div>
+    </dialog>
+    <noscript><p class="noscript">此页面需要启用 JavaScript 才能连接本机 Codex。</p></noscript>
+  </body>
+</html>
