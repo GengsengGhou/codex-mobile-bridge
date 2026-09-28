@@ -73,6 +73,16 @@ test('HTTP API requires session, custom header, matching Origin and Host', async
   assert.equal((await fetch(`${s.base}/api/threads`, { headers: { ...s.headers, 'Sec-Fetch-Site': 'cross-site' } })).status, 403);
   assert.equal((await fetch(`${s.base}/api/threads`, { headers: s.headers })).status, 200);
 });
+
+test('normalization preserves delegated read-only identity without exposing agent metadata', () => {
+  for (const properties of [{ parentThreadId: ID }, { agentNickname: 'worker' }, { source: { subAgent: { spawn: { parent_thread_id: ID } } } }, { source: { subagent: 'private payload' } }]) {
+    const normalized = normalizeThread({ thread: { id: ID, ...properties }, turns: [] });
+    assert.equal(normalized.thread.delegated, true);
+    assert.equal(JSON.stringify(normalized).includes('private payload'), false);
+    assert.equal(normalized.thread.source, undefined); assert.equal(normalized.thread.parentThreadId, undefined);
+  }
+  assert.equal(normalizeThread({ thread: { id: ID, source: 'vscode' }, turns: [] }).thread.delegated, undefined);
+});
 test('desktop delegation input is visible while unrelated and truncated outputs remain private', () => {
   const envelope = '<codex_delegation>\n <source_thread_id>test</source_thread_id>\n <input>你好 <input>literal</input>\n第二行</input>\n</codex_delegation>';
   const actual = normalizeThread({ thread: { id: ID }, turns: [{ id: 't', items: [

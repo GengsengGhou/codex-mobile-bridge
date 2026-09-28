@@ -59,6 +59,16 @@ test('gateway enforces exact Host and Origin and ignores spoofed forwarding iden
   assert.equal(f.requests.at(-1).headers.authorization, undefined); assert.equal(f.requests.at(-1).headers['x-forwarded-for'], undefined);
   assert.equal(f.requests.at(-1).headers.cookie, 'bridge_session=abc123');
 });
+
+test('context metadata crosses the authenticated gateway only as a read', async t => {
+  const f = await fixture(t), path = `/api/threads/${id}/context`;
+  assert.equal((await call(f.port, path)).status, 401);
+  assert.equal((await call(f.port, path, { headers: { cookie: f.session } })).status, 200);
+  assert.equal(f.requests.at(-1).path, path);
+  const count = f.requests.length;
+  assert.equal((await call(f.port, path, { method: 'POST', headers: { cookie: f.session, origin, 'x-bridge-client': 'mobile-v1' }, body: '{}' })).status, 405);
+  assert.equal(f.requests.length, count);
+});
 test('gateway renews stale backend session only for reads and never replays lost writes', async t => {
   const f = await fixture(t); const headers = { cookie: f.session, origin, 'x-bridge-client': 'mobile-v1' };
   await call(f.port, '/api/status', { headers }); f.rotate();

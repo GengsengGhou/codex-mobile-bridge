@@ -2,6 +2,8 @@ import net from 'node:net';
 import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { BridgeError } from './desktop.mjs';
 import { normalizePendingRequest, normalizeAsyncQuestions, validateResponse, asyncReply } from './pending-requests.mjs';
+import { nativePermissionSettings, permissionSelection } from './permission-settings.mjs';
+import { summarizeThreadContext, isDelegatedThread } from './thread-context.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PIPE = '\\\\.\\pipe\\codex-ipc';
@@ -107,7 +109,7 @@ class ControlPeer {
     if (!UUID.test(result.handledByClientId ?? '')) throw fail('Desktop owner unavailable');
     return result.handledByClientId;
   }
-  async snapshot(id) {
+  async snapshot(id, { allowDelegated = false } = {}) {
     const ownerClientId = await this.owner(id);
     return new Promise((resolve, reject) => {
       const finish = (error, value) => {
@@ -124,7 +126,7 @@ class ControlPeer {
         }
         if (p.change?.type !== 'snapshot') return;
         if (!Number.isSafeInteger(p.change.revision)) { finish(fail('Desktop snapshot incompatible', 'PROTOCOL_ERROR', 502)); return; }
-        try { finish(null, summarizeSnapshot(p.change.conversationState, id, ownerClientId, p.change.revision, this.tokenKey)); }
+        try { finish(null, summarizeSnapshot(p.change.conversationState, id, ownerClientId, p.change.revision, this.tokenKey, { allowDelegated })); }
         catch (error) { finish(error); }
       };
       try {
@@ -134,11 +136,10 @@ class ControlPeer {
   }
 }
 
-export function summarizeSnapshot(state, id, ownerClientId, revision, tokenKey = 'snapshot-test-key') {
+export function summarizeSnapshot(state, id, ownerClientId, revision, tokenKey = 'snapshot-test-key', { allowDelegated = false } = {}) {
   if (state?.id !== id || !Array.isArray(state.requests)) throw fail('Desktop snapshot incompatible', 'PROTOCOL_ERROR', 502);
   if (state.requests.length > 100 || new Set(state.requests.map(r => String(r.id))).size !== state.requests.length) throw fail('Desktop pending requests incompatible', 'PROTOCOL_ERROR', 502);
-  const source = state.source;
-  if (state.parentThreadId || state.agentNickname || (source && typeof source === 'object' && ('subAgent' in source || 'subagent' in source))) {
+  if (!allowDelegated && isDelegatedThread(state)) {
     throw fail('Only ordinary local conversations support control', 'UNSUPPORTED_THREAD', 409);
   }
   const entities = state.turnHistory?.kind === 'canonical' ? Object.values(state.turnHistory.history?.entitiesByKey ?? {}) : state.turns ?? [];
@@ -155,7 +156,40 @@ export function summarizeSnapshot(state, id, ownerClientId, revision, tokenKey =
   const asyncQuestions = normalizeAsyncQuestions(entities, context, tokenKey);
   pendingRequests.push(...asyncQuestions.filter(request => !request.historical));
   const historicalQuestions = asyncQuestions.filter(request => request.historical);
-  return { threadId: id, ownerClientId, revision, currentTurnId: active[0]?.turnId ?? null, latestTurnId, status: active.length ? 'inProgress' : 'idle', pendingRequests, historicalQuestions, cwd: state.cwd ?? null };
+  const threadContext = summarizeThreadContext(state, ordered, latestTurn);
+  const summary = { threadId: id, ownerClientId, revision, currentTurnId: active[0]?.turnId ?? null, latestTurnId, status: active.length ? 'inProgress' : 'idle', pendingRequests, historicalQuestions, cwd: state.cwd ?? null, permissionActive: active.length > 0 || state.threadRuntimeStatus?.type === 'active', threadContext };
+  // Preserve the native mode for an explicit model override without serializing
+  // its developer instructions into HTTP or snapshot diagnostics.
+  const collaborationMode = state.latestThreadSettings?.collaborationMode ?? state.latestCollaborationMode;
+  Object.defineProperty(summary, 'nativeSettings', { value: {
+    collaborationMode,
+    model: collaborationMode?.settings?.model ?? state.latestThreadSettings?.model ?? state.latestModel,
+    effort: collaborationMode?.settings?.reasoning_effort !== undefined ? collaborationMode.settings.reasoning_effort : state.latestThreadSettings?.effort !== undefined ? state.latestThreadSettings.effort : state.latestReasoningEffort,
+  } });
+  return summary;
+}
+
+function permissionStartRequest(fresh, id, prompt, selection) {
+  if (fresh.permissionActive) throw fail('正在运行的回合不能切换权限，请等待完成后再发送', 'PERMISSION_CHANGE_ACTIVE', 409);
+  if (!fresh.threadContext.permissions.supported) throw fail('无法确认当前会话权限，请在桌面载入后重试', 'PERMISSION_UNAVAILABLE', 503);
+  const settings = nativePermissionSettings(selection.permissionMode, fresh.threadContext.permissionRoots);
+  let collaborationMode;
+  if (selection.model) {
+    const inherited = fresh.nativeSettings.collaborationMode;
+    if (inherited != null) {
+      if (!['default', 'plan'].includes(inherited.mode) || !inherited.settings || inherited.settings.developer_instructions != null && typeof inherited.settings.developer_instructions !== 'string') throw fail('无法确认当前会话模型模式，请沿用桌面模型', 'PERMISSION_UNAVAILABLE', 503);
+      collaborationMode = { mode: inherited.mode, settings: { model: selection.model, reasoning_effort: selection.thinking ?? null, developer_instructions: inherited.settings.developer_instructions ?? null } };
+    }
+  }
+  // Explicit native collaboration modes clear the desktop effort summary.
+  // For a permission-only send, retain the mode and supply its known values.
+  const model = selection.model ?? fresh.nativeSettings.model;
+  const effort = selection.model ? selection.thinking : fresh.nativeSettings.effort;
+  return { conversationId: id, turnStart: {
+    request: { threadId: id, input: [{ type: 'text', text: prompt, text_elements: [] }], clientUserMessageId: randomUUID(), turnTrigger: 'submit', ...settings,
+      ...(model !== undefined ? { model } : {}), ...(effort !== undefined ? { effort } : {}), ...(collaborationMode ? { collaborationMode } : {}) },
+    context: { inheritThreadSettings: true, useAppServerPermissionDefault: false },
+  } };
 }
 
 export class DesktopControl {
@@ -167,6 +201,31 @@ export class DesktopControl {
     try { await peer.open(); return await operation(peer); } finally { peer.close(); }
   }
   snapshot(id) { threadId(id); return this.withPeer(peer => peer.snapshot(id)); }
+  context(id) { threadId(id); return this.withPeer(peer => peer.snapshot(id, { allowDelegated: true })); }
+  async send(id, prompt, selection, { beforeDispatch = async () => {} } = {}) {
+    threadId(id);
+    if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 12000) throw fail('消息无效', 'INVALID_REQUEST', 400);
+    const { permissionMode } = permissionSelection(selection);
+    if (!permissionMode) throw fail('缺少权限模式', 'INVALID_REQUEST', 400);
+    const preflight = await this.snapshot(id);
+    permissionStartRequest(preflight, id, prompt, selection);
+    await beforeDispatch(preflight);
+    let dispatchStarted = false;
+    try {
+      return await this.withPeer(async peer => {
+        const fresh = await peer.snapshot(id);
+        const params = permissionStartRequest(fresh, id, prompt, selection);
+        dispatchStarted = true;
+        const response = await peer.request('thread-follower-start-turn', params, CONTROL_PROTOCOL.start, { targetClientId: fresh.ownerClientId, mutation: true });
+        const turn = response.result?.result?.turn;
+        if (response.handledByClientId !== fresh.ownerClientId || typeof turn?.id !== 'string' || !turn.id || turn.id.length > 256) throw fail('Desktop send result unknown', 'DELIVERY_UNKNOWN', 409);
+        return { threadId: id, turnId: turn.id, delivered: true, permissionMode };
+      });
+    } catch (error) {
+      if (!dispatchStarted && error instanceof BridgeError) Object.defineProperty(error, 'controlNotDispatched', { value: true });
+      throw error;
+    }
+  }
   async stop(id, expectedTurnId) {
     threadId(id);
     if (typeof expectedTurnId !== 'string' || !expectedTurnId || expectedTurnId.length > 256) throw fail('An expected turn ID is required', 'INVALID_REQUEST', 400);

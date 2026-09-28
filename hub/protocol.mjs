@@ -17,7 +17,7 @@ export function allowedBridgeRequest(method, path) {
   if (method === 'POST' && p === '/api/threads') return true;
   if (method === 'GET' && new RegExp(`^/api/thread-creations/${UUID}$`).test(p)) return true;
   if (method === 'POST' && new RegExp(`^/api/archives/${UUID}/restore$`).test(p)) return true;
-  if (method === 'GET' && new RegExp(`^/api/threads/${UUID}(?:/(?:control|files|file|messages/${UUID}|uploads/${UUID}))?$`).test(p)) return true;
+  if (method === 'GET' && new RegExp(`^/api/threads/${UUID}(?:/(?:context|control|files|file|messages/${UUID}|uploads/${UUID}))?$`).test(p)) return true;
   return method === 'POST' && new RegExp(`^/api/threads/${UUID}/(?:messages|settings|control|stop|respond|uploads/${UUID})$`).test(p);
 }
 export function selectHeaders(headers, allowed) {

@@ -8,6 +8,8 @@
 
 安装源 `webview/assets/app-initial-ff48311587c5.js` 动态为工具 schema 添加模型与强度目录。原生 `main-DAwJoFgo.js` 的 `FCe` 读取启动请求 `model` / `effort` 并可继承桌面设置；`thread-follower-steer-turn` 的处理参数没有模型或强度。因此运行中补充从前端明确省略覆盖参数，并显示本轮沿用运行模型、所选设置用于下一轮。服务端遇到运行中显式覆盖返回 `MODEL_CHANGE_ACTIVE`，在持久化发送标记前拒绝，不会忽略选择或自动重发。
 
+权限覆盖需要使用另一条原生启动路径，见 [会话上下文与权限](thread-context-permissions.md)。与显式模型一起发送时，当前桌面的 `FCe` 将模型与推理强度放入 `collaborationMode.settings`，经所属实例的请求转换进入执行引擎的 `turn/start`。这种模式下 `turn.params.model` / `effort` 为 `null` 是桌面存储形态，不能据此判断模型或强度丢失；验证需要同时查看实际执行轮次的模式设置。仅覆盖权限时沿用原有 collaboration mode、模型与指令；显式模型未选择强度时使用该模型默认强度，不继承另一个模型可能不支持的旧强度。
+
 `GET /api/status` 添加 `modelOptions.send` 与 `modelOptions.create`，仍使用已有本机/公网 relay 路由。消息和创建请求支持两个可选覆盖字段；服务端校验模型与强度组合，失效选择返回 `MODEL_UNAVAILABLE`。发送与创建的持久化请求指纹均包括显式选择，重用请求 ID 改变选择返回冲突。审批与发送权限沿用原有检查。
 
 ## 2026-09-27 验收与部署

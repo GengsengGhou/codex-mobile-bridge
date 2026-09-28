@@ -17,11 +17,13 @@ function validate(value) {
         !/^[a-f0-9]{64}$/.test(entry.promptHash ?? '') || !['pending', 'unknown', 'accepted'].includes(entry.state) ||
         typeof entry.createdAt !== 'string' || !Number.isFinite(Date.parse(entry.createdAt)) || entries.has(entry.requestId)) throw unavailable();
     if (entry.state === 'accepted' && (entry.receipt?.accepted !== true || entry.receipt.threadId !== entry.threadId ||
-        entry.receipt.requestId !== entry.requestId || typeof entry.receipt.acceptedAt !== 'string' || !Number.isFinite(Date.parse(entry.receipt.acceptedAt)))) throw unavailable();
+        entry.receipt.requestId !== entry.requestId || typeof entry.receipt.acceptedAt !== 'string' || !Number.isFinite(Date.parse(entry.receipt.acceptedAt)) ||
+        entry.receipt.permissionMode !== undefined && !['request-approval', 'full-access'].includes(entry.receipt.permissionMode))) throw unavailable();
     // Copy only journal fields; raw prompts and arbitrary host output never enter storage.
     entries.set(entry.requestId, { requestId: entry.requestId, threadId: entry.threadId, promptHash: entry.promptHash,
       state: entry.state, createdAt: entry.createdAt, ...(entry.state === 'accepted' ? { receipt: {
         accepted: true, threadId: entry.threadId, requestId: entry.requestId, acceptedAt: entry.receipt.acceptedAt,
+        ...(entry.receipt.permissionMode !== undefined ? { permissionMode: entry.receipt.permissionMode } : {}),
       } } : {}) });
   }
   return entries;

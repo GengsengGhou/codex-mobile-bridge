@@ -1,4 +1,4 @@
-import { BridgeError } from './desktop.mjs';
+import { BridgeError, isDelegatedThread } from './desktop.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const validLocal = t => t?.kind === 'codex' && t.hostId === 'local' && UUID.test(t.id ?? '');
@@ -21,7 +21,7 @@ export function createArchiveHandler({ bridge, inScope }) {
       if (!Array.isArray(data?.threads) || (data.nextCursor != null && (typeof data.nextCursor !== 'string' || data.nextCursor.length > 512))) throw new BridgeError('归档列表格式不兼容', 'PROTOCOL_ERROR', 502);
       const threads = data.threads.filter(validLocal).map(t => {
         listed.delete(t.id); listed.set(t.id, Date.now());
-        const canRestore = inScope(t.id) && names.includes('set_thread_archived');
+        const canRestore = inScope(t.id) && !t.delegated && !isDelegatedThread(t) && names.includes('set_thread_archived');
         return { id: t.id, title: typeof t.title === 'string' && t.title ? t.title : '未命名会话', cwd: typeof t.cwd === 'string' ? t.cwd : '', updatedAt: t.updatedAt, canRestore };
       });
       while (listed.size > 1000) listed.delete(listed.keys().next().value);
@@ -37,7 +37,7 @@ export function createArchiveHandler({ bridge, inScope }) {
     restoring.add(id);
     try {
       const { thread } = await bridge.read(id, undefined, { turnLimit: 1 });
-      if (!validLocal(thread) || thread.id !== id) throw new BridgeError('此会话不是本机 Codex 会话', 'RESTORE_DISABLED', 403);
+      if (!validLocal(thread) || thread.id !== id || thread.delegated) throw new BridgeError('仅支持恢复普通本机 Codex 会话', 'RESTORE_DISABLED', 403);
       // Consume the grant before dispatch. An ambiguous result must be checked by listing again.
       listed.delete(id);
       await bridge.manage(id, 'archive', false);

@@ -12,7 +12,7 @@ function scope(window, id, user = "account-a", fetchImpl = async () => json({}),
 test("same thread drafts, selected thread, creation receipts and recovery metadata isolate by device and account", () => {
   const { window } = new JSDOM("", { url: "https://hub.test" });
   const a = scope(window, A), b = scope(window, B), otherAccount = scope(window, A, "account-b");
-  const keys = [`codex-mobile-draft:${THREAD}`, "codex-mobile-new-thread-receipt", "codex-mobile-selected-thread", `codex-mobile-uploads:${THREAD}`, "codex-mobile-open-projects"];
+  const keys = [`codex-mobile-draft:${THREAD}`, `codex-mobile-permission:${THREAD}`, `codex-mobile-control-open:${THREAD}`, `codex-mobile-control-seen:${THREAD}`, `codex-mobile-history-dismissed:${THREAD}`, "codex-mobile-new-thread-receipt", "codex-mobile-selected-thread", `codex-mobile-uploads:${THREAD}`, "codex-mobile-open-projects"];
   for (const key of keys) { a.sessionStorage.setItem(key, "a-private"); b.sessionStorage.setItem(key, "b-private"); assert.equal(a.sessionStorage.getItem(key), "a-private"); assert.equal(otherAccount.sessionStorage.getItem(key), null); }
   a.localStorage.setItem(keys[2], THREAD); assert.equal(b.localStorage.getItem(keys[2]), null);
   assert.equal(a.sessionStorage.length, keys.length); assert.ok(a.sessionStorage.key(0).startsWith("codex-mobile-"));

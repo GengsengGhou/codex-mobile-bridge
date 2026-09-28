@@ -55,6 +55,14 @@ test('ambiguous restore dispatches once; malformed native list is explicit failu
   f.bridge.call = async () => ({ threads: 'incompatible' });
   assert.equal((await f.request('/api/archives')).status, 502);
 });
+
+test('delegated archived conversations cannot be restored', async t => {
+  const f = await setup(t, { readThread: { ...row, delegated: true } });
+  f.bridge.call = async () => ({ threads: [{ ...row, source: { subAgent: { parentThreadId: OTHER } } }], nextCursor: null });
+  assert.equal((await (await f.request('/api/archives')).json()).threads[0].canRestore, false);
+  assert.equal((await f.request(`/api/archives/${ID}/restore`, { method: 'POST' })).status, 403);
+  assert.equal(f.calls.some(call => call.manage), false);
+});
 test('archive listing is in the native call allowlist and unarchive retains exact native args', async () => {
   const calls = [];
   const bridge = new DesktopBridge({ callerThreadId: OTHER, request: async (_pipe, method, params, options) => {

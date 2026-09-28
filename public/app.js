@@ -9,7 +9,8 @@ import { createDeviceContext, deviceIdFromPath, loadDeviceContext } from "./conn
 import { createAccessPanel } from "./access.js";
 import { createThreadSnapshotCache } from "./thread-cache.js";
 import { threadGroupKey, mergeSidebarOrder, orderProjectKeys, orderThreadRows, moveOrderItem } from "./sidebar-order.js";
-import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor } from "./conversation-state.js";
+import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor, mergeTranscriptTurns } from "./conversation-state.js";
+import { createThreadContextPanel } from "./thread-context.js";
 
 (async () => {
   "use strict";
@@ -38,6 +39,9 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
   const PENDING_PREFIX = "codex-mobile-pending:";
   const CONTROL_FORM_PREFIX = "codex-mobile-control-form:";
   const CONTROL_RESPONSE_PREFIX = "codex-mobile-control-response:";
+  const CONTROL_OPEN_PREFIX = "codex-mobile-control-open:";
+  const CONTROL_SEEN_PREFIX = "codex-mobile-control-seen:";
+  const HISTORY_DISMISSED_PREFIX = "codex-mobile-history-dismissed:";
   const NEW_THREAD_DRAFT_KEY = "codex-mobile-new-thread-draft";
   const NEW_THREAD_PENDING_KEY = "codex-mobile-new-thread-pending";
   const NEW_THREAD_RECEIPT_KEY = "codex-mobile-new-thread-receipt";
@@ -48,6 +52,8 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
   const deliveryIsUnknown = error => !SAFE_REJECTION_CODES.has(error.code);
   SAFE_REJECTION_CODES.add("MODEL_UNAVAILABLE");
   SAFE_REJECTION_CODES.add("MODEL_CHANGE_ACTIVE");
+  SAFE_REJECTION_CODES.add("PERMISSION_UNAVAILABLE");
+  SAFE_REJECTION_CODES.add("PERMISSION_CHANGE_ACTIVE");
   const THREAD_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const $ = (id) => document.getElementById(id);
   const ui = {
@@ -68,7 +74,8 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
     actionHint: $("threadActionHint"), actionError: $("threadActionError"), actionCancel: $("threadActionCancel"),
     actionConfirm: $("threadActionConfirm"), nameInput: $("threadNameInput"), nameLabel: $("threadNameLabel"),
     stop: $("stopButton"), controlState: $("controlState"), controlSummary: $("controlSummary"),
-    pendingRequests: $("pendingRequests"), refreshControl: $("refreshControl"),
+    pendingRequests: $("pendingRequests"), refreshControl: $("refreshControl"), controlToggle: $("controlToggle"), closePending: $("closePendingRequests"),
+    closeHistory: $("closeHistoricalQuestions"), showHistory: $("showHistoricalQuestions"),
     newThreadButton: $("newThreadButton"), createCapabilityState: $("createCapabilityState"),
     createDialog: $("newThreadDialog"), createForm: $("newThreadForm"), createProject: $("newThreadProject"),
     projectLoadState: $("projectLoadState"), projectLoadText: $("projectLoadText"), retryProjects: $("retryProjects"), projectDetail: $("projectSelectionDetail"),
@@ -136,11 +143,13 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
     receiptChecks: new Map(), receiptCheckAt: new Map(), draftRevisions: new Map(), threadAction: null, managing: false,
     execution: null, controlReads: new Set(), stopping: false, responding: new Set(), responseStates: new Map(),
     pendingCards: new Map(), pendingDrafts: new Map(), controlUnavailable: false,
+    controlOpen: false, controlSeen: new Set(), historyFingerprint: "", historyDismissed: "",
     projects: [], projectsLoaded: false, projectsLoading: false, projectsCanCreate: null, projectsError: "",
     createDraft: { projectChoice: "", title: "", prompt: "" }, createDraftRevision: 0, createDraftLoaded: false, createDraftStorageFailed: false,
     createAttempt: null, createReceipt: null, createRecoveryError: "", createErrorText: "", creatingThread: false, createSelection: null
   };
   const filesPanel = createFilesPanel({ document, window, fetchImpl: scopedFetch, getThread: () => ({ id: state.selectedId || "", cwd: state.thread?.cwd || state.threads.find(item => item.id === state.selectedId)?.cwd || "" }) });
+  const contextPanel = createThreadContextPanel({ document, window, api: requestApi, storage: sessionStorage, onSelectThread: id => { void selectThread(id); }, onNotice: showNotice });
   const uploads = createUploads({ document, window, storage: sessionStorage, fetchImpl: scopedFetch, getThread: id => ({ id, cwd: (state.thread?.id === id ? state.thread.cwd : "") || state.threads.find(item => item.id === id)?.cwd || "" }), canUpload: () => maySendSelected() && state.connected && state.canSend, onChange: updateControls });
   createArchivesPanel({ document, window, api: requestApi, onRestored: () => refreshTasks() });
   createRecoveryPanel({ document, api: requestApi });
@@ -245,6 +254,7 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
 
   function updateControls() {
     renderModelSettings();
+    contextPanel.setState({ status: state.statusSnapshot, thread: state.thread, connected: state.connected, sending: state.sending, sendMode: state.sendMode });
     const unknownPending = !!state.selectedId && isUnknown(state.selectedId);
     const canWrite = maySendSelected() && state.connected && state.canSend && !!state.selectedId && !unknownPending;
     ui.input.disabled = !state.selectedId;
@@ -263,7 +273,7 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
     else if (!state.connected) ui.composerHint.textContent = "连接中断，草稿会保留";
     else if (!maySendSelected()) ui.composerHint.textContent = "此会话暂不允许发送";
     else if (!state.canSend) ui.composerHint.textContent = state.sendDisabledReason || "此会话当前不允许发送";
-    else if (state.sendMode === "follow-up") ui.composerHint.textContent = readModelSettings(state.selectedId).model ? "本轮沿用运行模型，设置用于下一轮" : "消息会补充到正在运行的本机会话";
+    else if (state.sendMode === "follow-up") ui.composerHint.textContent = "补充到当前轮次，沿用当前模型与权限";
     else ui.composerHint.textContent = "发送到桌面上的同一任务";
     ui.composerHint.classList.toggle("sr-only", !!state.selectedId && canWrite && !state.sending && !attachmentStatus.blocked && state.sendMode !== "follow-up");
     updateCreateControls();
@@ -795,6 +805,7 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
       const secret = requestHasSecret(request);
       const answers = readPendingAnswers(threadId, request, !secret);
       form.className = "pending-question-form";
+      const questions = document.createElement("div"); questions.className = "pending-question-body";
       for (const [index, question] of request.questions.entries()) {
         const field = document.createElement("fieldset");
         field.className = "pending-question";
@@ -852,8 +863,9 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
           });
           field.append(textInput);
         }
-        form.append(field);
+        questions.append(field);
       }
+      form.append(questions);
     } else {
       const unsupported = document.createElement("p");
       unsupported.className = "pending-disabled-reason";
@@ -947,10 +959,14 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
   }
 
   function renderPendingRequests(execution) {
-    const requests = Array.isArray(execution.pendingRequests) ? execution.pendingRequests : [];
-    const history = Array.isArray(execution.historicalQuestions) ? execution.historicalQuestions : [];
+    const allRequests = Array.isArray(execution.pendingRequests) ? execution.pendingRequests : [];
+    const staleQuestion = request => ["userInput", "asyncUserInput"].includes(request.kind) && request.actionable !== true && request.reasonCode === "NOT_LATEST_TURN";
+    const requests = allRequests.filter(request => !staleQuestion(request));
+    const history = [...(Array.isArray(execution.historicalQuestions) ? execution.historicalQuestions : []), ...allRequests.filter(staleQuestion)];
     ui.historicalQuestionsContent.replaceChildren();
-    ui.historicalQuestions.hidden = !history.length;
+    state.historyFingerprint = history.length ? tokenFingerprint(JSON.stringify(history.map(request => [request.requestId, request.turnId, request.questions]))) : "";
+    ui.historicalQuestions.hidden = !history.length || state.historyDismissed === state.historyFingerprint;
+    ui.showHistory.hidden = !history.length || !ui.historicalQuestions.hidden;
     const activeKeys = new Set(requests.map(request => requestKey(execution.threadId, request)));
     const threadScope = `${encodeURIComponent(execution.threadId)}\u001f`;
     const activeResponseKeys = new Set(requests.map(request => requestResponseStorageKey(execution.threadId, request)));
@@ -984,7 +1000,7 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
       }
       updatePendingCard(execution.threadId, entry.card, request);
     }
-    const count = requests.length || execution.pendingRequestCount || 0;
+    const count = requests.length || Math.max(0, (execution.pendingRequestCount || 0) - allRequests.filter(staleQuestion).length);
     if (history.length) {
       for (const request of history) for (const question of request.questions || []) {
         const text = document.createElement('p');
@@ -993,7 +1009,29 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
       }
     }
     ui.controlSummary.textContent = count ? (requests.length ? `${count} 项待处理交互` : `${count} 项待处理交互暂时没有可显示的详情。`) : (!execution.available && normalizeStatus(state.thread?.status).kind === "running" ? (execution.reason || "运行控制暂不可用。") : "");
+    if (requests.length && !state.controlOpen && requests.some(request => !state.controlSeen.has(requestKey(execution.threadId, request)))) ui.controlSummary.textContent += " · 新";
     ui.controlState.hidden = !count && !ui.controlSummary.textContent;
+    renderControlExpansion();
+  }
+
+  function renderControlExpansion() {
+    ui.pendingRequests.hidden = !state.controlOpen;
+    ui.controlToggle.setAttribute("aria-expanded", String(state.controlOpen));
+    ui.controlToggle.title = state.controlOpen ? "收起待处理交互" : "查看待处理交互";
+    ui.closePending.hidden = !state.controlOpen;
+    ui.controlState.dataset.expanded = String(state.controlOpen);
+    if (state.controlOpen) {
+      for (const key of state.pendingCards.keys()) state.controlSeen.add(key);
+      try { sessionStorage.setItem(CONTROL_SEEN_PREFIX + state.selectedId, JSON.stringify([...state.controlSeen].slice(-100))); } catch { /* Expansion remains usable in this page. */ }
+      ui.controlSummary.textContent = ui.controlSummary.textContent.replace(/ · 新$/, "");
+    }
+  }
+
+  function setControlExpansion(open) {
+    state.controlOpen = !!open;
+    try { sessionStorage.setItem(CONTROL_OPEN_PREFIX + state.selectedId, String(state.controlOpen)); } catch { /* The current panel remains usable. */ }
+    renderControlExpansion();
+    if (!open) ui.controlToggle.focus();
   }
 
   async function submitPendingResponse(threadId, request, payload) {
@@ -1513,6 +1551,7 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
           state.readController?.abort();
           state.switching += 1;
           state.selectedId = null;
+          contextPanel.setThread(null);
           state.thread = null;
           state.turns.clear();
           state.pendingMessages = [];
@@ -1914,16 +1953,11 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
     return Date.parse(stringValue) || 0;
   }
 
-  function mergeTurns(turns) {
+  function mergeTurns(turns, latest = true) {
     if (!Array.isArray(turns)) return false;
-    let changed = false;
-    for (const turn of turns) {
-      if (!turn || turn.id == null) continue;
-      const key = text(turn.id);
-      const previous = state.turns.get(key);
-      if (!previous || JSON.stringify(previous) !== JSON.stringify(turn)) changed = true;
-      state.turns.set(key, turn);
-    }
+    const merged = mergeTranscriptTurns([...state.turns.values()], turns, { latest });
+    const changed = JSON.stringify([...state.turns.values()]) !== JSON.stringify(merged);
+    state.turns = new Map(merged.map(turn => [text(turn.id), turn]));
     return changed;
   }
 
@@ -2020,7 +2054,7 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
       state.canSend = typeof data.canSend === "boolean" ? data.canSend : !!data.thread?.canSend;
       state.sendMode = data.sendMode || data.thread?.sendMode || "message";
       state.sendDisabledReason = text(data.sendDisabledReason ?? data.thread?.sendDisabledReason);
-      let contentChanged = mergeTurns(data.turns);
+      let contentChanged = mergeTurns(data.turns, mode === "latest");
       if (contentChanged) state.changeRevision += 1;
       const priorPendingCount = state.pendingMessages.length;
       reconcilePendingMessages(id);
@@ -2032,7 +2066,7 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
         while (wasPaged && knownTurnIds.size && !overlap && state.hasMore && state.cursor != null && gapPages < 3) {
           const older = await api(`/api/threads/${encodeURIComponent(id)}?cursor=${encodeURIComponent(state.cursor)}`, { signal: controller.signal });
           if (controller.signal.aborted || token !== state.switching || id !== state.selectedId) return;
-          contentChanged = mergeTurns(older.turns) || contentChanged;
+          contentChanged = mergeTurns(older.turns, false) || contentChanged;
           reconcilePendingMessages(id);
           overlap = (older.turns || []).some(turn => knownTurnIds.has(text(turn.id)));
           updatePaging(older.page || {});
@@ -2056,7 +2090,7 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
       else if (!ui.notice.hidden && ui.notice.dataset.kind === "error") showNotice("");
       renderTasks();
       updateControls();
-      if (mode === "latest" && document.visibilityState === "visible") { void recoverDeliveryReceipts(id); await refreshExecution(id, token); }
+      if (mode === "latest" && document.visibilityState === "visible") { void recoverDeliveryReceipts(id); void contextPanel.refresh(); await refreshExecution(id, token); }
       return true;
     } catch (error) {
       if (token !== state.switching || id !== state.selectedId) return;
@@ -2084,6 +2118,18 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
     state.readController?.abort();
     state.switching += 1;
     state.selectedId = id;
+    contextPanel.setThread(id);
+    state.controlOpen = false;
+    state.controlSeen = new Set();
+    state.historyDismissed = "";
+    state.historyFingerprint = "";
+    try {
+      state.controlOpen = sessionStorage.getItem(CONTROL_OPEN_PREFIX + id) === "true";
+      const seen = JSON.parse(sessionStorage.getItem(CONTROL_SEEN_PREFIX + id) || "[]");
+      if (Array.isArray(seen)) state.controlSeen = new Set(seen.filter(value => typeof value === "string"));
+      state.historyDismissed = sessionStorage.getItem(HISTORY_DISMISSED_PREFIX + id) || "";
+    } catch { /* New conversations start collapsed. */ }
+    renderControlExpansion();
     state.idlePolls = 0;
     state.historyError = false;
     state.threadFingerprint = "";
@@ -2093,6 +2139,7 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
     state.pendingCards.clear();
     ui.pendingRequests.replaceChildren();
     ui.historicalQuestions.hidden = true;
+    ui.showHistory.hidden = true;
     ui.historicalQuestionsContent.replaceChildren();
     ui.controlSummary.textContent = "";
     ui.controlState.hidden = true;
@@ -2232,6 +2279,8 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
     if (!maySendSelected() || !id || !state.connected || !state.canSend || isUnknown(id) || state.sending) return;
     const revision = draftRevision(id);
     const selection = state.sendMode === "follow-up" ? {} : { ...readModelSettings(id) };
+    try { Object.assign(selection, contextPanel.sendOverride()); }
+    catch (error) { showNotice(error.message, "error"); return; }
     state.sending = true;
     updateControls();
     const attachmentSnapshot = uploads.status(id).count ? await uploads.prepare(id, draftPrompt) : uploads.snapshot(id, draftPrompt);
@@ -2316,6 +2365,18 @@ import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor 
   }
 
   function init() {
+    ui.controlToggle.addEventListener("click", () => setControlExpansion(!state.controlOpen));
+    ui.closePending.addEventListener("click", () => setControlExpansion(false));
+    ui.closeHistory.addEventListener("click", () => {
+      state.historyDismissed = state.historyFingerprint;
+      try { sessionStorage.setItem(HISTORY_DISMISSED_PREFIX + state.selectedId, state.historyDismissed); } catch { /* Hide still applies to this page. */ }
+      ui.historicalQuestions.hidden = true; ui.showHistory.hidden = false; ui.showHistory.focus();
+    });
+    ui.showHistory.addEventListener("click", () => {
+      state.historyDismissed = "";
+      try { sessionStorage.removeItem(HISTORY_DISMISSED_PREFIX + state.selectedId); } catch { /* The current disclosure remains usable. */ }
+      ui.historicalQuestions.hidden = false; ui.showHistory.hidden = true; ui.closeHistory.focus();
+    });
     modelUI.button.addEventListener("click", () => { populateModelControls("send"); renderModelSettings(); modelUI.dialog.showModal(); });
     $("modelSettingsDone").addEventListener("click", () => modelUI.dialog.close());
     modelUI.model.addEventListener("change", () => saveModelControls("send", true));

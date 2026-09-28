@@ -118,6 +118,13 @@ test('management refuses remote, non-Codex, archived, and unknown-status targets
   }
 });
 
+test('delegated threads remain readable while all metadata mutations are disabled', async t => {
+  const s = await setup(t, { properties: { delegated: true } });
+  const data = await s.read(); assert.equal(data.thread.delegated, true); assert.equal(data.canManage, false); assert.equal(data.canArchive, false);
+  for (const body of [{ action: 'rename', value: 'title' }, { action: 'pin', value: true }, { action: 'archive', value: true }]) assert.equal((await s.post(body)).status, 403);
+  assert.equal(s.calls.length, 0);
+});
+
 test('catalog availability gates status and every settings dispatch', async t => {
   const s = await setup(t, { names: ['list_threads', 'read_thread', 'set_thread_title'] });
   assert.deepEqual((await s.read('/api/status')).threadManagement, { rename: true, pin: false, archive: false });

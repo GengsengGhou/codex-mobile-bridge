@@ -114,9 +114,10 @@ export function normalizeAsyncQuestions(entities, context, key) {
     if (!unresolved.length) continue;
     const knownSchema = item.questions.every(q => object(q) && knownFields(q, ['title', 'options']) && (q.options == null || Array.isArray(q.options) && q.options.every(o => typeof o === 'string')));
     const normalized = knownSchema ? questions(unresolved) : null, isLatest = sourceTurn.turnId === latest.turnId;
-    // Older unresolved questions remain visible; a later turn is not proof of an answer.
-    const historical = !!normalized && unresolved.length < rawQuestions.length && continuedQuestionGroup(sourceTurn.items, sourceIndex, rawQuestions.map(q => q.id));
-    const value = { requestId: `async:${item.id}`, kind: 'asyncUserInput', turnId: sourceTurn.turnId, title: historical ? '旧提问（未逐项作答）' : '等待回答', questions: normalized ?? [], actionable: !historical && !!normalized && validId(`async:${item.id}`) && isLatest, disabledReason: historical ? '此后已继续新的问答，保留为旧提问' : !isLatest ? '问题不在最新轮次，暂不能从网页回答' : normalized ? null : '异步问题格式不受支持', ...(historical ? { historical: true } : {}) };
+    // A later turn does not answer an old question, but makes it read-only history.
+    const notLatest = validId(sourceTurn.turnId) && !isLatest;
+    const historical = notLatest || !!normalized && unresolved.length < rawQuestions.length && continuedQuestionGroup(sourceTurn.items, sourceIndex, rawQuestions.map(q => q.id));
+    const value = { requestId: `async:${item.id}`, kind: 'asyncUserInput', turnId: sourceTurn.turnId, title: historical ? '旧提问（未逐项作答）' : '等待回答', questions: normalized ?? [], actionable: !historical && !!normalized && validId(`async:${item.id}`) && isLatest, disabledReason: notLatest ? '问题不在最新轮次，保留为旧提问' : historical ? '此后已继续新的问答，保留为旧提问' : !isLatest ? '问题不在最新轮次，暂不能从网页回答' : normalized ? null : '异步问题格式不受支持', ...(historical ? { historical: true, reasonCode: notLatest ? 'NOT_LATEST_TURN' : 'CONTINUED_QUESTION_GROUP' } : {}) };
     result.push(bind(value, { sourceItemId: item.id, questions: item.questions }, { ...context, evidence: null }, key));
   }
   return result;
@@ -146,6 +147,6 @@ export function asyncReply(pending, answers) {
   return `${REPLY_START}\n${JSON.stringify(values)}\n${REPLY_END}`;
 }
 export function publicPendingRequest(pending) {
-  const fields = ['requestId', 'kind', 'turnId', 'token', 'title', 'actionable', 'disabledReason', 'command', 'cwd', 'reason', 'files', 'questions'];
+  const fields = ['requestId', 'kind', 'turnId', ...(!pending.historical ? ['token'] : []), 'title', 'actionable', 'disabledReason', 'reasonCode', 'historical', 'command', 'cwd', 'reason', 'files', 'questions'];
   return Object.fromEntries(fields.filter(k => Object.hasOwn(pending, k)).map(k => [k, pending[k]]));
 }

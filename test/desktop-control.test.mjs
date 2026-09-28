@@ -6,7 +6,7 @@ import { DesktopControl, controlFrame, summarizeSnapshot } from '../src/desktop-
 const ID = '00000000-0000-7000-8000-000000000001';
 const OWNER = '11111111-1111-1111-1111-111111111111';
 const CLIENT = '22222222-2222-2222-2222-222222222222';
-function fixture({ current = 'turn-1', mutation = 'success', canonical = false, requests = [], ownerError, snapshotVersion = 11, items = [], owner = OWNER, revision = 8 } = {}) {
+function fixture({ current = 'turn-1', mutation = 'success', canonical = false, requests = [], ownerError, snapshotVersion = 11, items = [], owner = OWNER, revision = 8, stateProperties = {} } = {}) {
   const messages = [], sockets = [];
   const connect = () => {
     const socket = new EventEmitter(); socket.destroyed = false; sockets.push(socket);
@@ -21,8 +21,9 @@ function fixture({ current = 'turn-1', mutation = 'success', canonical = false, 
         else response({ supportsUntrustedAppInput: true });
       }
       else if (message.method === 'thread-stream-following-changed') {
-        const turns = current ? [{ turnId: current, status: 'inProgress', items }] : [{ turnId: 'completed', status: 'completed', items }];
-        const state = { id: ID, cwd: 'E:/workspace', turns: canonical ? [] : turns, requests, ...(canonical ? { turnHistory: { kind: 'canonical', history: { entitiesByKey: { key: turns[0] } } } } : {}) };
+        const currentId = typeof current === 'function' ? current() : current;
+        const turns = currentId ? [{ turnId: currentId, status: 'inProgress', items }] : [{ turnId: 'completed', status: 'completed', items }];
+        const state = { id: ID, cwd: 'E:/workspace', turns: canonical ? [] : turns, requests, ...(canonical ? { turnHistory: { kind: 'canonical', history: { entitiesByKey: { key: turns[0] } } } } : {}), ...stateProperties };
         deliver({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: typeof owner === 'function' ? owner() : owner, version: snapshotVersion, params: { conversationId: ID, hostId: 'local', change: { type: 'snapshot', revision: typeof revision === 'function' ? revision() : revision, conversationState: state } } });
       } else if (mutation === 'disconnect') queueMicrotask(() => socket.destroy());
       else if (mutation === 'error') deliver({ type: 'response', requestId: message.requestId, resultType: 'error', error: 'request-timeout' });
@@ -60,6 +61,110 @@ test('canonical turns supply active turn and completed turn never permits stoppi
   assert.equal((await fixture({ canonical: true }).control.snapshot(ID)).currentTurnId, 'turn-1');
   const idle = await fixture({ current: null }).control.snapshot(ID);
   assert.equal(idle.currentTurnId, null); assert.equal(idle.status, 'idle');
+});
+
+test('permission send uses fresh ordinary idle owner and verified native profile with compatible model settings', async () => {
+  for (const permissionMode of ['full-access', 'request-approval']) {
+    const f = fixture({ current: null }); let reservations = 0;
+    const result = await f.control.send(ID, 'selected', { permissionMode, model: 'alpha', thinking: 'high' }, { beforeDispatch: fresh => { reservations++; assert.equal(fresh.currentTurnId, null); } });
+    assert.equal(result.delivered, true); assert.equal(result.permissionMode, permissionMode); assert.equal(reservations, 1);
+    const native = f.messages.at(-1); assert.equal(native.method, 'thread-follower-start-turn'); assert.equal(native.version, 2); assert.equal(native.targetClientId, OWNER);
+    const request = native.params.turnStart.request;
+    assert.equal(request.threadId, ID); assert.deepEqual(request.input, [{ type: 'text', text: 'selected', text_elements: [] }]);
+    assert.equal(request.approvalPolicy, permissionMode === 'full-access' ? 'never' : 'on-request'); assert.equal(request.approvalsReviewer, 'user');
+    assert.equal(request.permissions, permissionMode === 'full-access' ? ':danger-full-access' : ':workspace'); assert.equal(request.sandboxPolicy, undefined);
+    assert.deepEqual(request.runtimeWorkspaceRoots, ['E:/workspace']); assert.equal(request.model, 'alpha'); assert.equal(request.effort, 'high');
+    assert.deepEqual(native.params.turnStart.context, { inheritThreadSettings: true, useAppServerPermissionDefault: false });
+  }
+});
+
+test('permission overrides reject active, unloaded protocol, and delegated state before reservation', async () => {
+  for (const [options, code] of [
+    [{ current: 'new-active' }, 'PERMISSION_CHANGE_ACTIVE'],
+    [{ current: null, stateProperties: { threadRuntimeStatus: { type: 'active' } } }, 'PERMISSION_CHANGE_ACTIVE'],
+    [{ current: null, stateProperties: { parentThreadId: OWNER } }, 'UNSUPPORTED_THREAD'],
+    [{ current: null, stateProperties: { currentPermissions: { runtimeWorkspaceRoots: ['invalid\nroot'] } } }, 'PERMISSION_UNAVAILABLE'],
+    [{ current: null, snapshotVersion: 12 }, 'PROTOCOL_INCOMPATIBLE'],
+  ]) {
+    const f = fixture(options); let reserved = false;
+    await assert.rejects(f.control.send(ID, 'message', { permissionMode: 'full-access' }, { beforeDispatch: () => { reserved = true; } }), { code });
+    assert.equal(reserved, false); assert.equal(f.messages.some(m => m.method === 'thread-follower-start-turn'), false);
+  }
+});
+
+test('permission sends preserve native model mode privately and permission-only reasoning survives a null summary', async () => {
+  const inherited = { mode: 'plan', settings: { model: 'previous', reasoning_effort: 'high', developer_instructions: 'private mode instructions' } };
+  const stateProperties = { latestCollaborationMode: inherited, latestReasoningEffort: null, latestThreadSettings: { model: 'previous', effort: 'high', collaborationMode: inherited } };
+  const f = fixture({ current: null, stateProperties });
+  const snapshot = await f.control.context(ID);
+  assert.equal(JSON.stringify(snapshot).includes('private mode instructions'), false);
+  await f.control.send(ID, 'permissions only', { permissionMode: 'full-access' });
+  const retained = f.messages.at(-1).params.turnStart.request;
+  assert.equal(retained.model, 'previous'); assert.equal(retained.effort, 'high'); assert.equal(retained.collaborationMode, undefined);
+  assert.equal(f.messages.at(-1).params.turnStart.context.inheritThreadSettings, true);
+  await f.control.send(ID, 'selected model', { permissionMode: 'request-approval', model: 'chosen', thinking: 'medium' });
+  assert.deepEqual(f.messages.at(-1).params.turnStart.request.collaborationMode, { mode: 'plan', settings: { model: 'chosen', reasoning_effort: 'medium', developer_instructions: 'private mode instructions' } });
+  await f.control.send(ID, 'model default', { permissionMode: 'full-access', model: 'chosen' });
+  assert.equal(f.messages.at(-1).params.turnStart.request.collaborationMode.settings.reasoning_effort, null);
+  assert.equal(f.messages.at(-1).params.turnStart.request.effort, undefined);
+});
+
+test('permission unknown delivery remains one attempted native dispatch after reservation', async () => {
+  for (const mutation of ['error', 'disconnect']) {
+    const f = fixture({ current: null, mutation }); let reservations = 0;
+    await assert.rejects(f.control.send(ID, 'message', { permissionMode: 'request-approval' }, { beforeDispatch: () => { reservations++; } }), { code: 'DELIVERY_UNKNOWN' });
+    assert.equal(reservations, 1); assert.equal(f.messages.filter(m => m.method === 'thread-follower-start-turn').length, 1);
+  }
+});
+
+test('permission final snapshot catches desktop activation and changed roots after reservation without dispatch', async () => {
+  for (const change of ['active', 'roots']) {
+    let reserved = false;
+    const stateProperties = {};
+    const f = fixture({ current: () => reserved && change === 'active' ? 'desktop-turn' : null, stateProperties });
+    await assert.rejects(f.control.send(ID, 'message', { permissionMode: 'full-access' }, { beforeDispatch: () => {
+      reserved = true;
+      if (change === 'roots') stateProperties.currentPermissions = { runtimeWorkspaceRoots: ['relative-root'] };
+    } }), error => error.code === (change === 'active' ? 'PERMISSION_CHANGE_ACTIVE' : 'PERMISSION_UNAVAILABLE') && error.controlNotDispatched === true);
+    assert.equal(f.messages.filter(message => message.method === 'thread-owner-discovery').length, 2);
+    assert.equal(f.messages.some(message => message.method === 'thread-follower-start-turn'), false);
+    assert.equal(f.sockets.every(socket => socket.destroyed), true);
+  }
+});
+
+test('permission dispatch uses the final verified owner roots and inherited settings after reservation', async () => {
+  let owner = OWNER;
+  const stateProperties = { latestCollaborationMode: { mode: 'default', settings: { model: 'before', reasoning_effort: 'low' } } };
+  const f = fixture({ current: null, owner: () => owner, stateProperties });
+  await f.control.send(ID, 'message', { permissionMode: 'request-approval' }, { beforeDispatch: () => {
+    owner = '33333333-3333-3333-3333-333333333333';
+    stateProperties.cwd = 'E:/new-workspace';
+    stateProperties.currentPermissions = { runtimeWorkspaceRoots: ['E:/new-workspace'] };
+    stateProperties.latestCollaborationMode = { mode: 'plan', settings: { model: 'after', reasoning_effort: 'high', developer_instructions: 'private updated mode' } };
+  } });
+  const dispatch = f.messages.at(-1), request = dispatch.params.turnStart.request;
+  assert.equal(dispatch.targetClientId, owner);
+  assert.deepEqual(request.runtimeWorkspaceRoots, ['E:/new-workspace']);
+  assert.equal(request.model, 'after'); assert.equal(request.effort, 'high'); assert.equal(request.collaborationMode, undefined);
+});
+
+test('readonly context accepts delegated snapshots while control keeps refusing them', async () => {
+  const f = fixture({ current: null, stateProperties: { parentThreadId: OWNER } });
+  const readonly = await f.control.context(ID);
+  assert.equal(readonly.threadContext.delegated, true); assert.equal(readonly.threadContext.permissions.supported, false);
+  await assert.rejects(f.control.snapshot(ID), { code: 'UNSUPPORTED_THREAD' });
+});
+
+test('nonlatest async questions move to audit history without moving native unresolved requests', async () => {
+  const native = { id: 3, method: 'item/commandExecution/requestApproval', params: { threadId: ID, turnId: 'old', command: 'echo pending', cwd: 'E:/workspace' } };
+  const snapshot = summarizeSnapshot({ id: ID, cwd: 'E:/workspace', requests: [native], turns: [
+    { turnId: 'old', turnStartedAtMs: 1, items: [{ type: 'agentMessage', id: 'question', questions: [{ title: 'Old decision?', options: ['A'] }] }] },
+    { turnId: 'current', turnStartedAtMs: 2, status: 'inProgress', items: [] },
+  ] }, ID, OWNER, 1);
+  assert.deepEqual(snapshot.pendingRequests.map(request => request.requestId), [3]);
+  assert.equal(snapshot.pendingRequests[0].actionable, true);
+  assert.equal(snapshot.historicalQuestions[0].reasonCode, 'NOT_LATEST_TURN');
+  assert.equal(snapshot.historicalQuestions[0].actionable, false);
 });
 test('stop uses fresh snapshot and exact expected-turn owner-targeted native contract', async () => {
   const f = fixture(); const result = await f.control.stop(ID, 'turn-1');

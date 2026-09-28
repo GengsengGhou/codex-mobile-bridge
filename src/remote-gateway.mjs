@@ -7,7 +7,7 @@ import { publicAssets, appCsp } from './static-assets.mjs';
 const COOKIE = '__Host-bridge_remote';
 const ASSETS = publicAssets;
 const UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
-const API = new RegExp(`^/api/(?:status|recovery|sidebar-order|projects|threads|archives|thread-creations/${UUID}|archives/${UUID}/restore|threads/${UUID}(?:/(?:messages(?:/${UUID})?|settings|control|stop|respond|files|file|uploads/${UUID}))?)$`);
+const API = new RegExp(`^/api/(?:status|recovery|sidebar-order|projects|threads|archives|thread-creations/${UUID}|archives/${UUID}/restore|threads/${UUID}(?:/(?:messages(?:/${UUID})?|settings|context|control|stop|respond|files|file|uploads/${UUID}))?)$`);
 const RESPONSE_HEADERS = ['content-type', 'content-length', 'content-disposition', 'content-range', 'accept-ranges', 'etag', 'last-modified'];
 const securityHeaders = {
   'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
@@ -97,6 +97,7 @@ export function createRemoteGateway({ publicOrigin, bridgeOrigin = 'http://127.0
       }
       if (req.method === 'GET' && url.pathname === '/api/access') { json(res, 200, { mode: 'remote', authenticated: true, expiresAt: session.expiresAt }); return; }
       if (!ASSETS.has(url.pathname) && !API.test(url.pathname)) throw new RemoteAuthError('NOT_FOUND', 404);
+      if (url.pathname.endsWith('/context') && req.method !== 'GET') throw new RemoteAuthError('METHOD_NOT_ALLOWED', 405);
       if (ASSETS.has(url.pathname) && !['GET', 'HEAD'].includes(req.method)) throw new RemoteAuthError('METHOD_NOT_ALLOWED', 405);
       if (inFlight >= 16) throw new RemoteAuthError('GATEWAY_BUSY', 503);
       inFlight++; counted = true;

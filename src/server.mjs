@@ -17,6 +17,8 @@ import { createArchiveHandler } from './archives.mjs';
 import { createRecoveryManager } from './recovery.mjs';
 import { createRemoteAccessManager } from './remote-access.mjs';
 import { advertisedModels, modelSelection, validateModelSelection } from './model-settings.mjs';
+import { permissionSelection, permissionOptions } from './permission-settings.mjs';
+import { readGitContext, hydrateAgentContext } from './thread-context.mjs';
 import { publicAssets, assetContentType, appCsp } from './static-assets.mjs';
 
 const publicRoot = new URL('../public/', import.meta.url);
@@ -41,11 +43,11 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
   const activeStatuses = ['active', 'running', 'in_progress', 'inprogress'];
   const inScope = id => enableSend && (sendScope === 'all-local' || id === allowedSendThreadId);
   const handleArchives = createArchiveHandler({ bridge, inScope });
-  const controlAccess = thread => inScope(thread.id) && thread.kind === 'codex' && (!thread.hostId || thread.hostId === 'local') && !thread.archived && !unsupported.has(thread.id);
+  const controlAccess = thread => inScope(thread.id) && thread.kind === 'codex' && (!thread.hostId || thread.hostId === 'local') && !thread.archived && !thread.delegated && !unsupported.has(thread.id);
   const managementAccess = thread => {
     const status = String(thread.status ?? '').toLowerCase();
     const canManage = inScope(thread.id) && thread.kind === 'codex' && (!thread.hostId || thread.hostId === 'local') &&
-      !thread.archived && !unsupported.has(thread.id) && ['idle', 'notloaded', ...activeStatuses].includes(status);
+      !thread.archived && !thread.delegated && !unsupported.has(thread.id) && ['idle', 'notloaded', ...activeStatuses].includes(status);
     return { canManage, canArchive: canManage && !activeStatuses.includes(status) && thread.id !== bridge.callerThreadId };
   };
   const sendAccess = (thread) => {
@@ -54,7 +56,7 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
     if (!enableSend) reason = '本机服务未开启发送';
     else if (sendScope !== 'all-local' && thread.id !== allowedSendThreadId) reason = '此会话不在当前发送范围内';
     else if (thread.kind !== 'codex' || (thread.hostId && thread.hostId !== 'local') || thread.archived) reason = '仅支持本机未归档的 Codex 会话';
-    else if (unsupported.has(thread.id)) reason = '桌面不支持向此子任务直接发送消息';
+    else if (thread.delegated || unsupported.has(thread.id)) reason = '桌面不支持向此子任务直接发送消息';
     else if (!['idle', 'notloaded', ...activeStatuses].includes(status)) reason = '会话状态暂不可发送，请稍后刷新';
     return { canSend: !reason, sendDisabledReason: reason, sendMode: activeStatuses.includes(status) ? 'follow-up' : 'message' };
   };
@@ -176,7 +178,7 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
           error = cause instanceof BridgeError ? { code: cause.code, message: cause.message } : { code: 'DESKTOP_UNAVAILABLE', message: '暂时无法连接 Codex 桌面。' };
         }
         const modelOptions = Object.fromEntries(['send_message_to_thread', 'create_thread'].map(name => [name === 'create_thread' ? 'create' : 'send', advertisedModels(bridge.toolCatalog?.find(tool => tool.name === name))]));
-        json(res, 200, { connected, error, canCreate, modelOptions, threadManagement, executionControl: !!control && enableSend, mode: 'desktop-pipe', callerThreadId: bridge.callerThreadId, defaultThreadId: enableSend && sendScope === 'single' ? allowedSendThreadId : bridge.callerThreadId, allowedSendThreadId: enableSend && sendScope === 'single' ? allowedSendThreadId : null, sendScope: enableSend ? sendScope : 'disabled', canSend: enableSend && connected && sendAvailable, limitations: ['实验性桌面内部接口，升级后可能失效', '每 3 秒同步，不是逐字实时流', '未识别的审批或问题不能从网页处理', !enableSend ? '发送未开启' : sendScope === 'all-local' ? '可向本机普通会话发送和追加消息' : '仅向指定会话开放发送', '手机入口需单独开启并登录'] }); return;
+        json(res, 200, { connected, error, canCreate, modelOptions, permissionOptions: { send: connected && enableSend && typeof control?.send === 'function' ? permissionOptions : [], create: [] }, threadContext: typeof control?.context === 'function', threadManagement, executionControl: !!control && enableSend, mode: 'desktop-pipe', callerThreadId: bridge.callerThreadId, defaultThreadId: enableSend && sendScope === 'single' ? allowedSendThreadId : bridge.callerThreadId, allowedSendThreadId: enableSend && sendScope === 'single' ? allowedSendThreadId : null, sendScope: enableSend ? sendScope : 'disabled', canSend: enableSend && connected && sendAvailable, limitations: ['实验性桌面内部接口，升级后可能失效', '每 3 秒同步，不是逐字实时流', '未识别的审批或问题不能从网页处理', !enableSend ? '发送未开启' : sendScope === 'all-local' ? '可向本机普通会话发送和追加消息' : '仅向指定会话开放发送', '手机入口需单独开启并登录'] }); return;
       }
       const creationLookup = url.pathname.match(/^\/api\/thread-creations\/([^/]+)$/);
       if (creationLookup && req.method === 'GET') {
@@ -254,9 +256,31 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
         }
         json(res, 200, data); return;
       }
-      const match = url.pathname.match(/^\/api\/threads\/([^/]+)(\/messages(?:\/([^/]+))?|\/settings|\/control|\/stop|\/respond)?$/);
+      const match = url.pathname.match(/^\/api\/threads\/([^/]+)(\/messages(?:\/([^/]+))?|\/settings|\/context|\/control|\/stop|\/respond)?$/);
       if (!match || !UUID.test(match[1]) || (match[3] && !UUID.test(match[3]))) throw new BridgeError('无效的任务地址', 'INVALID_REQUEST', 400);
       const id = match[1];
+      if (req.method === 'GET' && match[2] === '/context') {
+        const { thread } = await bridge.read(id, undefined, { turnLimit: 1 });
+        const unavailable = reason => ({ available: false, items: [], reason });
+        if (thread.kind !== 'codex' || thread.hostId && thread.hostId !== 'local') {
+          json(res, 200, { threadId: id, available: false, reason: '仅支持本机 Codex 会话', permissions: { supported: false, current: 'unknown', canOverride: false, options: [] }, git: unavailable('当前会话不是本机会话'), agents: unavailable('当前会话不是本机会话'), sources: unavailable('当前会话不是本机会话') }); return;
+        }
+        try {
+          if (typeof control?.context !== 'function') throw new BridgeError('信息读取未连接', 'CONTROL_UNAVAILABLE', 503);
+          const snapshot = await control.context(id);
+          if (snapshot.threadId !== id || !snapshot.threadContext) throw new BridgeError('会话信息不匹配', 'PROTOCOL_ERROR', 502);
+          const context = snapshot.threadContext;
+          const canOverride = context.permissions.supported && typeof control.send === 'function' && sendAccess(thread).canSend && !snapshot.permissionActive;
+          const [git, agents] = await Promise.all([readGitContext(snapshot.cwd), hydrateAgentContext(context.agents, bridge)]);
+          json(res, 200, { threadId: id, available: true, permissions: { supported: context.permissions.supported && typeof control.send === 'function', current: context.permissions.current, canOverride, options: context.permissions.options,
+            ...(!canOverride ? { reason: snapshot.permissionActive ? '正在运行，权限选择将在下一轮发送时生效' : '此会话当前不能覆盖权限' } : {}) }, git, agents, sources: context.sources });
+        } catch (error) {
+          const code = ['PROTOCOL_ERROR', 'PROTOCOL_INCOMPATIBLE', 'OWNER_UNAVAILABLE', 'UNSUPPORTED_THREAD'].includes(error.code) ? error.code : 'CONTROL_UNAVAILABLE';
+          const reason = code === 'OWNER_UNAVAILABLE' ? '请在桌面载入此会话后重试' : '暂时无法读取桌面会话信息';
+          json(res, 200, { threadId: id, available: false, code, reason, permissions: { supported: false, current: 'unknown', canOverride: false, options: [] }, git: await readGitContext(thread.cwd), agents: unavailable(reason), sources: unavailable(reason) });
+        }
+        return;
+      }
       if (req.method === 'GET' && match[2] === '/control') {
         const { thread } = await bridge.read(id, undefined, { turnLimit: 1 });
         if (!control || !controlAccess(thread)) {
@@ -352,10 +376,10 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
           json(res, 200, { threadId: id, action, value, accepted: true }); return;
         } finally { sending.delete(id); }
       }
-      if (!UUID.test(body.requestId ?? '') || typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > 12000) throw new BridgeError('消息或请求 ID 无效', 'INVALID_REQUEST', 400);
+      if (Object.keys(body).some(k => !['requestId', 'prompt', 'model', 'thinking', 'permissionMode'].includes(k)) || !UUID.test(body.requestId ?? '') || typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > 12000) throw new BridgeError('消息或请求 ID 无效', 'INVALID_REQUEST', 400);
       const key = body.requestId;
-      const selection = modelSelection(body);
-      const hash = promptHash(selection.model ? JSON.stringify({ prompt: body.prompt, ...selection }) : body.prompt);
+      const selection = { ...modelSelection(body), ...permissionSelection(body) };
+      const hash = promptHash(Object.keys(selection).length ? JSON.stringify({ prompt: body.prompt, ...selection }) : body.prompt);
       const previous = await deliveryStore.get(key);
       if (previous) {
         if (previous.threadId !== id || previous.promptHash !== hash) throw new BridgeError('请求 ID 已用于其他消息', 'CONFLICT', 409);
@@ -370,19 +394,29 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
         const data = await bridge.read(id);
         const access = sendAccess(data.thread);
         if (!access.canSend) throw new BridgeError(access.sendDisabledReason, 'SEND_DISABLED', 403);
+        if (selection.permissionMode) {
+          if (access.sendMode === 'follow-up') throw new BridgeError('正在运行的回合不能切换权限，请等待完成后再发送', 'PERMISSION_CHANGE_ACTIVE', 409);
+          if (typeof control?.send !== 'function') throw new BridgeError('当前桌面连接不支持权限覆盖', 'PERMISSION_UNAVAILABLE', 503);
+        }
         if (selection.model) {
           if (access.sendMode === 'follow-up') throw new BridgeError('正在运行的回合不能切换模型或推理强度。请等待完成，或选择沿用桌面设置后追加消息', 'MODEL_CHANGE_ACTIVE', 409);
           await bridge.capabilities();
           validateModelSelection(selection, advertisedModels(bridge.toolCatalog?.find(tool => tool.name === 'send_message_to_thread')));
         }
-        await deliveryStore.reserve({ requestId: key, threadId: id, promptHash: hash });
-        try { await bridge.send(id, body.prompt, selection); }
+        let reserved = false;
+        const reserve = async () => { await deliveryStore.reserve({ requestId: key, threadId: id, promptHash: hash }); reserved = true; };
+        try {
+          if (selection.permissionMode) {
+            const native = await control.send(id, body.prompt, selection, { beforeDispatch: reserve });
+            if (native.threadId !== id || native.delivered !== true) throw new BridgeError('权限消息投递结果未知，请核对桌面', 'DELIVERY_UNKNOWN', 409);
+          } else { await reserve(); await bridge.send(id, body.prompt, selection); }
+        }
         catch (error) {
           if (error.code === 'UNSUPPORTED_THREAD') unsupported.add(id);
-          if (['UNSUPPORTED_THREAD', 'DESKTOP_REJECTED', 'DESKTOP_UNAVAILABLE'].includes(error.code)) await deliveryStore.remove(key);
+          if (reserved && (error.controlNotDispatched === true || ['UNSUPPORTED_THREAD', 'DESKTOP_REJECTED', 'DESKTOP_UNAVAILABLE'].includes(error.code))) await deliveryStore.remove(key);
           throw error;
         }
-        const result = { accepted: true, threadId: id, requestId: key, acceptedAt: new Date().toISOString() };
+        const result = { accepted: true, threadId: id, requestId: key, acceptedAt: new Date().toISOString(), ...(selection.permissionMode ? { permissionMode: selection.permissionMode } : {}) };
         try { await deliveryStore.accept(key, result); }
         catch { throw new BridgeError('桌面已接收但发送回执未能保存，请核对桌面记录。', 'DELIVERY_UNKNOWN', 409); }
         json(res, 200, result);

@@ -64,7 +64,7 @@ test('responses enforce authentication, origin, scope, local ordinary thread and
   assert.equal((await f.respond(ID, { token: 'old', answers: {} })).status, 409);
   assert.equal((await f.respond(ID, { token: PENDING.token })).status, 400);
   assert.equal(f.responses(), 0);
-  for (const config of [{ enableSend: false }, { properties: { kind: 'chatgpt' } }, { properties: { hostId: 'remote' } }, { properties: { archived: true } }]) {
+  for (const config of [{ enableSend: false }, { properties: { kind: 'chatgpt' } }, { properties: { hostId: 'remote' } }, { properties: { archived: true } }, { properties: { delegated: true } }]) {
     const restricted = await fixture(t, config);
     assert.equal((await restricted.respond()).status, 403);
     assert.equal(restricted.responses(), 0);
@@ -113,7 +113,7 @@ test('control cannot bypass session, origin, sending scope, or ordinary local ta
   assert.equal((await f.stop(ID, undefined, { Origin: 'http://untrusted.example' })).status, 403);
   assert.equal((await f.stop(OTHER)).status, 403);
   assert.equal(f.stops(), 0);
-  for (const config of [{ enableSend: false }, { properties: { kind: 'chatgpt' } }, { properties: { hostId: 'remote' } }, { properties: { archived: true } }]) {
+  for (const config of [{ enableSend: false }, { properties: { kind: 'chatgpt' } }, { properties: { hostId: 'remote' } }, { properties: { archived: true } }, { properties: { delegated: true } }]) {
     const restricted = await fixture(t, config);
     assert.equal((await (await restricted.read(ID)).json()).canStop, false);
     assert.equal((await restricted.stop(ID)).status, 403);

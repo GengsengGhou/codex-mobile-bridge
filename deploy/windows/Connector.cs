@@ -233,7 +233,7 @@ class ConnectorWindow : Form {
     static bool IsDefaultRoot(string path) { return string.Equals(path,Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"CodexMobileConnector"),StringComparison.OrdinalIgnoreCase); }
     static void Register(string root) {
         using(var key=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexMobileConnector")) {
-            key.SetValue("DisplayName","Codex 手机桥接"); key.SetValue("DisplayVersion","0.1.1");
+            key.SetValue("DisplayName","Codex 手机桥接"); key.SetValue("DisplayVersion","0.1.2");
             key.SetValue("InstallLocation",root); key.SetValue("UninstallString","\""+Path.Combine(root,"CodexMobileConnector.exe")+"\" --uninstall");
             key.SetValue("NoModify",1); key.SetValue("NoRepair",1);
         }

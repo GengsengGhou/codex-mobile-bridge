@@ -52,7 +52,7 @@ test('token binds request contents, owner and latest turn but durable attempt id
   assert.equal(publicPendingRequest({ ...a, rawToolArgs: 'private' }).rawToolArgs, undefined);
   assert.equal(publicPendingRequest(a).fingerprint, undefined); assert.equal(publicPendingRequest(a).attemptId, undefined);
 });
-test('async questions come from agentMessage and exact native replies resolve them; older unresolved stays readonly', () => {
+test('async questions come from agentMessage and exact native replies resolve them; older unresolved becomes readonly history', () => {
   const turn = { turnId: 'turn-1', status: 'completed', items: [{ type: 'agentMessage', id: 'message', questions: [{ title: 'Async?', options: ['A', 'B'] }] }] };
   const pending = normalizeAsyncQuestions([turn], { ...context, latestTurn: turn }, 'key')[0];
   assert.equal(pending.kind, 'asyncUserInput'); assert.equal(pending.actionable, true);
@@ -64,6 +64,8 @@ test('async questions come from agentMessage and exact native replies resolve th
   const unrelated = { ...answered, params: { input: [{ type: 'text', text: 'Unrelated new message' }] } };
   const old = normalizeAsyncQuestions([turn, unrelated], { ...context, latestTurnId: 'turn-2', latestTurn: unrelated }, 'key')[0];
   assert.equal(old.actionable, false); assert.equal(old.turnId, 'turn-1');
+  assert.equal(old.historical, true); assert.equal(old.reasonCode, 'NOT_LATEST_TURN');
+  assert.equal(publicPendingRequest(old).token, undefined);
   const malformed = { ...answered, params: { input: [{ type: 'text', text: '<send_user_message_question_reply>\n[{"questionItemId":' + JSON.stringify(pending.questions[0].id) + '}]\n</send_user_message_question_reply>' }] } };
   assert.equal(normalizeAsyncQuestions([turn, malformed], { ...context, latestTurn: malformed }, 'key').length, 1);
 });
@@ -92,5 +94,5 @@ test('only an ordered continued exchange makes partially answered siblings histo
   assert.equal(normalize([original])[0].actionable, true);
   const laterTurn = { turnId: 'turn-2', items: [newer, reply('newer', 0)] };
   const older = normalizeAsyncQuestions([{ turnId: 'turn-1', items: [original] }, laterTurn], { ...context, latestTurn: laterTurn }, 'key');
-  assert.equal(older[0].historical, undefined); assert.equal(older[0].actionable, false);
+  assert.equal(older[0].historical, true); assert.equal(older[0].reasonCode, 'NOT_LATEST_TURN'); assert.equal(older[0].actionable, false);
 });

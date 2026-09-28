@@ -134,6 +134,93 @@ test('null model storage does not break the page and desktop default sends no ov
   await until(() => !ui.doc.getElementById('modelSettingsButton').disabled, 'default send settled');
 });
 
+test('composer sends explicit permission only for a new turn and preserves the next choice for active supplements', async t => {
+  let active = false;
+  const ui = await mount(t, call => {
+    if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', defaultThreadId: A, permissionOptions: { send: [{ id: 'full-access' }, { id: 'request-approval' }], create: [] } });
+    if (call.path === `/api/threads/${A}`) return response(snapshot(A, 'Alpha reply', active ? 'active' : 'idle'));
+    if (call.path.endsWith('/messages')) return response({ accepted: true });
+  });
+  const select = ui.doc.getElementById('messagePermission'); select.value = 'request-approval'; select.dispatchEvent(new ui.window.Event('change'));
+  const send = value => { const input = ui.doc.getElementById('promptInput'); input.value = value; input.dispatchEvent(new ui.window.Event('input')); ui.doc.getElementById('composer').dispatchEvent(new ui.window.Event('submit', { cancelable: true })); };
+  send('new turn'); await until(() => ui.requests.some(call => call.method === 'POST'), 'permission send');
+  assert.equal(JSON.parse(ui.requests.find(call => call.method === 'POST').body).permissionMode, 'request-approval');
+  await until(() => !select.disabled, 'permission send settled');
+  active = true; ui.doc.getElementById('refreshButton').click();
+  await until(() => ui.doc.getElementById('sendButton').textContent.includes('补充'), 'active mode');
+  send('active supplement'); await until(() => ui.requests.filter(call => call.method === 'POST').length === 2, 'supplement send');
+  assert.equal(JSON.parse(ui.requests.filter(call => call.method === 'POST')[1].body).permissionMode, undefined);
+  await until(() => !select.disabled, 'supplement settled');
+  assert.equal(ui.window.sessionStorage.getItem(`codex-mobile-permission:${A}`), 'request-approval');
+});
+
+test('older bridge blocks a restored explicit permission without clearing the draft or posting', async t => {
+  const ui = await mount(t, undefined, { session: { [`codex-mobile-permission:${A}`]: 'full-access' } });
+  const input = ui.doc.getElementById('promptInput'); input.value = 'keep this draft'; input.dispatchEvent(new ui.window.Event('input'));
+  ui.doc.getElementById('composer').dispatchEvent(new ui.window.Event('submit', { cancelable: true }));
+  assert.equal(ui.requests.some(call => call.method === 'POST'), false); assert.equal(input.value, 'keep this draft');
+  assert.match(ui.doc.getElementById('notice').textContent, /权限.*不可用/);
+});
+
+test('running supplement migration reconciles one stable user bubble through polling, older pages and cached thread switches', async t => {
+  let migrated = false;
+  const supplement = { id: 'native-user-id', type: 'userMessage', source: 'desktop-bridge', text: '同一条补充消息' };
+  const old = { id: 'old-position', startedAt: 1000, status: 'completed', items: [supplement, { id: 'old-work', type: 'activity', text: '工具活动' }] };
+  const ui = await mount(t, call => {
+    if (call.path === `/api/threads/${A}?cursor=before`) return response({ ...snapshot(A), turns: [old], page: { hasMore: false } });
+    if (call.path === `/api/threads/${A}`) return response({ ...snapshot(A), sendMode: 'follow-up', turns: migrated ? [{ id: 'new-position', startedAt: 1100, status: 'inProgress', items: [supplement, { id: 'reply', type: 'agentMessage', text: 'Alpha reply' }] }] : [{ ...old, items: [...old.items, { id: 'reply', type: 'agentMessage', text: 'Alpha reply' }] }], page: { hasMore: true, nextCursor: 'before' } });
+  });
+  assert.equal(ui.doc.querySelectorAll('.message.user').length, 1); migrated = true; ui.doc.getElementById('refreshButton').click();
+  await until(() => ui.doc.querySelector('.turn[data-turn-id="new-position"] .message.user'), 'migrated position');
+  assert.equal(ui.doc.querySelectorAll('.message.user').length, 1);
+  ui.doc.getElementById('olderButton').click(); await until(() => ui.doc.getElementById('olderButton').hidden, 'old page settled');
+  assert.equal(ui.doc.querySelectorAll('.message.user').length, 1);
+  [...ui.doc.querySelectorAll('.task-item')].find(row => row.textContent === 'Beta').click(); await until(() => ui.doc.getElementById('threadTitle').textContent === 'Beta', 'other chat');
+  [...ui.doc.querySelectorAll('.task-item')].find(row => row.textContent === 'Alpha').click(); await until(() => ui.doc.querySelector('.turn[data-turn-id="new-position"] .message.user'), 'cached restore');
+  await until(() => ui.doc.getElementById('threadLoadState').hidden, 'cached latest read settled');
+  assert.equal(ui.doc.querySelectorAll('.message.user').length, 1);
+});
+
+test('long current questions stay collapsed across polls, reload and thread switches without losing answers', async t => {
+  const request = { requestId: 'current-long', token: 'long-token', kind: 'asyncUserInput', turnId: 'turn-live', title: '等待回答', actionable: true, questions: [{ id: 'q', header: '资源', question: '请确认超算任务资源与路径。'.repeat(100) + '/scratch/project/very-long-name/run.slurm', options: [], isOther: false, isSecret: false }] };
+  const route = call => {
+    if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', defaultThreadId: A, executionControl: true });
+    const control = call.path.match(/^\/api\/threads\/([^/]+)\/control$/);
+    if (control) return response({ threadId: control[1], available: true, pendingRequestCount: control[1] === A ? 1 : 0, pendingRequests: control[1] === A ? [request] : [], historicalQuestions: [] });
+  };
+  const ui = await mount(t, route); await until(() => ui.doc.querySelector('.pending-question-form'), 'long question');
+  assert.equal(ui.doc.getElementById('pendingRequests').hidden, true);
+  ui.doc.getElementById('controlToggle').click(); assert.equal(ui.doc.getElementById('pendingRequests').hidden, false);
+  const answer = ui.doc.querySelector('.pending-answer'); answer.value = '保留草稿'; answer.dispatchEvent(new ui.window.Event('input'));
+  ui.doc.getElementById('closePendingRequests').click(); assert.equal(ui.doc.getElementById('pendingRequests').hidden, true);
+  ui.doc.getElementById('refreshControl').click(); await until(() => ui.requests.filter(call => call.path.endsWith('/control')).length >= 2, 'poll');
+  assert.equal(ui.doc.getElementById('pendingRequests').hidden, true);
+  [...ui.doc.querySelectorAll('.task-item')].find(row => row.textContent === 'Beta').click(); await until(() => ui.doc.getElementById('threadTitle').textContent === 'Beta', 'switch away');
+  [...ui.doc.querySelectorAll('.task-item')].find(row => row.textContent === 'Alpha').click(); await until(() => ui.doc.querySelector('.pending-answer'), 'return');
+  assert.equal(ui.doc.getElementById('pendingRequests').hidden, true); assert.equal(ui.doc.querySelector('.pending-answer').value, '保留草稿');
+  const session = Object.fromEntries(Array.from({ length: ui.window.sessionStorage.length }, (_, i) => ui.window.sessionStorage.key(i)).map(key => [key, ui.window.sessionStorage.getItem(key)]));
+  const reloaded = await mount(t, route, { session }); await until(() => reloaded.doc.querySelector('.pending-answer'), 'reload long question');
+  assert.equal(reloaded.doc.getElementById('pendingRequests').hidden, true); assert.equal(reloaded.doc.querySelector('.pending-answer').value, '保留草稿');
+  assert.ok(!reloaded.doc.getElementById('controlSummary').textContent.includes('新'));
+});
+
+test('positively stale questions move to closable history and offline controls preserve actionable requests', async t => {
+  let available = true;
+  const request = { requestId: 'old-question', token: 'old-token', turnId: 'old-turn', kind: 'asyncUserInput', actionable: false, reasonCode: 'NOT_LATEST_TURN', questions: [{ id: 'q', question: '旧问题', options: [] }] };
+  const ui = await mount(t, call => {
+    if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', defaultThreadId: A, executionControl: true });
+    if (call.path === `/api/threads/${A}/control`) return response(available ? { threadId: A, available: true, pendingRequestCount: 1, pendingRequests: [request] } : { threadId: A, available: false, reason: '连接中断' });
+  });
+  await until(() => ui.doc.getElementById('historicalQuestionsContent').textContent.includes('旧问题'), 'stale migrated');
+  assert.equal(ui.doc.querySelectorAll('.pending-card').length, 0); assert.equal(ui.doc.getElementById('controlState').hidden, true);
+  ui.doc.getElementById('closeHistoricalQuestions').click(); assert.equal(ui.doc.getElementById('historicalQuestions').hidden, true);
+  ui.doc.getElementById('refreshControl').click(); await until(() => ui.requests.filter(call => call.path.endsWith('/control')).length === 2, 'stale poll'); await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(ui.doc.getElementById('historicalQuestions').hidden, true); assert.equal(ui.doc.getElementById('showHistoricalQuestions').hidden, false);
+  ui.doc.getElementById('showHistoricalQuestions').click(); assert.equal(ui.doc.getElementById('historicalQuestions').hidden, false);
+  available = false; ui.doc.getElementById('refreshControl').click(); await until(() => ui.doc.getElementById('controlSummary').textContent.includes('连接中断'), 'unavailable retained');
+  assert.equal(ui.doc.getElementById('historicalQuestions').hidden, false);
+});
+
 test('historical questions stay in collapsed task details without a pending banner', async t => {
   const ui = await mount(t, call => {
     if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', callerThreadId: A, defaultThreadId: A, executionControl: true });
@@ -569,6 +656,7 @@ test('user input preserves question controls across polls and sends options, fre
   assert.deepEqual(JSON.parse(ui.requests.find(call => call.path === `/api/threads/${A}/respond`).body), {
     requestId: 'input-1', token: 'input-token', answers: { choice: { answers: ['YAML'] }, summary: { answers: ['Keep this note'] } }
   });
+  await until(() => card.textContent.includes('回复已送达桌面'), 'question response settled');
   assert.deepEqual(ui.errors, []);
 });
 

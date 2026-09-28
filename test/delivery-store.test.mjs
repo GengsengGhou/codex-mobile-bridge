@@ -37,6 +37,16 @@ test('a failed atomic write retains the previous journal and cleans temporary fi
   assert.deepEqual(await readdir(directory), ['deliveries.json']);
 });
 
+test('accepted permission receipts survive restart and invalid modes fail closed', async t => {
+  const { path } = await fixture(t), store = new DeliveryStore({ path }), value = entry();
+  const receipt = { accepted: true, threadId: value.threadId, requestId: value.requestId, acceptedAt: new Date().toISOString(), permissionMode: 'request-approval' };
+  await store.reserve(value); await store.accept(value.requestId, receipt);
+  assert.deepEqual((await new DeliveryStore({ path }).get(value.requestId)).receipt, receipt);
+  const saved = JSON.parse(await readFile(path, 'utf8')); saved.deliveries[0].receipt.permissionMode = 'unknown';
+  await writeFile(path, JSON.stringify(saved));
+  await assert.rejects(new DeliveryStore({ path }).get(value.requestId), { code: 'DELIVERY_STORE_UNAVAILABLE' });
+});
+
 test('duplicate reservations serialize and the delivery limit never evicts unresolved entries', async () => {
   const store = new DeliveryStore({ path: null }), value = entry();
   const results = await Promise.allSettled([store.reserve(value), store.reserve(value)]);

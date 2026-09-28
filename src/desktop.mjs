@@ -110,6 +110,7 @@ export class DesktopBridge {
       id: t.id, title: t.title || '未命名任务', kind: t.kind, status: statusOf(t.status), hostId: 'local', cwd: t.cwd,
       ...projectForThread(t, metadata),
       pinned: Number.isInteger(t.pinnedIndex), pinnedIndex: t.pinnedIndex ?? null, updatedAt: t.updatedAt,
+      ...(isDelegatedThread(t) ? { delegated: true } : {}),
     }]));
     return { threads: [...unique.values()], unavailableHosts: data.unavailableHosts ?? [], unavailableSources: data.unavailableSources ?? [] };
   }
@@ -158,10 +159,13 @@ export class DesktopBridge {
   }
 }
 export function statusOf(status) { return typeof status === 'string' ? status : status?.type ?? 'unknown'; }
+export function isDelegatedThread(state) {
+  return Boolean(state.parentThreadId || state.agentNickname || state.source && typeof state.source === 'object' && ('subAgent' in state.source || 'subagent' in state.source));
+}
 export function normalizeThread(data) {
   const turns = data.page?.order === 'newest_first' ? [...data.turns].reverse() : [...data.turns];
   return {
-    thread: { id: data.thread.id, kind: data.thread.kind, hostId: data.thread.hostId, archived: data.thread.archived === true, title: data.thread.title, status: statusOf(data.thread.status), cwd: data.thread.cwd },
+    thread: { id: data.thread.id, kind: data.thread.kind, hostId: data.thread.hostId, archived: data.thread.archived === true, title: data.thread.title, status: statusOf(data.thread.status), cwd: data.thread.cwd, ...(isDelegatedThread(data.thread) ? { delegated: true } : {}) },
     page: { hasMore: Boolean(data.page?.hasMore), nextCursor: data.page?.nextCursor ?? null },
     turns: turns.map(t => ({ id: t.id, status: t.status, startedAt: t.startedAt, completedAt: t.completedAt, durationMs: t.durationMs, items: (t.items ?? []).flatMap(item => {
       if (item.type === 'functionCallOutput' && item.namespace === 'codex_app' && ['send_message_to_thread', 'create_thread'].includes(item.name)) {
