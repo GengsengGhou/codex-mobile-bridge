@@ -4,8 +4,10 @@ import { createServer } from 'node:http';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { guiCommand } from '../scripts/connector-gui.mjs';
+import { guiCommand as realGuiCommand } from '../scripts/connector-gui.mjs';
 import { pairConnector } from '../scripts/setup-connector.mjs';
+const control = { read: async()=>({paused:false,autoStart:false}), resume:async()=>({paused:false,revision:'fixture'}), mayRun:async()=>true };
+const guiCommand = (command,deps={}) => realGuiCommand(command,{control,...deps});
 
 test('first GUI pairing registers deferred login and starts persistent watcher before Codex exists', async () => {
   const calls=[];

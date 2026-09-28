@@ -9,7 +9,7 @@ const root=resolve(new URL('..',import.meta.url).pathname.replace(/^\/([A-Z]:)/i
 const fixture=await mkdtemp(join(tmpdir(),'codex-winforms-acceptance-'));
 await mkdir(join(fixture,'.local'));
 await writeFile(join(fixture,'.local/preserved-fixture.txt'),'fixture-data-survives-install-and-uninstall');
-const setup=join(root,'dist/CodexMobileConnector-Setup.exe');
+const setup=process.argv[2] ? resolve(process.argv[2]) : join(root,'dist/CodexMobileConnector-Setup.exe');
 const install=spawnSync(setup,['--install-root',fixture,'--install'],{windowsHide:false,timeout:120000});
 assert.equal(install.status,0,install.error?.message);
 const exe=join(fixture,'CodexMobileConnector.exe'), node=join(fixture,'runtime/node.exe');

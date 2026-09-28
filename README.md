@@ -2,7 +2,7 @@
 
 通过正在运行的 Codex 桌面任务接口读取与发送消息，复用桌面的模型与配置，不需要在网页填写模型密钥。本项目是实验性的非官方客户端，桌面内部接口升级后可能需要重新适配。
 
-源码仓库：[GengsengGhou/codex-mobile-bridge](https://github.com/GengsengGhou/codex-mobile-bridge)。安装包与校验清单：[v0.1.0 预发行版](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v0.1.0)。仓库目前私有，下载需登录有访问权的 GitHub 账号；服务账号与 GitHub 访问权相互独立。
+源码仓库：[GengsengGhou/codex-mobile-bridge](https://github.com/GengsengGhou/codex-mobile-bridge)。安装包与校验清单：[v0.1.1 预发行版](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v0.1.1)。公开仓库与 Release 可直接下载；源码下载不授予桥接服务账号，使用已有服务仍需管理员邀请。
 
 ## 开始使用
 
@@ -118,7 +118,11 @@ npm run probe
 
 Windows 用户双击 `dist/CodexMobileConnector-Setup.exe`，无需管理员权限或手动安装 Node.js。安装到当前用户后，在中文窗口输入自己的 HTTPS 服务器地址，点击“网页登录 / 获取配对码”，登录网页并在设备页生成配对码，再粘贴配对码并绑定这台电脑。服务器地址可配置，安装器不预设个人域名；发布构建内置校验过官方 SHA256 的 Node.js 和 ws。可先配对再打开 Codex，程序会等待并只读选择可用的现有普通本机会话，不创建或发送任务。账号密码不保存，设备凭据保存到私有 ACL 保护的 `.local/hub-connector.json`。窗口提供状态、重试、打开 Codex 与设置；更换服务器需明确勾选替换配对，验证失败保留旧凭据。卸载默认保留 `.local` 数据；已有安装会拒绝覆盖，保留数据卸载后可重装。旧 ZIP 与 `deploy/install-connector.cmd` 仍可用于终端安装，需打开 Codex 并在交互终端选择启动会话。图形安装与校验见 [docs/windows-installer.md](docs/windows-installer.md)。
 
-图形配对成功后立即登记当前用户登录恢复并启动 WMI 独立后台监测，无需保持安装窗口打开。Codex 尚未打开或没有普通本机会话时，已授权的首次配置持续等待；重启后用户登录 Windows 也会继续等待并完成首次桥接。首次身份验证并保存后清除待配置授权，后续只恢复保存的会话身份与发送范围；旧安装的配置缺失或损坏不会自动授予新身份。当前用户登录任务（不提升权限）和 Windows 启动项通过同一互斥锁合并为一个恢复监测，每 10 秒检查桥接和连接器；启动暂时失败或连接器退出后自动重试，网络离线由连接器重连，不重新配对或发送聊天消息。不自动开启 Codex，不支持登录前控制或唤醒；移动安装目录/Node 后需保留数据重新安装。独立命名的启动项和登录任务不会替换其他程序命令。启动诊断见 `.local/connector-login-bootstrap.log` 和 `.local/connector-login.*.log`，连接器状态见 `.local/hub-connector-state.json`；这些状态日志不包含设备令牌。
+新图形安装默认手动启动：配对后本次连接会启动 WMI 独立后台监测，等待 Codex 并恢复本安装的连接器，但默认不登记 Windows 登录启动。窗口右上角 X 只隐藏到托盘，可从托盘恢复窗口；主动“退出”会停止本安装拥有的监测和连接器，手机入口随之离线，不停止独立桥接、Codex 或其正在运行的任务。下次手动打开会恢复保存的配对，无需重新输入配对码。
+
+设置中可明确开启或关闭当前用户的 Windows 登录后自动连接。开启后，下次登录 Windows 会隐藏启动到托盘并恢复监测、等待 Codex；它不是登录前控制，也不会自动开启 Codex、唤醒睡眠或恢复断电。关闭开关取消之后的登录自动连接，不改变当前连接；本次主动退出会保留本次登录的暂停状态，防止被后台重新拉起，也不清除已保存的自动选择，下次登录仍按该选择运行。已有新版偏好或仍可确认本安装拥有的旧登录入口时保留自动选择；旧 v0.1.0 卸载会移除其登录设置，保留配对重装后需重新核对、勾选自动连接开关。高级 ZIP / 源码 CLI 的显式登录注册入口仍保留旧自动模式，见安装说明。
+
+首次身份验证并保存后清除待配置授权，后续只恢复保存的会话身份与发送范围；旧安装配置缺失或损坏不会自动授予新身份。当前用户登录任务（不提升权限）和启动项通过同一互斥锁合并为一个监测，每 10 秒检查桥接和连接器；网络离线由连接器重连，不重新配对或发送聊天消息。移动安装目录或 Node 后需保留数据重新安装。独立命名的任务与启动项不会替换其他程序命令。启动诊断见 `.local/connector-login-bootstrap.log` 和 `.local/connector-login.*.log`，状态见 `.local/hub-connector-state.json`；这些日志不包含设备令牌。
 
 已完成公网 HTTPS 登录、后台 WSS 连接和真实会话只读验收；实体手机触摸及第二台实际电脑尚未验收。发布包和 SHA256 清单保存在 `dist/`，不进入源码仓库。部署、隔离、安装与启动条件见 [docs/vps-device-hub.md](docs/vps-device-hub.md)，原生 VPS 操作见 [docs/native-vps-deployment.md](docs/native-vps-deployment.md)。
 

@@ -7,7 +7,7 @@
 - Ubuntu / Debian，已有可正常使用的 Docker Engine、`docker compose` 和 `iproute2`。Docker 安装请遵循对应发行版的 [官方说明](https://docs.docker.com/engine/install/)，不要把系统的 `docker.io` 与官方 Docker 包混装。
 - 有自己的域名，DNS A 记录指向 VPS；只有服务器 IPv6 可访问时才配置 AAAA。放行入站 TCP 80/443，允许 HTTPS 出站。示例 `codex.example.com` 必须替换为自己的域名。
 - 80/443 没有已有监听服务。安装脚本遇到占用会停止，不会替换已有代理；已有代理整合需要自行审查，不能直接照此执行。
-- 已按照 [下载与校验](quick-start.md#下载与校验) 获取服务器 tar.gz 和 `SHA256SUMS`。私有仓库请浏览器下载后上传 VPS，匿名下载无效。
+- 已按照 [下载与校验](quick-start.md#下载与校验) 获取服务器 tar.gz 和 `SHA256SUMS`。公开 Release 可直接下载，也可浏览器下载后上传 VPS；直接下载命令见 [原生教程](native-vps-deployment.md#3-下载上传并校验服务器包)。
 
 以下命令在 VPS 的 root shell 执行，仅适用于首次部署；先把两个下载文件上传到 `/root/codex-hub-release/`。
 

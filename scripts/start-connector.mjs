@@ -5,8 +5,10 @@ import { startConnector } from '../hub/connector.mjs';
 import { connectorConfigPath } from './setup-connector.mjs';
 import { launchWindowsBridge } from './windows-launch.mjs';
 import { writeRecoveryFile } from '../src/recovery.mjs';
+import { connectorMayRun } from './connector-control.mjs';
 
 export async function runSavedConnector({ configPath = connectorConfigPath } = {}) {
+  if (!await connectorMayRun(resolve(configPath, '../..'))) throw new Error('连接器已暂停。');
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   if (config.version !== 1) throw new Error('连接器配置版本不兼容，请重新配对。');
   return startConnector(config);
@@ -30,7 +32,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         return writes;
       };
       await publish();
-      const heartbeat = setInterval(() => { publish().catch(() => {}); }, 1000);
+      const heartbeat = setInterval(async () => {
+        try { if (!await connectorMayRun(fileURLToPath(new URL('..', import.meta.url)))) { stop(); return; } await publish(); }
+        catch { stop(); }
+      }, 1000);
       const stop = () => { clearInterval(heartbeat); connector.stop(); publish().catch(() => {}); };
       process.once('SIGINT', stop); process.once('SIGTERM', stop);
       console.log('连接器已启动，正在连接已配对的 Hub。');

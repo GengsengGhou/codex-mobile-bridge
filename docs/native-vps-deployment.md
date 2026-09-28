@@ -54,7 +54,7 @@ systemctl is-active caddy
 
 ## 3. 下载、上传并校验服务器包
 
-在自己的电脑上用浏览器登录有仓库访问权的 GitHub 账号，打开 [v0.1.0 预发行版](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v0.1.0)，下载 `codex-device-hub.tar.gz` 和 `SHA256SUMS`。私有 Release 不能匿名 `curl` 下载；下载权限不等于桥接账号权限。
+打开公开的 [v0.1.1 预发行版](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v0.1.1)，下载 `codex-device-hub.tar.gz` 和 `SHA256SUMS`。可在自己的电脑用浏览器下载后上传，也可直接在 VPS 下载，不需要 GitHub 令牌；下载不授予桥接服务账号。
 
 先在 VPS root shell 创建上传目录：
 
@@ -62,13 +62,22 @@ systemctl is-active caddy
 install -d -m 0700 /root/codex-hub-release
 ```
 
-回到自己电脑的下载目录，在 PowerShell 或终端上传；将 `VPS_IP` 替换为自己的地址：
+使用浏览器下载时，回到自己电脑的下载目录，在 PowerShell 或终端上传；将 `VPS_IP` 替换为自己的地址：
 
 ```text
 scp codex-device-hub.tar.gz SHA256SUMS root@VPS_IP:/root/codex-hub-release/
 ```
 
-回到 VPS root shell：
+或者在 VPS root shell 直接下载公开资产：
+
+```bash
+cd /root/codex-hub-release
+release_url=https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v0.1.1
+curl -fL --proto '=https' --tlsv1.2 "$release_url/codex-device-hub.tar.gz" -o codex-device-hub.tar.gz
+curl -fL --proto '=https' --tlsv1.2 "$release_url/SHA256SUMS" -o SHA256SUMS
+```
+
+无论使用哪种下载方式，都在 VPS root shell 校验：
 
 ```bash
 cd /root/codex-hub-release
@@ -81,7 +90,7 @@ grep '  codex-device-hub.tar.gz$' SHA256SUMS | sha256sum --check -
 tar -xzf codex-device-hub.tar.gz deploy/native-install.sh
 ```
 
-未来仓库改为公开时才可匿名使用 Release 下载 URL；当前请使用上述浏览器下载与上传步骤。
+下载失败时停止，核对 GitHub 可达性、发行版本及下载文件大小，不跳过校验。
 
 ## 4. 首次安装与 HTTPS
 

@@ -9,6 +9,7 @@ import { probeLocalBridge, chooseFreePort, ensureLocalBridge, selectOrdinaryLoca
 import { startBridge, verifyBridge } from './start.mjs';
 import { launchWindowsBridge } from './windows-launch.mjs';
 import { hubOrigin, privateFile } from './setup-connector.mjs';
+import { connectorMayRun, readConnectorControl, createConnectorControl } from './connector-control.mjs';
 
 const defaultRoot = fileURLToPath(new URL('..', import.meta.url));
 const executeFile = promisify(execFile);
@@ -94,13 +95,13 @@ $current=Read-Registration` : ''}
   return { name, command, read: () => invoke(false), enable: () => invoke(true), ensureLogonTask: () => registerConnectorLogonTask({ root, execute }) };
 }
 
-export async function registerConnectorLogin({ root = defaultRoot, nodePath = process.execPath, platform = process.platform, registration, probe = probeLocalBridge } = {}) {
+export async function registerConnectorLogin({ root = defaultRoot, nodePath = process.execPath, platform = process.platform, registration, probe = probeLocalBridge, registerStartup = true } = {}) {
   if (platform !== 'win32') throw new Error('连接器登录启动仅支持 Windows。');
   root = resolve(root); nodePath = resolve(nodePath);
   const config = await savedConnector(root);
   await access(nodePath); await access(resolve(root, 'scripts/connector-login.ps1'));
   const startup = registration || createConnectorLoginRegistration({ root });
-  const current = await startup.read();
+  const current = registerStartup ? await startup.read() : {};
   if (current.conflict) throw new Error('登录启动项已被其他命令占用，无法替换。');
   const runtimePath = resolve(root, '.local/runtime.json');
   try { await readFile(runtimePath); }
@@ -114,13 +115,14 @@ export async function registerConnectorLogin({ root = defaultRoot, nodePath = pr
   if (runtime.port !== config.bridgePort) throw new Error('保存的桥接端口和连接器端口不同，尚未启用登录启动。');
   await writeRecoveryFile(resolve(root, '.local/connector-login.json'), { version: 1, nodePath });
   await privateFile(resolve(root, '.local/connector-login.json'));
+  if (!registerStartup) return { enabled: false, name: startup.name };
   const applied = await startup.enable();
   if (!applied.enabled || applied.conflict) throw new Error('Windows 登录启动未生效，请检查当前用户权限。');
   if (startup.ensureLogonTask) await startup.ensureLogonTask();
   return { enabled: true, name: startup.name, script: resolve(root, 'scripts/connector-login.ps1') };
 }
 
-export async function registerDeferredConnectorLogin({ root = defaultRoot, nodePath = process.execPath, platform = process.platform, registration, allowBootstrap = false } = {}) {
+export async function registerDeferredConnectorLogin({ root = defaultRoot, nodePath = process.execPath, platform = process.platform, registration, allowBootstrap = false, registerStartup = true } = {}) {
   if (platform !== 'win32') throw new Error('连接器登录启动仅支持 Windows。');
   root = resolve(root); nodePath = resolve(nodePath);
   const config = await savedConnector(root); await access(nodePath); await access(resolve(root, 'scripts/connector-login.ps1'));
@@ -137,11 +139,12 @@ export async function registerDeferredConnectorLogin({ root = defaultRoot, nodeP
     pendingBootstrap = true;
   }
   const startup = registration || createConnectorLoginRegistration({ root });
-  const current = await startup.read();
+  const current = registerStartup ? await startup.read() : {};
   if (current.conflict) throw new Error('登录启动项已被其他命令占用，无法替换。');
   // This marker permits first bootstrap at a later logon without selecting a task in the GUI.
   await writeRecoveryFile(resolve(root, '.local/connector-login.json'), { version: 1, nodePath, ...(pendingBootstrap ? { bootstrap: true } : {}) });
   await privateFile(resolve(root, '.local/connector-login.json'));
+  if (!registerStartup) return { enabled: false, name: startup.name, pendingBootstrap };
   const applied = await startup.enable();
   if (!applied.enabled || applied.conflict) throw new Error('Windows 登录启动未生效，请检查当前用户权限。');
   if (startup.ensureLogonTask) await startup.ensureLogonTask();
@@ -150,11 +153,13 @@ export async function registerDeferredConnectorLogin({ root = defaultRoot, nodeP
 
 export async function launchConnectorLoginWatcher({ root = defaultRoot, launch = launchWindowsBridge } = {}) {
   root = resolve(root);
+  if (!await connectorMayRun(root)) return { paused: true };
   return launch({ root, nodePath: process.execPath, supervisorPath: resolve(root, 'scripts/connector-login.mjs'), env: {}, instanceName: 'connector-login', logName: 'connector-login' });
 }
 
-export async function restoreConnectorLogin({ root = defaultRoot, ensureBridge, bootstrap = ensureLocalBridge, finishBootstrap = registerConnectorLogin, probe = probeLocalBridge, verify = verifyBridge, start = startBridge, choosePort = chooseFreePort, launch = launchWindowsBridge, sleep = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms)), signal, output = console, monitor = false, now = Date.now, readState = readRecoveryFile } = {}) {
+export async function restoreConnectorLogin({ root = defaultRoot, ensureBridge, bootstrap = ensureLocalBridge, finishBootstrap = registerConnectorLogin, probe = probeLocalBridge, verify = verifyBridge, start = startBridge, choosePort = chooseFreePort, launch = launchWindowsBridge, sleep = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms)), signal, output = console, monitor = false, now = Date.now, readState = readRecoveryFile, mayRun = connectorMayRun } = {}) {
   root = resolve(root);
+  if (!await mayRun(root)) return { submitted: false, paused: true };
   const config = await savedConnector(root);
   const runtimePath = resolve(root, '.local/runtime.json');
   const loginSettings = await readRecoveryFile(resolve(root, '.local/connector-login.json'), {});
@@ -168,6 +173,7 @@ export async function restoreConnectorLogin({ root = defaultRoot, ensureBridge, 
   if (runtime && runtime.port !== config.bridgePort) throw new Error('保存的桥接端口和连接器端口不同，请重新运行安装。');
   let announced = false, bridgeStarted = false;
   while (!signal?.aborted) {
+    if (!await mayRun(root)) return { submitted: false, paused: true };
     let bridge;
     try {
       if (!runtime) {
@@ -179,13 +185,14 @@ export async function restoreConnectorLogin({ root = defaultRoot, ensureBridge, 
           if (!existing && await choosePort(config.bridgePort) !== config.bridgePort) throw new Error('桥接端口已被其他程序占用。');
           const ready = existing ? { connected: true, port: config.bridgePort } : await bootstrap({ root, port: config.bridgePort, selectThread: selectOrdinaryLocalThread });
           if (!ready?.connected || ready.port !== config.bridgePort) throw new Error('正在等待首次 Codex 连接。');
-          await finishBootstrap({ root, probe });
+          if (!await mayRun(root)) return { submitted: false, paused: true };
+          await finishBootstrap({ root, probe, registerStartup: (await readConnectorControl(root)).autoStart === null });
           pendingBootstrap = false;
           runtime = await loadRuntimeConfig({ configPath: runtimePath, env: {} });
         }
         if (runtime.port !== config.bridgePort) throw new Error('保存的桥接端口和连接器端口不同。');
       }
-      if (pendingBootstrap) { await finishBootstrap({ root, probe }); pendingBootstrap = false; }
+      if (pendingBootstrap) { await finishBootstrap({ root, probe, registerStartup: (await readConnectorControl(root)).autoStart === null }); pendingBootstrap = false; }
       if (ensureBridge) bridge = await ensureBridge({ root, port: config.bridgePort, selectThread: async () => { throw new Error('登录启动不进行首次会话选择。'); } });
       else {
         let status = await probe(config.bridgePort);
@@ -204,12 +211,14 @@ export async function restoreConnectorLogin({ root = defaultRoot, ensureBridge, 
       await sleep(10000); continue;
     }
     if (signal?.aborted) return { submitted: false, cancelled: true };
+    if (!await mayRun(root)) return { submitted: false, paused: true };
     try {
       const state = monitor ? await readState(resolve(root, '.local/hub-connector-state.json'), {}) : {};
       const age = now() - Date.parse(state.updatedAt);
       if (monitor && Number.isFinite(age) && age >= 0 && age < 6000 && state.state !== 'stopped') {
         await sleep(10000); continue;
       }
+      if (!await mayRun(root)) return { submitted: false, paused: true };
       const launched = await launch({ root, nodePath: process.execPath, supervisorPath: resolve(root, 'scripts/start-connector.mjs'), env: {}, instanceName: 'hub-connector', logName: 'hub-connector' });
       if (!monitor) return { submitted: true, bridgePort: bridge.port, bridgeStarted: bridge.started, pid: launched.pid };
       output.log(`已提交连接器启动（PID ${launched.pid}）；继续监测自动恢复。`);
@@ -225,6 +234,10 @@ export async function restoreConnectorLogin({ root = defaultRoot, ensureBridge, 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     if (process.argv.includes('--register')) { const result = await registerConnectorLogin(); console.log(`已启用当前用户登录启动：${result.name}`); }
+    else if (process.argv.includes('--startup')) {
+      const value = await createConnectorControl({ root: defaultRoot }).resume('startup');
+      if (!value.paused && value.autoStart) await launchConnectorLoginWatcher();
+    }
     else if (process.argv.includes('--background')) {
       const result = await launchConnectorLoginWatcher();
       console.log(`已提交登录恢复监测（PID ${result.pid}）。`);
