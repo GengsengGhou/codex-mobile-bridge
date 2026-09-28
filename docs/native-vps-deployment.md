@@ -196,6 +196,8 @@ cp -a /etc/caddy/sites/codex-mobile-hub.caddy /var/backups/codex-mobile-hub/
 
 安装脚本只负责首次安装，发现旧 `app` 会拒绝。升级需要先备份数据库与配置，检查新版兼容性，再明确替换应用目录并保留回滚路径。不要用删除 `/var/lib/codex-mobile-hub` 或重新初始化管理员代替升级。
 
+运行中的 Node 进程不会重新载入已导入的协议模块。升级路由、连接器或 relay 时，不能只替换磁盘文件或仅重启 Hub：还要在没有进行中转发、未知投递或待确认操作的边界，核对并刷新本项目的常驻 connector、桥接 child 和 Hub；保留原 watcher/supervisor、配对凭据、偏好、数据库及环境配置。启动时间早于新协议的 connector 可能仍按旧路由表拒绝新请求，造成断开后重连。验收必须连续读取 status、会话 context/control，并包含一次条件 304，确认同一连接保持、错误类别正确及投递账本不变；不能以健康接口或磁盘 SHA 相等代替这些运行验收。升级后不要自动重试任何聊天、审批或新建提交。
+
 Hub 默认限制为 256 MiB 内存及一个 CPU 核，记录清理和日志轮转已随 native 安装配置。项目维护任务保留限定目录中的最近三个应用回滚备份，**不自动备份数据库**；数据库备份保存在上述独立 `/var/backups` 中不受其应用清理范围影响。详见 [资源与保留策略](hub-resource-limits.md)。
 
 ## 没有自己的域名

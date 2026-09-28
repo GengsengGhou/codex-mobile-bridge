@@ -13,6 +13,13 @@
 .context-section dt { color: var(--muted); }
 .context-section dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .context-section code { font-size: 11px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.context-directory { color: var(--ink) !important; font-weight: 600; }
+.context-disclosure { margin-top: 10px; min-width: 0; }
+.context-disclosure > summary { color: var(--muted); font-size: 12px; line-height: 1.5; cursor: pointer; overflow-wrap: anywhere; }
+.context-disclosure[open] > summary { margin-bottom: 9px; }
+.context-section.context-disclosure { margin: 0; }
+.context-section.context-disclosure > summary { color: var(--ink); font-size: 13px; font-weight: 650; }
+.context-item .context-disclosure { margin-top: 4px; }
 .context-items { list-style: none; margin: 0; padding: 0; }
 .context-item { min-width: 0; padding: 7px 0; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .context-item + .context-item { border-top: 1px solid var(--line); }
@@ -20,6 +27,7 @@
 button.context-item-title, a.context-item-title { color: var(--ink); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .context-item-meta { display: block; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .context-agent { padding-left: min(calc(var(--agent-depth, 0) * 12px), 48px); }
+.context-agent .context-item-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .context-content[data-stale="true"] { opacity: .65; }
 .composer-settings { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .permission-control { display: flex; min-width: 0; }

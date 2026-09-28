@@ -17,7 +17,7 @@ export class HubRelay {
   }
   attach(deviceId, ws, { validateDevice = () => true, userId = deviceId } = {}) {
     this.checkConnection(deviceId, userId);
-    this.cancelDevice(deviceId);
+    this.cancelDevice(deviceId, 'reconnecting');
     const connection = { ws, requests: new Map(), validateDevice, userId };
     this.devices.set(deviceId, connection);
     const fence = () => {
@@ -66,13 +66,27 @@ export class HubRelay {
           })();
         } else if (message.type === 'end' && message.direction === 'download' && request.responseStarted && !request.downloadPending) {
           request.res.end(); request.finish();
-        } else if (message.type === 'error') request.fail(new HubTransportError(request.mutation ? 'DELIVERY_UNKNOWN' : 'BRIDGE_UNAVAILABLE', request.mutation ? 409 : 502));
+        } else if (message.type === 'error') {
+          const knownErrors = {
+            BRIDGE_ROUTE_UNSUPPORTED: [502, 'BRIDGE_ROUTE_UNSUPPORTED'],
+            BRIDGE_BUSY: [503, 'BRIDGE_BUSY'],
+          };
+          const known = !request.mutation && Object.hasOwn(knownErrors, message.code) ? knownErrors[message.code] : null;
+          request.fail(known
+            ? new HubTransportError(known[1], known[0])
+            : new HubTransportError(request.mutation ? 'DELIVERY_UNKNOWN' : 'BRIDGE_UNAVAILABLE', request.mutation ? 409 : 502));
+        }
         else throw new Error('Unexpected frame');
       } catch { fence(); }
     });
     return connection;
   }
-  failure(request) { return new HubTransportError(request.mutation && request.dispatched ? 'DELIVERY_UNKNOWN' : 'DEVICE_OFFLINE', request.mutation && request.dispatched ? 409 : 503); }
+  failure(request, reason = 'offline') {
+    if (request.mutation && request.dispatched) return new HubTransportError('DELIVERY_UNKNOWN', 409);
+    if (reason === 'timeout') return new HubTransportError('RELAY_TIMEOUT', 504);
+    if (reason === 'reconnecting') return new HubTransportError('DEVICE_RECONNECTING', 503);
+    return new HubTransportError('DEVICE_OFFLINE', 503);
+  }
   revoked(request) { return new HubTransportError(request.mutation && request.dispatched ? 'DELIVERY_UNKNOWN' : 'SESSION_REVOKED', request.mutation && request.dispatched ? 409 : 401); }
   async proxy(deviceId, req, res, path, context = {}) {
     const connection = this.devices.get(deviceId);
@@ -104,7 +118,7 @@ export class HubRelay {
     req.on('aborted', aborted); res.on('close', closed);
     connection.requests.set(id, request);
     this.active++; this.userRequests.set(userId, (this.userRequests.get(userId) || 0) + 1);
-    request.timer = setTimeout(() => request.fail(this.failure(request)), this.requestTimeoutMs);
+    request.timer = setTimeout(() => request.fail(this.failure(request, 'timeout')), this.requestTimeoutMs);
     void (async () => { try {
       control(connection.ws, { type: 'request', id, method: req.method, path, headers: selectHeaders(req.headers, REQUEST_HEADERS) });
       request.dispatched = true;
@@ -126,11 +140,11 @@ export class HubRelay {
     } catch (error) { request.fail(error instanceof HubTransportError ? error : this.failure(request)); } })();
     return done;
   }
-  cancelDevice(id) {
+  cancelDevice(id, reason = 'offline') {
     const connection = this.devices.get(id); if (!connection) return;
     clearInterval(connection.heartbeat);
     this.devices.delete(id);
-    for (const request of [...connection.requests.values()]) request.fail(this.failure(request));
+    for (const request of [...connection.requests.values()]) request.fail(this.failure(request, reason));
     connection.ws.close(1008, 'Device disconnected');
   }
   cancelSession(token) { for (const connection of this.devices.values()) for (const request of [...connection.requests.values()]) if (request.context.sessionToken === token) request.fail(this.revoked(request)); }

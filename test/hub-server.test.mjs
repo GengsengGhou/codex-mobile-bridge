@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import http from 'node:http';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,6 +10,66 @@ import { HubStore } from '../hub/store.mjs';
 import { hashPassword } from '../hub/auth.mjs';
 import { createHubServer } from '../hub/server.mjs';
 import { startConnector } from '../hub/connector.mjs';
+
+test('rejected revoked-device upgrade handles a peer reset without crashing the hub process', async () => {
+  const storeUrl = new URL('../hub/store.mjs', import.meta.url).href;
+  const serverUrl = new URL('../hub/server.mjs', import.meta.url).href;
+  const source = `
+import net from 'node:net';
+import { HubStore } from ${JSON.stringify(storeUrl)};
+import { createHubServer } from ${JSON.stringify(serverUrl)};
+const store = new HubStore();
+const owner = store.createUser({ name: 'owner', salt: 'test-salt', hash: 'test-hash', role: 'admin', initialAdmin: true });
+const device = store.consumePairing(store.pairing(owner.id).pairingCode);
+store.revokeDevice(owner.id, device.deviceId);
+const server = createHubServer({ store, allowInsecureLocal: true });
+server.on('connection', socket => {
+  const end = socket.end;
+  socket.end = function (chunk, ...args) {
+    if (typeof chunk === 'string' && chunk.startsWith('HTTP/1.1 401 Rejected')) {
+      this.once('finish', () => setImmediate(() => this.emit('error', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }))));
+    }
+    return end.call(this, chunk, ...args);
+  };
+});
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+const response = await new Promise((resolve, reject) => {
+  const socket = net.connect(server.address().port, '127.0.0.1');
+  let text = '';
+  socket.on('error', error => { if (!text) reject(error); });
+  socket.on('data', chunk => {
+    text += chunk.toString();
+    if (text.includes('\\r\\n\\r\\n')) resolve(text);
+  });
+  socket.on('connect', () => socket.write([
+    'GET /api/hub/connector?deviceId=' + device.deviceId + ' HTTP/1.1',
+    'Host: 127.0.0.1:' + server.address().port,
+    'Upgrade: websocket',
+    'Connection: Upgrade',
+    'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+    'Sec-WebSocket-Version: 13',
+    'X-Bridge-Protocol: 1',
+    'Authorization: Bearer ' + device.deviceToken,
+    '', '',
+  ].join('\\r\\n')));
+});
+if (!response.startsWith('HTTP/1.1 401 Rejected')) throw new Error('revoked credential was not rejected');
+console.log(JSON.stringify({ status: response.split('\\r\\n', 1)[0], revoked: store.authenticateDevice(device.deviceToken) === null }));
+await new Promise(resolve => server.close(resolve));
+store.close();
+`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', source], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const stdout = [], stderr = [];
+  child.stdout.on('data', chunk => stdout.push(chunk)); child.stderr.on('data', chunk => stderr.push(chunk));
+  const timer = setTimeout(() => child.kill(), 5000);
+  const [code, signal] = await new Promise(resolve => child.once('close', (exitCode, exitSignal) => resolve([exitCode, exitSignal])));
+  clearTimeout(timer);
+  const diagnostic = Buffer.concat(stderr).toString();
+  assert.equal(code, 0, `child exited ${code ?? signal}: ${diagnostic}`);
+  const result = JSON.parse(Buffer.concat(stdout).toString().trim());
+  assert.equal(result.status, 'HTTP/1.1 401 Rejected');
+  assert.equal(result.revoked, true);
+});
 
 const password = 'isolated-test-password-24';
 const thread = '00000000-0000-4000-8000-000000000001';
@@ -101,7 +162,7 @@ test('two accounts/devices with overlapping thread IDs cannot cross routes, and 
     assert.equal((await h.call(`/devices/${devices[0].deviceId}/api/status`, { cookie: users[0].cookie })).status, 404);
   } finally {
     connectors.forEach(connector => connector.stop());
-    await Promise.all(bridges.map(bridge => new Promise(done => { bridge.closeAllConnections(); bridge.close(done); })));
+    await Promise.all(bridges.map(bridge => new Promise(done => bridge.close(done))));
     await h.close();
   }
 });

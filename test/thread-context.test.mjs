@@ -42,6 +42,20 @@ test('agent messaging updates activity without inventing or replacing spawn pare
   assert.equal(context.agents.items.find(item => item.threadId === CHILD).parentThreadId, ID);
   assert.equal(context.agents.items.find(item => item.threadId === other).parentThreadId, null);
 });
+test('recorded completion survives dormant native loading state without guessing that idle agents are completed', async () => {
+  const completed = summarizeThreadContext({ id: ID }, [{ items: [{ type: 'subAgentActivity', kind: 'completed', agentThreadId: CHILD }] }]).agents;
+  for (const status of ['idle', 'notLoaded', 'unknown']) {
+    const hydrated = await hydrateAgentContext(completed, { read: async id => ({ thread: { id, kind: 'codex', hostId: 'local', status } }) });
+    assert.equal(hydrated.items[0].status, 'completed'); assert.equal(hydrated.items[0].canRead, true);
+  }
+  const active = await hydrateAgentContext(completed, { read: async id => ({ thread: { id, kind: 'codex', status: 'active' } }) });
+  assert.equal(active.items[0].status, 'active');
+  const unavailable = await hydrateAgentContext(completed, { read: async () => { throw new Error('not loaded'); } });
+  assert.equal(unavailable.items[0].status, 'completed'); assert.equal(unavailable.items[0].canRead, false);
+  const running = { ...completed, items: completed.items.map(item => ({ ...item, status: 'running' })) };
+  const idle = await hydrateAgentContext(running, { read: async id => ({ thread: { id, kind: 'codex', status: 'idle' } }) });
+  assert.equal(idle.items[0].status, 'idle');
+});
 test('Git context reads current branch and untracked dirtiness without returning filenames or remote authentication', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'bridge-git-context-')); t.after(() => rm(dir, { recursive: true, force: true }));
   await promisify(execFile)('git', ['init', '--initial-branch=context-test', dir], { windowsHide: true });

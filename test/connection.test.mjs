@@ -57,6 +57,18 @@ test("a POST 401 is never refreshed or retried", async () => {
   assert.equal(calls[0][0], "/api/threads/id/messages");
 });
 
+test('unexpected mutation 304 is uncertain and never retried, refreshed or cached', async () => {
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    const calls = [], snapshots = [];
+    const api = createApi({ fetchImpl: async (path, options) => { calls.push({ path, ...options }); return new Response(null, { status: 304 }); }, onSnapshot: (...snapshot) => snapshots.push(snapshot) });
+    await assert.rejects(api('/api/threads/id/messages', { method, body: '{}' }), { code: 'DELIVERY_UNKNOWN', status: 409 });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, method);
+    assert.equal(calls[0].headers['If-None-Match'], undefined);
+    assert.deepEqual(snapshots, []);
+  }
+});
+
 test('conditional GET returns an isolated cached snapshot on bodyless 304 and mutations invalidate it', async () => {
   const calls = [];
   const api = createApi({ fetchImpl: async (path, options) => {

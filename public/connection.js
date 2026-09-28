@@ -21,12 +21,18 @@ export function createDeviceContext({ pathname, context = null, fetchImpl = fetc
   if (id && (!context?.user?.id || typeof context.user.id !== "string" || context.device?.id?.toLowerCase() !== id)) throw new Error("无法确认设备所属账户");
   const base = id ? `/devices/${id}/` : "/";
   const prefix = id ? `codex-hub:${encodeURIComponent(context.user.id)}:${id}:` : "";
-  let expired = false;
+  let expired = false, requestSequence = 0, lastConnectionSequence = 0;
+  const setOnline = (online, sequence, code = null) => {
+    if (sequence < lastConnectionSequence) return;
+    lastConnectionSequence = sequence;
+    if (context.device.online === online) return;
+    context.device.online = online;
+    window.dispatchEvent(new window.CustomEvent("bridge-device-state-changed", { detail: { online, code } }));
+  };
   const requireLogin = () => { expired = true; window.dispatchEvent(new window.Event("bridge-login-required")); };
   const acceptSnapshot = (path, body) => {
     if (!id || !["/api/access", "/api/status"].includes(path)) return;
-    if (body.device?.id === id) { context.device.online = body.device.online; context.device.name = body.device.name; }
-    else if (path === "/api/status") context.device.online = body.connected === true;
+    if (body.device?.id === id && typeof body.device.name === "string") context.device.name = body.device.name;
   };
   window.addEventListener("bridge-login-required", () => { expired = true; });
   return {
@@ -39,11 +45,27 @@ export function createDeviceContext({ pathname, context = null, fetchImpl = fetc
         const error = new Error(expired ? "请重新登录后继续" : "设备离线，暂时无法操作");
         error.code = expired ? "LOGIN_REQUIRED" : "DEVICE_OFFLINE"; error.status = expired ? 401 : 503; throw error;
       }
+      const sequence = ++requestSequence;
       const response = await fetchImpl(id ? base + path.slice(1) : path, options);
       if (id && response.status === 401) requireLogin();
-      if (id && response.status === 503) context.device.online = false;
-      if (id && ["/api/access", "/api/status"].includes(path) && response.ok) {
-        try { acceptSnapshot(path, await response.clone().json()); } catch {}
+      if (id && response.status === 503) {
+        try {
+          if ((await response.clone().json()).code === "DEVICE_OFFLINE") {
+            setOnline(false, sequence, "DEVICE_OFFLINE");
+          }
+        } catch {}
+      }
+      if (id && (response.ok || response.status === 304) && path.startsWith("/api/")) {
+        if (path === "/api/access") {
+          try {
+            const body = await response.clone().json();
+            if (body.device?.id === id && typeof body.device.online === "boolean") setOnline(body.device.online, sequence);
+            acceptSnapshot(path, body);
+          } catch {}
+        } else {
+          // A successful relay response proves transport reachability, including bodyless 304s.
+          setOnline(true, sequence);
+        }
       }
       return response;
     }
@@ -120,6 +142,12 @@ export function createApi({ fetchImpl = fetch, headers = {}, onSnapshot = () => 
     const cached = conditional ? snapshots.get(path) : null;
     const conditionalOptions = cached ? { ...options, headers: { ...options.headers, "If-None-Match": cached.etag } } : options;
     let response = await send(path, conditionalOptions);
+    if (response.status === 304 && method !== "GET") {
+      const error = new Error("提交结果尚未确认，请先核对送达回执");
+      error.code = "DELIVERY_UNKNOWN";
+      error.status = 409;
+      throw error;
+    }
     if (response.status === 304 && cached && snapshotGeneration === cacheGeneration) { const body = structuredClone(cached.body); onSnapshot(path, body); return body; }
     if (response.status === 304) response = await send(path, options);
     let body;
@@ -136,7 +164,19 @@ export function createApi({ fetchImpl = fetch, headers = {}, onSnapshot = () => 
       if (response.status === 401 && body.code === "LOGIN_REQUIRED") { loginRequired = true; onLoginRequired(); }
     }
     if (!response.ok) {
-      const error = new Error(typeof body.error === "string" ? body.error : `请求失败（${response.status}）`);
+      const messages = {
+        DEVICE_OFFLINE: "设备离线，请等待电脑重新连接",
+        DEVICE_RECONNECTING: "设备正在重新连接，请稍后重试",
+        DEVICE_BUSY: "设备请求繁忙，请稍后重试",
+        ACCOUNT_BUSY: "当前账户请求繁忙，请稍后重试",
+        HUB_BUSY: "入口请求繁忙，请稍后重试",
+        BRIDGE_BUSY: "电脑端转发繁忙，请稍后重试",
+        BRIDGE_UNAVAILABLE: "电脑端桥接暂时不可用",
+        BRIDGE_ROUTE_UNSUPPORTED: "电脑端连接器不支持此请求，请更新并重启连接器",
+        RELAY_TIMEOUT: "读取电脑响应超时，请稍后重试",
+      };
+      const message = messages[body.code] && (!body.error || body.error === body.code) ? messages[body.code] : body.error;
+      const error = new Error(typeof message === "string" ? message : `请求失败（${response.status}）`);
       error.code = body.code;
       error.status = response.status;
       throw error;

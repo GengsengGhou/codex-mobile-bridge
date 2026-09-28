@@ -161,7 +161,11 @@ export function createHubServer({ store = new HubStore(), publicOrigin, allowIns
         try { relay.attach(device.id, ws, { userId: device.userId, validateDevice: () => store.authenticateDevice(credential)?.id === device.id }); }
         catch { ws.close(1013, 'Hub busy'); }
       });
-    } catch (error) { socket.end(`HTTP/1.1 ${error.status || 403} Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`); }
+    } catch (error) {
+      // Rejected WebSocket handshakes stay raw sockets; reset peers can race the refusal response.
+      socket.on('error', () => socket.destroy());
+      socket.end(`HTTP/1.1 ${error.status || 403} Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+    }
   });
   server.maxConnections = resources.maxHttpConnections; server.maxRequestsPerSocket = 1000;
   server.requestTimeout = 120000; server.headersTimeout = 10000; server.relay = relay; server.store = store;

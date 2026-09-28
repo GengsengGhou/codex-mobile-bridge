@@ -5,14 +5,14 @@ import { once } from 'node:events';
 import { WebSocketServer } from 'ws';
 import { startConnector } from '../hub/connector.mjs';
 import { HubRelay } from '../hub/relay.mjs';
-import { MAX_PAYLOAD, UPLOAD_LIMIT, DOWNLOAD_LIMIT, allowedBridgeRequest } from '../hub/protocol.mjs';
+import { MAX_PAYLOAD, UPLOAD_LIMIT, DOWNLOAD_LIMIT, allowedBridgeRequest, control, decode } from '../hub/protocol.mjs';
 
 const thread = '11111111-1111-4111-8111-111111111111';
 async function waitFor(predicate) {
   const deadline = Date.now() + 5000;
   while (!predicate()) { if (Date.now() > deadline) throw new Error('Condition timeout'); await new Promise(resolve => setTimeout(resolve, 10)); }
 }
-async function fixture(t, handler, options = {}) {
+async function fixture(t, handler, options = {}, connectorOptions = {}) {
   let acquisitions = 0;
   const local = http.createServer((req, res) => {
     if (req.url === '/') { acquisitions++; res.setHeader('Set-Cookie', `bridge_session=${String(acquisitions).padStart(64, 'a')}; HttpOnly; Path=/`); res.end('local'); return; }
@@ -33,7 +33,7 @@ async function fixture(t, handler, options = {}) {
   const origin = `http://127.0.0.1:${hub.address().port}`;
   const connectors = [];
   const connect = (deviceId = 'desktop', port = local.address().port) => {
-    const connector = startConnector({ hubOrigin: origin, deviceId, deviceToken: 'test-secret', bridgePort: port, allowInsecureLocal: true, reconnectMinMs: 10, reconnectMaxMs: 30 });
+    const connector = startConnector({ hubOrigin: origin, deviceId, deviceToken: 'test-secret', bridgePort: port, allowInsecureLocal: true, reconnectMinMs: 10, reconnectMaxMs: 30, ...connectorOptions });
     connectors.push(connector); return connector;
   };
   const connector = connect(); await waitFor(() => connector.status().connected);
@@ -41,8 +41,40 @@ async function fixture(t, handler, options = {}) {
     for (const item of connectors) item.stop(); relay.close(); for (const client of wss.clients) client.terminate(); wss.close();
     local.closeAllConnections(); hub.closeAllConnections(); await Promise.all([new Promise(resolve => local.close(resolve)), new Promise(resolve => hub.close(resolve))]);
   });
-  return { origin, relay, connector, connect, local, acquisitions: () => acquisitions };
+  return { origin, relay, connector, connect, local, wss, acquisitions: () => acquisitions };
 }
+
+test('unsupported connector route is rejected per request and leaves the connector usable', async t => {
+  const { origin, connector, wss } = await fixture(t, (_req, res) => res.end('supported'));
+  const socket = [...wss.clients][0];
+  const result = once(socket, 'message');
+  control(socket, { type: 'request', id: thread, method: 'GET', path: `/api/threads/${thread}/future`, headers: {} });
+  const [data, isBinary] = await result;
+  assert.deepEqual(decode(data, isBinary), { v: 1, type: 'error', id: thread, code: 'BRIDGE_ROUTE_UNSUPPORTED' });
+  assert.equal(connector.status().connected, true);
+  const response = await fetch(`${origin}/api/status`);
+  assert.equal(response.status, 200); assert.equal(await response.text(), 'supported');
+});
+
+test('connector capacity rejects only the excess request and recovers after completion', async t => {
+  let release, entered;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  let calls = 0;
+  const { origin, connector } = await fixture(t, async (_req, res) => {
+    calls++;
+    if (calls === 1) { entered(); await blocked; }
+    res.end('ok');
+  }, { maxInFlight: 4 }, { maxInFlight: 1 });
+  const first = fetch(`${origin}/api/status`);
+  await started;
+  const busy = await fetch(`${origin}/api/status`);
+  assert.equal(busy.status, 503); assert.equal((await busy.json()).code, 'BRIDGE_BUSY');
+  assert.equal(connector.status().connected, true);
+  release(); assert.equal((await first).status, 200);
+  assert.equal((await fetch(`${origin}/api/status`)).status, 200);
+  assert.equal(calls, 2);
+});
 
 test('connector streams uploads/downloads and keeps bridge cookies and origin local', async t => {
   const payload = Buffer.alloc(310000, 37);

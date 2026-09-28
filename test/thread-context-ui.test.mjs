@@ -12,11 +12,11 @@ async function mount(t, api, mobile = false, storageFactory) {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   const dom = new JSDOM(html, { url: "http://127.0.0.1" }); t.after(() => dom.window.close());
   const { window } = dom; window.matchMedia = () => ({ matches: !mobile, addEventListener() {} });
-  const selected = [], notices = [];
-  const panel = createThreadContextPanel({ document: window.document, window, api, storage: storageFactory?.(window) || window.sessionStorage, onSelectThread: id => selected.push(id), onNotice: value => notices.push(value) });
+  const selected = [], notices = [], agents = [];
+  const panel = createThreadContextPanel({ document: window.document, window, api, storage: storageFactory?.(window) || window.sessionStorage, onViewAgent: item => selected.push(item.threadId), onAgents: items => agents.push(items), onNotice: value => notices.push(value) });
   panel.setState({ status: options, connected: true, sendMode: "message" }); panel.setThread(A);
   const change = value => { const select = window.document.getElementById("messagePermission"); select.value = value; select.dispatchEvent(new window.Event("change")); };
-  return { window, doc: window.document, panel, change, selected, notices };
+  return { window, doc: window.document, panel, change, selected, notices, agents };
 }
 function context(id = A) { return { threadId: id, available: true, permissions: { current: "request-approval", canOverride: true }, git: { available: true, branch: "feature/context", commit: "a".repeat(40), dirty: true }, agents: { available: true, items: [] }, sources: { available: true, items: [] } }; }
 
@@ -43,7 +43,7 @@ test("context opens only on demand, renders safe nested data and reports partial
   assert.equal(ui.doc.querySelectorAll("#contextContent script").length, 0); assert.equal(ui.doc.querySelectorAll("#contextContent a").length, 0);
   assert.equal(ui.doc.querySelectorAll(".context-agent")[1].style.getPropertyValue("--agent-depth"), "1");
   assert.match(ui.doc.getElementById("contextContent").textContent, /部分代理信息/);
-  ui.doc.querySelector("button.context-item-title").click(); assert.deepEqual(ui.selected, [B]); assert.equal(ui.doc.getElementById("threadContext").hidden, true);
+  ui.doc.querySelector("button.context-item-title").click(); assert.deepEqual(ui.selected, [B]); assert.equal(ui.doc.getElementById("threadContext").hidden, false);
 });
 
 test("an active context does not mark next-turn permission capability permanently unavailable", async t => {
@@ -74,10 +74,35 @@ test("mobile context is modal, focus stays reachable and Escape restores the tog
   assert.equal(ui.doc.querySelector(".conversation").inert, true);
   assert.equal(ui.doc.getElementById("contextScrim").hidden, false);
   assert.equal(ui.doc.activeElement.id, "closeContext");
+  ui.doc.querySelector('summary[data-context-key="disclosure:sources"]').focus();
   ui.doc.getElementById("threadContext").dispatchEvent(new ui.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
   assert.equal(ui.doc.activeElement.id, "refreshContext");
   ui.doc.getElementById("threadContext").dispatchEvent(new ui.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   assert.equal(ui.doc.querySelector(".conversation").inert, false); assert.equal(ui.doc.activeElement.id, "contextToggle");
+});
+
+test("context keeps active agents and permissions visible while completed agents, sources and long metadata stay collapsed", async t => {
+  const directory = "E:/projects/" + "very-long-directory/".repeat(15) + "workspace";
+  const ui = await mount(t, async () => ({ ...context(), cwd: directory,
+    agents: { available: true, items: [{ threadId: B, name: "正在检查", status: "running", canRead: true }, { threadId: C, name: "已完成检查", status: "completed", canRead: true }] },
+    sources: { available: true, items: [{ type: "tool", label: "mcp__internal_provider__query_metadata" }, { type: "file", label: "report.md", path: directory + "/report.md" }] },
+  }));
+  ui.doc.getElementById("contextToggle").click(); await tick();
+  const sources = ui.doc.querySelector('summary[data-context-key="disclosure:sources"]').parentElement;
+  const completed = ui.doc.querySelector('summary[data-context-key="disclosure:completed-agents"]').parentElement;
+  const workspace = ui.doc.querySelector('summary[data-context-key="disclosure:workspace"]').parentElement;
+  assert.equal(sources.open, false); assert.match(sources.firstElementChild.textContent, /来源 · 2/);
+  assert.equal(completed.open, false); assert.match(completed.firstElementChild.textContent, /已完成 · 1/);
+  assert.equal(workspace.open, false);
+  assert.equal(ui.doc.querySelector(".context-directory").textContent, "workspace");
+  assert.equal(ui.doc.querySelector(".context-directory").title, directory);
+  assert.equal(ui.doc.querySelector('[data-context-key="agent:' + B + '"]').closest("details"), null);
+  assert.match(ui.doc.getElementById("contextContent").textContent, /请求批准/);
+  assert.equal(ui.doc.querySelector('.context-item-title[title="mcp__internal_provider__query_metadata"]').textContent, "工具");
+  assert.deepEqual(ui.agents[0].map(item => item.threadId), [B, C]);
+  sources.open = true; await new Promise(resolve => setTimeout(resolve, 10));
+  ui.doc.getElementById("refreshContext").click(); await tick();
+  assert.equal(ui.doc.querySelector('summary[data-context-key="disclosure:sources"]').parentElement.open, true);
 });
 
 test("clearing an archived selection aborts the drawer and a late context cannot reopen it", async t => {

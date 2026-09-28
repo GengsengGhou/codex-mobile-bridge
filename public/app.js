@@ -11,6 +11,7 @@ import { createThreadSnapshotCache } from "./thread-cache.js";
 import { threadGroupKey, mergeSidebarOrder, orderProjectKeys, orderThreadRows, moveOrderItem } from "./sidebar-order.js";
 import { reconcileOptimisticMessages, transcriptAnchor, restoreTranscriptAnchor, mergeTranscriptTurns } from "./conversation-state.js";
 import { createThreadContextPanel } from "./thread-context.js";
+import { createAgentViewer } from "./agent-viewer.js";
 
 (async () => {
   "use strict";
@@ -46,6 +47,7 @@ import { createThreadContextPanel } from "./thread-context.js";
   const NEW_THREAD_PENDING_KEY = "codex-mobile-new-thread-pending";
   const NEW_THREAD_RECEIPT_KEY = "codex-mobile-new-thread-receipt";
   const SELECTED_KEY = "codex-mobile-selected-thread";
+  const AGENT_IDS_KEY = "codex-mobile-subagent-threads";
   const PINNED_KEY = "codex-mobile-pinned-threads";
   const PROJECT_OPEN_KEY = "codex-mobile-open-projects";
   const SAFE_REJECTION_CODES = new Set(["DEVICE_OFFLINE", "LOGIN_REQUIRED", "INVALID_REQUEST", "UNAUTHORIZED", "FORBIDDEN", "METHOD_NOT_ALLOWED", "SEND_DISABLED", "SEND_BUSY", "LIMIT_REACHED", "CONFLICT", "UNSUPPORTED_THREAD", "DESKTOP_REJECTED", "DESKTOP_UNAVAILABLE", "DELIVERY_STORE_UNAVAILABLE", "MANAGEMENT_DISABLED", "MANAGEMENT_UNAVAILABLE", "CONTROL_DISABLED", "CONTROL_UNAVAILABLE", "TURN_CHANGED"]);
@@ -131,12 +133,12 @@ import { createThreadContextPanel } from "./thread-context.js";
     modelUI.message.textContent = state.sendMode === "follow-up" ? "本轮补充沿用运行中的模型，所选设置用于下一轮。" : !modelChoices("send").length ? "桌面暂未提供可用模型目录；沿用桌面设置仍可发送。" : "";
   }
   const state = {
-    threads: [], selectedId: null, thread: null, turns: new Map(), cursor: null, hasMore: false,
-    connected: false, canSend: false, inFlight: 0, switching: 0, loadingOlder: false,
+    threads: [], selectedId: null, thread: null, turns: new Map(), cursor: null, hasMore: false, agentIds: readKnownAgentIds(), ordinaryIds: new Set(),
+    connected: false, canSend: false, inFlight: 0, switching: 0, selecting: 0, loadingOlder: false,
     sending: false, listLoading: false, noticeTimer: null, pollTimer: null, polling: false, forcePoll: false, idlePolls: 0, changeRevision: 0, historyError: false, threadFingerprint: "",
     callerThreadId: null, pagingInitialized: false, drafts: new Map(), unknownSends: new Set(), statusSnapshot: null,
     pinnedOverrides: readPinnedOverrides(), expandedProjects: readExpandedProjects(), openDetails: new Map(), taskDetailsOpen: new Map(), taskListFingerprint: "",
-    sendDisabledReason: "", sendMode: "message", pendingMessages: [], pendingByThread: new Map(), readController: null,
+    sendDisabledReason: "", sendMode: "message", pendingMessages: [], pendingByThread: new Map(), readController: null, selectionController: null,
     threadCache: createThreadSnapshotCache({ maxEntries: 20, maxTurns: 1000 }), cachedTurnIds: new Set(),
     lastStatusAt: 0, lastListAt: 0, sidebarOrder: { revision: 0, order: { projects: [], threads: {} } },
     orderLoaded: false, orderConfigured: false, orderSaving: false, orderDirty: false, sorting: false, dragging: null,
@@ -149,7 +151,8 @@ import { createThreadContextPanel } from "./thread-context.js";
     createAttempt: null, createReceipt: null, createRecoveryError: "", createErrorText: "", creatingThread: false, createSelection: null
   };
   const filesPanel = createFilesPanel({ document, window, fetchImpl: scopedFetch, getThread: () => ({ id: state.selectedId || "", cwd: state.thread?.cwd || state.threads.find(item => item.id === state.selectedId)?.cwd || "" }) });
-  const contextPanel = createThreadContextPanel({ document, window, api: requestApi, storage: sessionStorage, onSelectThread: id => { void selectThread(id); }, onNotice: showNotice });
+  const agentViewer = createAgentViewer({ document, window, api: requestApi });
+  const contextPanel = createThreadContextPanel({ document, window, api: requestApi, storage: sessionStorage, onViewAgent: item => { void agentViewer.open(item); }, onAgents: rememberAgents, onNotice: showNotice });
   const uploads = createUploads({ document, window, storage: sessionStorage, fetchImpl: scopedFetch, getThread: id => ({ id, cwd: (state.thread?.id === id ? state.thread.cwd : "") || state.threads.find(item => item.id === id)?.cwd || "" }), canUpload: () => maySendSelected() && state.connected && state.canSend, onChange: updateControls });
   createArchivesPanel({ document, window, api: requestApi, onRestored: () => refreshTasks() });
   createRecoveryPanel({ document, api: requestApi });
@@ -188,6 +191,37 @@ import { createThreadContextPanel } from "./thread-context.js";
     } catch { return new Map(); }
   }
 
+  function readKnownAgentIds() {
+    try {
+      const ids = JSON.parse(sessionStorage.getItem(AGENT_IDS_KEY) || "[]");
+      return new Set(Array.isArray(ids) ? ids.filter(id => typeof id === "string" && THREAD_UUID.test(id)).map(id => id.toLowerCase()) : []);
+    } catch { return new Set(); }
+  }
+
+  function delegatedThread(thread) {
+    return thread?.delegated === true || !!thread?.parentThreadId || !!thread?.agentNickname ||
+      !!(thread?.source && typeof thread.source === "object" && ("subAgent" in thread.source || "subagent" in thread.source));
+  }
+
+  function knownAgent(id) { return typeof id === "string" && state.agentIds.has(id.toLowerCase()); }
+
+  function rememberAgents(items) {
+    let changed = false;
+    for (const item of items || []) {
+      const id = item?.threadId || item?.id;
+      if (typeof id !== "string" || !THREAD_UUID.test(id)) continue;
+      const normalized = id.toLowerCase();
+      if (!state.agentIds.has(normalized)) { state.agentIds.add(normalized); changed = true; }
+      state.ordinaryIds.delete(normalized);
+      state.threadCache.delete(id);
+    }
+    if (!changed && !state.threads.some(thread => knownAgent(thread.id))) return;
+    state.threads = state.threads.filter(thread => !knownAgent(thread.id));
+    try { sessionStorage.setItem(AGENT_IDS_KEY, JSON.stringify([...state.agentIds])); } catch { /* In-memory filtering remains available. */ }
+    state.taskListFingerprint = "";
+    renderTasks();
+  }
+
   function readExpandedProjects() {
     try {
       const value = JSON.parse(localStorage.getItem(PROJECT_OPEN_KEY) || "{}");
@@ -218,8 +252,16 @@ import { createThreadContextPanel } from "./thread-context.js";
     return !!status.canSend;
   }
 
-  function setConnection(connected, status = null) {
+  function setConnection(connected, status = null, error = null) {
     if (status) state.statusSnapshot = status;
+    state.connectionError = connected ? null : error || status?.error || state.connectionError;
+    const offline = deviceScope.id && deviceScope.context.device.online !== true;
+    const snapshot = state.statusSnapshot;
+    connected = connected && !offline && snapshot?.connected !== false;
+    const fault = offline ? { code: "DEVICE_OFFLINE", message: "设备连接中断" }
+      : snapshot?.connected === false ? snapshot.error || { code: "DESKTOP_UNAVAILABLE", message: "等待桌面 Codex 连接" }
+        : state.connectionError;
+    state.connectionFault = fault;
     if (status) { populateModelControls("create"); if (modelUI.dialog.open) populateModelControls("send"); }
     state.connected = connected;
     if (connected && status?.canCreate === true && state.projectsCanCreate === false) {
@@ -228,10 +270,9 @@ import { createThreadContextPanel } from "./thread-context.js";
       void loadProjects();
     }
     ui.connection.dataset.state = connected ? "connected" : "disconnected";
-    ui.connectionText.textContent = connected ? "已连接" : connectionLabel(status);
-    const snapshot = state.statusSnapshot;
+    ui.connectionText.textContent = connected ? (deviceScope.id ? "电脑已连接" : "已连接") : connectionLabel({ error: fault });
     const limitations = Array.isArray(snapshot?.limitations) ? snapshot.limitations.filter((item) => typeof item === "string") : [];
-    const issue = connectionIssue(snapshot?.error);
+    const issue = connectionIssue(fault);
     ui.connection.title = snapshot ? [`连接模式：${text(snapshot.mode, "未知")}`, issue?.message, ...limitations].filter(Boolean).join("\n") : "暂时无法读取本机 Codex";
     updateControls();
   }
@@ -239,11 +280,20 @@ import { createThreadContextPanel } from "./thread-context.js";
   function connectionIssue(error) {
     if (!error) return null;
     const code = text(error.code, "").toUpperCase();
+    if (code === "DEVICE_OFFLINE") {
+      return { label: "设备离线", notice: "设备连接中断。页面会保留最近内容和草稿，并继续重试。", message: text(error.message) };
+    }
+    if (/_BUSY$/.test(code)) {
+      return { label: "请求繁忙", notice: "连接请求暂时繁忙。页面会保留最近内容和草稿，并稍后重试。", message: text(error.message) };
+    }
+    if (code === "RELAY_TIMEOUT" || code === "DEVICE_RECONNECTING") {
+      return { label: code === "RELAY_TIMEOUT" ? "响应超时" : "设备重连中", notice: "暂时无法取得电脑响应。页面会保留最近内容和草稿，并继续重试。", message: text(error.message) };
+    }
     if (/INCOMPAT|PROTOCOL|UNSUPPORTED|TOOL.*CALL/.test(code)) {
       return { label: "版本不兼容", notice: "桥接与当前 Codex 接口不兼容，需要更新桥接适配。已有内容和草稿仍保留。", message: text(error.message) };
     }
     if (/DESKTOP|CODEX|UPSTREAM/.test(code)) {
-      return { label: "桌面未连接", notice: "桌面 Codex 暂时不可用。页面会保留最近内容并继续重试。", message: text(error.message) };
+      return { label: "等待 Codex", notice: "桌面 Codex 暂时不可用。页面会保留最近内容并继续重试。", message: text(error.message) };
     }
     return { label: "桥接不可用", notice: "本机桥接服务暂时不可用。页面会保留最近内容并继续重试。", message: text(error.message) };
   }
@@ -256,7 +306,7 @@ import { createThreadContextPanel } from "./thread-context.js";
     renderModelSettings();
     contextPanel.setState({ status: state.statusSnapshot, thread: state.thread, connected: state.connected, sending: state.sending, sendMode: state.sendMode });
     const unknownPending = !!state.selectedId && isUnknown(state.selectedId);
-    const canWrite = maySendSelected() && state.connected && state.canSend && !!state.selectedId && !unknownPending;
+    const canWrite = maySendSelected() && state.connected && state.canSend && !!state.selectedId && !unknownPending && !state.selectionController;
     ui.input.disabled = !state.selectedId;
     uploads.setThread(state.selectedId);
     const attachmentStatus = uploads.status(state.selectedId);
@@ -269,6 +319,7 @@ import { createThreadContextPanel } from "./thread-context.js";
     ui.send.querySelector("span:last-child").textContent = state.sending ? "发送中" : state.sendMode === "follow-up" ? "补充" : "发送";
     ui.send.title = state.sendMode === "follow-up" ? "补充到正在运行的会话" : "发送到桌面会话";
     if (unknownPending) ui.composerHint.textContent = "正在核对送达状态；不会自动重发";
+    else if (state.selectionController) ui.composerHint.textContent = "正在读取所选会话，草稿已保留";
     else if (!state.selectedId) ui.composerHint.textContent = "选择任务后查看发送权限";
     else if (!state.connected) ui.composerHint.textContent = "连接中断，草稿会保留";
     else if (!maySendSelected()) ui.composerHint.textContent = "此会话暂不允许发送";
@@ -668,11 +719,11 @@ import { createThreadContextPanel } from "./thread-context.js";
       }
       state.controlUnavailable = false;
       renderPendingRequests(execution);
-    } catch {
+    } catch (error) {
       if (id === state.selectedId && token === state.switching) {
         state.execution = null;
         state.controlUnavailable = true;
-        ui.controlSummary.textContent = "暂时无法读取运行控制。";
+        ui.controlSummary.textContent = `暂时无法读取运行控制：${error.message}`;
         ui.controlState.hidden = false;
         for (const [key, entry] of state.pendingCards) updatePendingCard(id, entry.card, entry.card.__pendingControls.request);
       }
@@ -1111,11 +1162,11 @@ import { createThreadContextPanel } from "./thread-context.js";
 
   function preferredThreadId(status) {
     const queryId = new URLSearchParams(location.search).get("thread");
-    if (queryId && THREAD_UUID.test(queryId)) return queryId;
+    if (queryId && THREAD_UUID.test(queryId) && !knownAgent(queryId)) return queryId;
     const savedId = localValue(SELECTED_KEY);
-    if (savedId && THREAD_UUID.test(savedId)) return savedId;
+    if (savedId && THREAD_UUID.test(savedId) && !knownAgent(savedId)) return savedId;
     for (const id of [status?.defaultThreadId, status?.callerThreadId]) {
-      if (typeof id === "string" && THREAD_UUID.test(id)) return id;
+      if (typeof id === "string" && THREAD_UUID.test(id) && !knownAgent(id)) return id;
     }
     return null;
   }
@@ -1596,6 +1647,7 @@ import { createThreadContextPanel } from "./thread-context.js";
     else if (state.orderConfigured) ui.orderState.textContent = "网页排序 · 已保存";
     else ui.orderState.hidden = true;
     const filtered = state.threads.filter(thread => {
+      if (knownAgent(thread.id) || delegatedThread(thread)) return false;
       if (!query) return true;
       return [thread.title, thread.projectName, thread.projectPath, thread.cwd, thread.projectId, thread.id]
         .some(value => text(value).toLocaleLowerCase().includes(query));
@@ -1644,8 +1696,10 @@ import { createThreadContextPanel } from "./thread-context.js";
     state.listLoading = true;
     try {
       const data = await api("/api/threads");
-      const threads = Array.isArray(data.threads) ? [...data.threads] : [];
-      if (state.thread?.id) {
+      const listedThreads = Array.isArray(data.threads) ? [...data.threads] : [];
+      rememberAgents(listedThreads.filter(delegatedThread));
+      const threads = listedThreads.filter(thread => !knownAgent(thread.id) && !delegatedThread(thread));
+      if (state.thread?.id && !knownAgent(state.thread.id) && !delegatedThread(state.thread)) {
         const selectedIndex = threads.findIndex(item => item.id === state.thread.id);
         if (selectedIndex >= 0) {
           state.thread = mergeReadThread(threads[selectedIndex], [state.thread]);
@@ -1681,7 +1735,7 @@ import { createThreadContextPanel } from "./thread-context.js";
         if (updated && state.thread) { renderThreadHeader(); updateControls(); }
       }
     } catch (error) {
-      setConnection(false);
+      setConnection(false, null, error);
       if (!preserveOnError || !state.threads.length) renderTasks();
       if (isUnknown(state.selectedId)) showUnknownNotice(state.selectedId);
       else showNotice(`暂时无法读取任务列表：${error.message}`, "error", 0, "connection");
@@ -2024,7 +2078,7 @@ import { createThreadContextPanel } from "./thread-context.js";
     ui.historyState.textContent = state.loadingOlder ? "" : state.historyError ? "读取失败" : state.hasMore ? "" : (state.turns.size ? "已到最早消息" : "");
   }
 
-  async function loadThread({ id = state.selectedId, cursor = null, mode = "latest", token = state.switching, scroll = false } = {}) {
+  async function loadThread({ id = state.selectedId, cursor = null, mode = "latest", token = state.switching, scroll = false, prefetchedData = null } = {}) {
     if (!id) return;
     state.readController?.abort();
     const controller = new AbortController();
@@ -2036,8 +2090,18 @@ import { createThreadContextPanel } from "./thread-context.js";
     const priorHasMore = state.hasMore;
     if (mode === "latest" && !state.pagingInitialized) setThreadLoading(state.turns.size ? "正在同步最新消息…" : "正在读取会话…");
     try {
-      let data = await api(`/api/threads/${encodeURIComponent(id)}${query}`, { signal: controller.signal });
+      let data = prefetchedData || await api(`/api/threads/${encodeURIComponent(id)}${query}`, { signal: controller.signal });
       if (controller.signal.aborted || token !== state.switching || id !== state.selectedId) return;
+      if (delegatedThread(data.thread)) {
+        rememberAgents([data.thread]);
+        state.selectedId = null;
+        state.thread = null;
+        const primaryId = preferredThreadId(state.statusSnapshot) || state.threads[0]?.id;
+        if (primaryId) await selectThread(primaryId);
+        void agentViewer.open({ threadId: id, name: data.thread.title, status: data.thread.status });
+        return;
+      }
+      state.ordinaryIds.add(id.toLowerCase());
       if (mode === "latest") {
         const fingerprint = JSON.stringify(data);
         if (state.threadFingerprint !== fingerprint) state.changeRevision += 1;
@@ -2100,7 +2164,7 @@ import { createThreadContextPanel } from "./thread-context.js";
         updateHistoryControl();
         return false;
       }
-      setConnection(false);
+      setConnection(false, null, error);
       updateControls();
       setThreadLoading("无法更新会话。最近读取的内容已保留。", true);
       if (isUnknown(id)) showUnknownNotice(id);
@@ -2109,7 +2173,50 @@ import { createThreadContextPanel } from "./thread-context.js";
   }
 
   async function selectThread(id) {
-    if (!id || id === state.selectedId) { setDrawer(false); return; }
+    const selectionRequest = ++state.selecting;
+    const pendingSelection = state.selectionController;
+    pendingSelection?.abort();
+    state.selectionController = null;
+    if (pendingSelection) updateControls();
+    if (!id || id === state.selectedId) {
+      setDrawer(false);
+      if (pendingSelection && id === state.selectedId) await loadThread({ mode: "latest" });
+      return;
+    }
+    const listed = state.threads.find(thread => thread.id === id);
+    if (knownAgent(id) || delegatedThread(listed)) {
+      rememberAgents([{ id }]);
+      void agentViewer.open({ threadId: id, name: listed?.title, status: listed?.status });
+      setDrawer(false);
+      return;
+    }
+    // Sidebar metadata can omit child identity; confirm unread candidates before replacing the main chat.
+    let prefetchedData = null;
+    if (!state.ordinaryIds.has(id.toLowerCase())) {
+      const controller = new AbortController();
+      state.selectionController = controller;
+      try { prefetchedData = await api(`/api/threads/${encodeURIComponent(id)}`, { signal: controller.signal }); }
+      catch (error) {
+        if (selectionRequest !== state.selecting || controller.signal.aborted || error.name === "AbortError") return;
+        setConnection(false, null, error);
+        showNotice(`暂时无法读取会话：${error.message}。已有内容和草稿仍保留。`, "error", 0, "connection");
+        return;
+      } finally { if (state.selectionController === controller) { state.selectionController = null; updateControls(); } }
+      if (selectionRequest !== state.selecting || controller.signal.aborted) return;
+      if (prefetchedData.thread?.id !== id) {
+        showNotice("返回的会话与请求不匹配，已有内容和草稿仍保留。", "error");
+        return;
+      }
+      if (delegatedThread(prefetchedData.thread)) {
+        rememberAgents([prefetchedData.thread]);
+        if (!state.selectedId) {
+          const primaryId = preferredThreadId(state.statusSnapshot) || state.threads[0]?.id;
+          if (primaryId && primaryId !== id) await selectThread(primaryId);
+        }
+        void agentViewer.open({ threadId: id, name: prefetchedData.thread.title, status: prefetchedData.thread.status });
+        return;
+      }
+    }
     if (state.selectedId) {
       state.taskDetailsOpen.set(state.selectedId, ui.details.open);
       saveDraft(state.selectedId, ui.input.value);
@@ -2170,7 +2277,7 @@ import { createThreadContextPanel } from "./thread-context.js";
     if (cached) ui.transcript.scrollTop = cached.scrollTop || 0;
     updateControls();
     setDrawer(false);
-    await loadThread({ id, mode: "latest", token: state.switching, scroll: !cached });
+    await loadThread({ id, mode: "latest", token: state.switching, scroll: !cached, prefetchedData });
   }
 
   async function loadOlder() {
@@ -2201,8 +2308,8 @@ import { createThreadContextPanel } from "./thread-context.js";
         state.lastStatusAt = Date.now();
         state.callerThreadId = status.callerThreadId || null;
         setConnection(!!status.connected, status);
-        if (!status.connected) {
-          const issue = connectionIssue(status.error);
+        if (!state.connected) {
+          const issue = connectionIssue(state.connectionFault);
           if (!isUnknown(state.selectedId)) showNotice(issue?.notice || "桌面 Codex 暂时不可用。页面会保留最近内容并继续重试。", "error", 0, "connection");
           return;
         }
@@ -2219,7 +2326,7 @@ import { createThreadContextPanel } from "./thread-context.js";
       }
       if (document.visibilityState === "visible" && (force || Date.now() - state.lastListAt >= LIST_POLL_MS)) await refreshTasks();
     } catch (error) {
-      setConnection(false);
+      setConnection(false, null, error);
       updateControls();
       if (state.selectedId && isUnknown(state.selectedId)) showUnknownNotice(state.selectedId);
       else showNotice("本机桥接服务暂时不可用。页面会保留最近内容并继续重试。", "error", 0, "connection");
@@ -2276,7 +2383,7 @@ import { createThreadContextPanel } from "./thread-context.js";
     event.preventDefault();
     const id = state.selectedId;
     const draftPrompt = ui.input.value.trim();
-    if (!maySendSelected() || !id || !state.connected || !state.canSend || isUnknown(id) || state.sending) return;
+    if (state.selectionController || !maySendSelected() || !id || !state.connected || !state.canSend || isUnknown(id) || state.sending) return;
     const revision = draftRevision(id);
     const selection = state.sendMode === "follow-up" ? {} : { ...readModelSettings(id) };
     try { Object.assign(selection, contextPanel.sendOverride()); }
@@ -2285,7 +2392,7 @@ import { createThreadContextPanel } from "./thread-context.js";
     updateControls();
     const attachmentSnapshot = uploads.status(id).count ? await uploads.prepare(id, draftPrompt) : uploads.snapshot(id, draftPrompt);
     const prompt = attachmentSnapshot?.prompt;
-    if (!attachmentSnapshot || !prompt || prompt.length > 12000 || state.selectedId !== id || !maySendSelected() || !state.connected || !state.canSend || isUnknown(id)) {
+    if (!attachmentSnapshot || !prompt || prompt.length > 12000 || state.selectionController || state.selectedId !== id || !maySendSelected() || !state.connected || !state.canSend || isUnknown(id)) {
       state.sending = false; updateControls();
       showNotice("附件尚未就绪、会话已变化或消息过长，请核对后发送。", "error"); return;
     }
@@ -2396,6 +2503,10 @@ import { createThreadContextPanel } from "./thread-context.js";
     ui.refreshButton.addEventListener("click", wakeSync);
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") wakeSync(); else clearTimeout(state.pollTimer); });
     window.addEventListener("online", wakeSync);
+    window.addEventListener("bridge-device-state-changed", event => {
+      if (event.detail?.online === false) setConnection(false);
+      wakeSync();
+    });
     window.addEventListener("focus", wakeSync);
     ui.refreshControl.addEventListener("click", () => { if (state.selectedId) void refreshExecution(state.selectedId); });
     ui.refreshTasks.addEventListener("click", () => { void refreshTasks({ preserveOnError: false }); });
@@ -2455,8 +2566,8 @@ import { createThreadContextPanel } from "./thread-context.js";
         state.lastStatusAt = Date.now();
         state.callerThreadId = status.callerThreadId || null;
         setConnection(!!status.connected, status);
-        if (!status.connected) {
-          const issue = connectionIssue(status.error);
+        if (!state.connected) {
+          const issue = connectionIssue(state.connectionFault);
           showNotice(issue?.notice || "正在等待桌面 Codex 连接。", "error", 0, "connection");
           return;
         }
@@ -2465,7 +2576,7 @@ import { createThreadContextPanel } from "./thread-context.js";
         if (preferred) await selectThread(preferred);
         await refreshTasks();
       } catch (error) {
-        setConnection(false);
+        setConnection(false, null, error);
         renderTasks();
         showNotice("本机桥接服务暂时不可用。页面会保留最近内容并继续重试。", "error", 0, "connection");
       } finally {

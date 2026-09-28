@@ -8,6 +8,14 @@ import { guiCommand as realGuiCommand } from '../scripts/connector-gui.mjs';
 import { pairConnector } from '../scripts/setup-connector.mjs';
 const control = { read: async()=>({paused:false,autoStart:false}), resume:async()=>({paused:false,revision:'fixture'}), mayRun:async()=>true };
 const guiCommand = (command,deps={}) => realGuiCommand(command,{control,...deps});
+test('unpaired GUI status succeeds without probing a bridge or launching a controller',async()=>{
+  let probed=false,launched=false;
+  const status=await guiCommand({action:'status'},{read:async()=>null,probe:async()=>{probed=true;},watch:async()=>{launched=true;}});
+  assert.equal(status.paired,false);assert.equal(status.bridgeConnected,false);assert.equal(status.state,'waiting');assert.equal(probed,false);assert.equal(launched,false);
+});
+test('GUI status preserves a control read failure instead of reporting checking or online',async()=>{
+  await assert.rejects(guiCommand({action:'status'},{control:{read:async()=>{throw Error('intent fixture unreadable');}},read:async()=>null}),/intent fixture unreadable/);
+});
 
 test('first GUI pairing registers deferred login and starts persistent watcher before Codex exists', async () => {
   const calls=[];

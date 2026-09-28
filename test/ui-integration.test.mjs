@@ -19,7 +19,7 @@ const rows = [
 ];
 const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const snapshot = (id, text = `${id === A ? 'Alpha' : 'Beta'} reply`, status = 'idle') => ({
-  thread: { ...rows.find(row => row.id === id), status }, canSend: true, sendMode: status === 'active' ? 'follow-up' : 'message', sendDisabledReason: null,
+  thread: { id, ...rows.find(row => row.id === id), status }, canSend: true, sendMode: status === 'active' ? 'follow-up' : 'message', sendDisabledReason: null,
   page: { hasMore: false, nextCursor: null }, turns: [{ id: `turn-${id}`, startedAt: 1000, status: 'completed', items: [{ id: `reply-${id}`, type: 'agentMessage', phase: 'final_answer', text }] }],
 });
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
@@ -28,9 +28,9 @@ async function until(predicate, label) {
   assert.fail(`Timed out: ${label}`);
 }
 
-async function mount(t, route = () => undefined, { session = {} } = {}) {
+async function mount(t, route = () => undefined, { session = {}, expectedRows = 3, urlThread = A } = {}) {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  const dom = new JSDOM(html, { url: `http://127.0.0.1:4317/?thread=${A}`, runScripts: 'outside-only', pretendToBeVisual: true });
+  const dom = new JSDOM(html, { url: `http://127.0.0.1:4317/?thread=${urlThread}`, runScripts: 'outside-only', pretendToBeVisual: true });
   t.after(() => dom.window.close());
   const { window } = dom, requests = [], errors = [], intervals = [];
   Object.defineProperty(window.crypto, 'subtle', { value: webcrypto.subtle });
@@ -76,7 +76,7 @@ async function mount(t, route = () => undefined, { session = {} } = {}) {
   source = source.replace(/^import \{([^}]+)\} from "(\.\/[^"\n]+)";$/gm, (_, names, path) => `const {${names.replace(/\s+as\s+/g, ':')}} = globalThis.__modules[${JSON.stringify(path)}];`);
   window.eval(source);
   const doc = window.document;
-  await until(() => doc.querySelector('#transcript').textContent.includes('Alpha reply') && doc.querySelectorAll('.task-item').length === 3, 'initial task content and list').catch(error => {
+  await until(() => doc.querySelector('#transcript').textContent.includes('Alpha reply') && doc.querySelectorAll('.task-item').length === expectedRows, 'initial task content and list').catch(error => {
     throw new Error(`${error.message}; app errors: ${errors.map(item => item?.message || item).join('; ')}`);
   });
   assert.deepEqual(errors, []);
@@ -430,6 +430,28 @@ test('protocol ambiguity keeps the exact request and disables another send', asy
   assert.equal(JSON.parse(ui.window.sessionStorage.getItem(`codex-mobile-pending:${A}`))[0].state, 'unknown');
   ui.doc.querySelector('#composer').dispatchEvent(new ui.window.Event('submit', { bubbles: true, cancelable: true }));
   assert.equal(ui.requests.filter(call => call.method === 'POST').length, 1);
+});
+
+test('unexpected POST 304 preserves the draft and delivery lock until read-only receipt recovery', async t => {
+  let accepted = false;
+  const ui = await mount(t, call => {
+    if (call.path === `/api/threads/${A}/messages`) return new Response(null, { status: 304 });
+    if (call.path.startsWith(`/api/threads/${A}/messages/`)) return response(accepted ? { state: 'accepted', receipt: { accepted: true, threadId: A, requestId: call.path.split('/').at(-1) } } : { state: 'unknown' });
+  });
+  const input = ui.doc.getElementById('promptInput'); input.value = 'Retain this unsent draft'; input.dispatchEvent(new ui.window.Event('input'));
+  ui.doc.getElementById('composer').dispatchEvent(new ui.window.Event('submit', { cancelable: true }));
+  await until(() => ui.doc.getElementById('notice').textContent.includes('尚未确认'), 'unexpected 304 uncertainty');
+  assert.equal(ui.requests.filter(call => call.method === 'POST').length, 1);
+  assert.equal(input.value, 'Retain this unsent draft');
+  assert.equal(ui.doc.getElementById('sendButton').disabled, true);
+  assert.equal(JSON.parse(ui.window.sessionStorage.getItem(`codex-mobile-pending:${A}`))[0].state, 'unknown');
+  ui.doc.getElementById('composer').dispatchEvent(new ui.window.Event('submit', { cancelable: true }));
+  assert.equal(ui.requests.filter(call => call.method === 'POST').length, 1);
+  accepted = true;
+  [...ui.doc.querySelectorAll('#notice button')].find(button => button.textContent === '重新核对回执').click();
+  await until(() => !ui.window.sessionStorage.getItem(`codex-mobile-unknown:${A}`), 'read-only receipt recovery');
+  assert.equal(ui.requests.filter(call => call.method === 'POST').length, 1);
+  assert.equal(input.value, '');
 });
 
 test('storage failure prevents dispatch while keeping the draft', async t => {
@@ -1159,4 +1181,133 @@ test('pending marker storage failure prevents creation dispatch', async t => {
   assert.equal(ui.requests.filter(call => call.method === 'POST').length, 0);
   assert.equal(prompt.value, 'Must not dispatch');
   assert.match(ui.doc.querySelector('#createError').textContent, /尚未创建/);
+});
+
+const CHILD = '00000000-0000-0000-0000-000000000005';
+const childContext = () => ({ threadId: A, available: true, permissions: { current: 'request-approval', supported: true }, git: { available: false, reason: '不属于 Git 仓库' }, agents: { available: true, items: [{ threadId: CHILD, name: '检查子任务', status: 'running', canRead: true }] }, sources: { available: true, items: [] } });
+const childSnapshot = (message = 'Child reply', older = false) => ({ thread: { id: CHILD, title: '', delegated: true, status: 'running' }, canSend: false, canManage: false, turns: [{ id: older ? 'child-old' : 'child-live', startedAt: older ? 500 : 1000, status: 'completed', items: [{ id: older ? 'child-old-reply' : 'child-reply', type: 'agentMessage', text: message }] }], page: { hasMore: !older, nextCursor: older ? null : 'child-older' } });
+
+test('viewing and refreshing a child preserves main URL, selection, draft, scroll, sidebar and live question state', async t => {
+  let childReads = 0;
+  const request = { requestId: 'main-question', token: 'main-token', kind: 'asyncUserInput', turnId: 'main-turn', title: '等待回答', actionable: true, questions: [{ id: 'q', header: '确认', question: '选择一个资源', options: [], isOther: false, isSecret: false }] };
+  const ui = await mount(t, call => {
+    if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', defaultThreadId: A, callerThreadId: A, executionControl: true, permissionOptions: { send: [{ id: 'request-approval' }], create: [] } });
+    if (call.path === `/api/threads/${A}/context`) return response(childContext());
+    if (call.path === `/api/threads/${A}/control`) return response({ threadId: A, available: true, pendingRequestCount: 1, pendingRequests: [request], historicalQuestions: [] });
+    if (call.path === `/api/threads/${CHILD}`) return response(childSnapshot(`Child reply ${++childReads}`));
+    if (call.path === `/api/threads/${CHILD}?cursor=child-older`) return response(childSnapshot('Older child reply', true));
+  });
+  await until(() => ui.doc.querySelector('#pendingRequests').textContent.includes('选择一个资源'), 'main question loaded');
+  const input = ui.doc.getElementById('promptInput'); input.value = 'keep main draft'; input.dispatchEvent(new ui.window.Event('input'));
+  ui.doc.getElementById('contextToggle').click();
+  await until(() => ui.doc.querySelector('[data-context-key="agent:' + CHILD + '"]'), 'child link');
+  ui.doc.getElementById('transcript').scrollTop = 73;
+  const before = { url: ui.window.location.href, selected: ui.window.localStorage.getItem('codex-mobile-selected-thread'), draft: input.value, scroll: ui.doc.getElementById('transcript').scrollTop, sidebar: ui.doc.getElementById('taskList').innerHTML, pending: ui.doc.getElementById('pendingRequests').innerHTML, main: ui.doc.getElementById('transcript').innerHTML };
+  ui.doc.querySelector('[data-context-key="agent:' + CHILD + '"]').click();
+  await until(() => ui.doc.getElementById('agentViewerTranscript').textContent.includes('Child reply 1'), 'child viewer loaded');
+  assert.equal(ui.doc.querySelectorAll('#agentViewer form, #agentViewer textarea, #agentViewer input, #agentViewer select').length, 0);
+  ui.doc.getElementById('agentViewerOlder').click();
+  await until(() => ui.doc.getElementById('agentViewerTranscript').textContent.includes('Older child reply'), 'child older page');
+  ui.doc.getElementById('agentViewerRefresh').click();
+  await until(() => ui.doc.getElementById('agentViewerTranscript').textContent.includes('Child reply 2'), 'active child refreshed');
+  assert.equal(ui.window.location.href, before.url); assert.equal(ui.window.localStorage.getItem('codex-mobile-selected-thread'), before.selected);
+  assert.equal(input.value, before.draft); assert.equal(ui.doc.getElementById('transcript').scrollTop, before.scroll);
+  assert.equal(ui.doc.getElementById('taskList').innerHTML, before.sidebar); assert.equal(ui.doc.getElementById('pendingRequests').innerHTML, before.pending);
+  assert.equal(ui.doc.getElementById('transcript').innerHTML, before.main);
+  assert.equal(ui.requests.some(call => call.method && call.method !== 'GET'), false);
+  assert.ok(ui.requests.filter(call => call.path.includes(CHILD)).every(call => /^\/api\/threads\/[^/]+(?:\?cursor=.+)?$/.test(call.path)));
+  ui.doc.getElementById('agentViewerClose').click(); assert.equal(ui.doc.getElementById('agentViewer').open, false);
+  assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Alpha'); assert.deepEqual(ui.errors, []);
+});
+
+test('only confirmed child IDs leave the ordinary sidebar; a legitimate unnamed root remains', async t => {
+  const list = [...rows.map(row => row.id === B ? { ...row, title: '未命名对话' } : row), { id: CHILD, title: '未命名对话', status: 'idle' }];
+  const ui = await mount(t, call => {
+    if (call.path === '/api/threads') return response({ threads: list });
+    if (call.path === `/api/threads/${A}/context`) return response(childContext());
+    if (call.path === `/api/threads/${CHILD}`) return response(childSnapshot());
+  }, { expectedRows: 4 });
+  assert.ok(ui.doc.querySelector('.task-row[data-order-id="' + B + '"]'));
+  assert.ok(ui.doc.querySelector('.task-row[data-order-id="' + CHILD + '"]'));
+  ui.doc.getElementById('contextToggle').click();
+  await until(() => !ui.doc.querySelector('.task-row[data-order-id="' + CHILD + '"]'), 'confirmed child cache removed');
+  assert.equal(ui.doc.querySelector('.task-row[data-order-id="' + B + '"] .task-title').textContent, '未命名对话');
+  assert.equal(ui.doc.querySelectorAll('.task-item').length, 3);
+  assert.deepEqual(JSON.parse(ui.window.sessionStorage.getItem('codex-mobile-subagent-threads')), [CHILD]);
+  ui.doc.getElementById('refreshTasks').click();
+  await until(() => ui.requests.filter(call => call.path === '/api/threads').length >= 2, 'sidebar refresh');
+  assert.equal(ui.doc.querySelector('.task-row[data-order-id="' + CHILD + '"]'), null);
+  assert.ok(ui.doc.querySelector('.task-row[data-order-id="' + B + '"]'));
+  assert.equal(ui.requests.some(call => call.method && call.method !== 'GET'), false);
+});
+
+test('an old child-selected URL is classified before replacing the main conversation and opens only the viewer', async t => {
+  const ui = await mount(t, call => {
+    if (call.path === `/api/threads/${CHILD}`) return response(childSnapshot());
+  }, { urlThread: CHILD });
+  await until(() => ui.doc.getElementById('agentViewerTranscript').textContent.includes('Child reply'), 'old child URL viewer');
+  assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Alpha');
+  assert.equal(new URL(ui.window.location.href).searchParams.get('thread'), A);
+  assert.equal(ui.window.localStorage.getItem('codex-mobile-selected-thread'), A);
+  assert.equal(ui.doc.querySelector('.task-row[data-order-id="' + CHILD + '"]'), null);
+  assert.equal(ui.requests.some(call => call.method && call.method !== 'GET'), false);
+  assert.deepEqual(ui.errors, []);
+});
+
+test('a stale listed child is classified before replacing a non-default parent conversation', async t => {
+  const request = { requestId: 'parent-question', token: 'parent-token', kind: 'asyncUserInput', turnId: 'parent-turn', title: '等待回答', actionable: true, questions: [{ id: 'q', header: '确认', question: '保留当前问题', options: [], isOther: false, isSecret: false }] };
+  const ui = await mount(t, call => {
+    if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', defaultThreadId: A, callerThreadId: A, executionControl: true });
+    if (call.path === '/api/threads') return response({ threads: [...rows, { id: CHILD, title: '未命名对话', status: 'idle' }] });
+    if (call.path === `/api/threads/${CHILD}`) return response(childSnapshot());
+    const control = call.path.match(/^\/api\/threads\/([^/]+)\/control$/);
+    if (control) return response({ threadId: control[1], available: true, pendingRequestCount: control[1] === B ? 1 : 0, pendingRequests: control[1] === B ? [request] : [], historicalQuestions: [] });
+  }, { expectedRows: 4 });
+  ui.doc.querySelector('.task-row[data-order-id="' + B + '"] .task-item').click();
+  await until(() => ui.doc.getElementById('threadTitle').textContent === 'Beta' && ui.doc.getElementById('pendingRequests').textContent.includes('保留当前问题'), 'non-default parent loaded');
+  const input = ui.doc.getElementById('promptInput'); input.value = 'Beta draft'; input.dispatchEvent(new ui.window.Event('input'));
+  ui.doc.getElementById('transcript').scrollTop = 82;
+  const before = { url: ui.window.location.href, transcript: ui.doc.getElementById('transcript').innerHTML, pending: ui.doc.getElementById('pendingRequests').innerHTML };
+  ui.doc.querySelector('.task-row[data-order-id="' + CHILD + '"] .task-item').click();
+  await until(() => ui.doc.getElementById('agentViewerTranscript').textContent.includes('Child reply'), 'stale listed child viewer');
+  assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Beta'); assert.equal(ui.window.location.href, before.url);
+  assert.equal(ui.window.localStorage.getItem('codex-mobile-selected-thread'), B); assert.equal(input.value, 'Beta draft');
+  assert.equal(ui.doc.getElementById('transcript').scrollTop, 82); assert.equal(ui.doc.getElementById('transcript').innerHTML, before.transcript);
+  assert.equal(ui.doc.getElementById('pendingRequests').innerHTML, before.pending);
+  assert.equal(ui.doc.querySelector('.task-row[data-order-id="' + CHILD + '"]'), null);
+  assert.equal(ui.requests.some(call => call.method && call.method !== 'GET'), false);
+});
+
+test('reselecting the current parent cancels a pending child classification and ignores its late response', async t => {
+  const late = deferred();
+  const ui = await mount(t, call => {
+    if (call.path === '/api/threads') return response({ threads: [...rows, { id: CHILD, title: '未命名对话', status: 'idle' }] });
+    if (call.path === `/api/threads/${CHILD}`) return late.promise;
+  }, { expectedRows: 4 });
+  ui.doc.querySelector('.task-row[data-order-id="' + CHILD + '"] .task-item').click();
+  await until(() => ui.requests.some(call => call.path.includes(CHILD)), 'classification started');
+  ui.doc.querySelector('.task-row[data-order-id="' + A + '"] .task-item').click();
+  assert.equal(ui.requests.find(call => call.path.includes(CHILD)).signal.aborted, true);
+  late.resolve(response(childSnapshot('late child'))); await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(ui.doc.getElementById('agentViewer').open, false); assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Alpha');
+  assert.equal(new URL(ui.window.location.href).searchParams.get('thread'), A);
+  assert.equal(ui.doc.getElementById('promptInput').value, ''); assert.deepEqual(ui.errors, []);
+});
+
+test('pending candidate classification blocks composer dispatch while the current draft stays editable', async t => {
+  const late = deferred();
+  const ui = await mount(t, call => call.path === `/api/threads/${B}` ? late.promise : undefined);
+  const input = ui.doc.getElementById('promptInput'); input.value = 'keep editable draft'; input.dispatchEvent(new ui.window.Event('input'));
+  assert.equal(ui.doc.getElementById('sendButton').disabled, false);
+  ui.doc.querySelector('.task-row[data-order-id="' + B + '"] .task-item').click();
+  await until(() => ui.requests.some(call => call.path === `/api/threads/${B}`), 'candidate read pending');
+  assert.equal(ui.doc.getElementById('sendButton').disabled, true); assert.equal(input.disabled, false);
+  input.value = 'edited during read'; input.dispatchEvent(new ui.window.Event('input'));
+  ui.doc.getElementById('composer').dispatchEvent(new ui.window.Event('submit', { bubbles: true, cancelable: true }));
+  assert.equal(ui.requests.some(call => call.method === 'POST'), false); assert.equal(input.value, 'edited during read');
+  ui.doc.querySelector('.task-row[data-order-id="' + A + '"] .task-item').click();
+  await until(() => !ui.doc.getElementById('sendButton').disabled, 'current parent send eligibility restored');
+  late.resolve(response(snapshot(B))); await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Alpha'); assert.equal(input.value, 'edited during read');
+  assert.equal(ui.requests.some(call => call.method === 'POST'), false); assert.deepEqual(ui.errors, []);
 });

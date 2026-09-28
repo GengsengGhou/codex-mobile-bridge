@@ -30,8 +30,10 @@ class ConnectorWindow : Form {
     public bool TrayStartup;
     public bool UninstallMode;
     public string LifecycleEvidence;
+    public string StatusEvidence;
     int uninstallRequests;
     int actionEpoch;
+    bool statusReadSucceeded;
     public string CapturePath;
     public bool Unattended;
     public ConnectorWindow(string destination) {
@@ -88,6 +90,7 @@ class ConnectorWindow : Form {
         Shown += async (s,e) => {
             if(UninstallMode) return;
             if(LifecycleEvidence!=null){await VerifyLifecycle();return;}
+            if(StatusEvidence!=null){await RefreshStatus(false);File.WriteAllText(StatusEvidence,json.Serialize(new {paired=paired,paused=paused,windowStatus=status.Text,trayStatus=trayStatus.Text,trayTooltip=tray.Text,statusReadSucceeded=statusReadSucceeded,retryEnabled=retry.Enabled,connectMenuEnabled=trayConnect.Enabled}));exiting=true;Close();return;}
             if (installed) {
                 bool initialized=true;
                 if(CapturePath==null) {try{await Run(new { action="initialize" });}catch(Exception error){initialized=false;status.Text=error.Message;}}
@@ -134,13 +137,21 @@ class ConnectorWindow : Form {
         Controls.Add(new Label { Text = label, Location = new Point(30,top), Size = new Size(490,23) });
         input.Location = new Point(30,top+25); input.Size = new Size(495,28); Controls.Add(input);
     }
-    void Working(bool value) { busy=value; primary.Enabled=!value && !stopping; retry.Enabled=!value && installed && !stopping; replace.Enabled=!value && !stopping; trayConnect.Enabled=!value && paired && !stopping; trayDisconnect.Enabled=installed && !stopping; }
+    void Working(bool value) { busy=value; bool canConnect=installed && (paired || !statusReadSucceeded); primary.Enabled=!value && !stopping; retry.Enabled=!value && canConnect && !stopping; replace.Enabled=!value && !stopping; trayConnect.Enabled=!value && canConnect && !stopping; trayDisconnect.Enabled=installed && !stopping; }
+    void SetStatus(string text) { status.Text=text; trayStatus.Text=text; tray.Text=text.Length>63 ? text.Substring(0,63) : text; }
+    string RequestJson(object request) {
+        var encoded=new StringBuilder();
+        foreach(char c in json.Serialize(request)) {
+            if(c>127) encoded.Append("\\u").Append(((int)c).ToString("x4")); else encoded.Append(c);
+        }
+        return encoded.ToString();
+    }
     async Task<Dictionary<string,object>> Run(object request) {
         return await Task.Run(() => {
-            var start = new ProcessStartInfo(Path.Combine(root,"runtime","node.exe"), "\"" + Path.Combine(root,"scripts","connector-gui.mjs") + "\"") { WorkingDirectory=root, UseShellExecute=false, CreateNoWindow=true, RedirectStandardInput=true, RedirectStandardOutput=true, RedirectStandardError=true };
+            var start = new ProcessStartInfo(Path.Combine(root,"runtime","node.exe"), "\"" + Path.Combine(root,"scripts","connector-gui.mjs") + "\"") { WorkingDirectory=root, UseShellExecute=false, CreateNoWindow=true, RedirectStandardInput=true, RedirectStandardOutput=true, RedirectStandardError=true, StandardOutputEncoding=new UTF8Encoding(false), StandardErrorEncoding=new UTF8Encoding(false) };
             start.EnvironmentVariables.Remove("CODEX_APP_TOOLS_PIPE_PATH");
             using (var p = Process.Start(start)) {
-                p.StandardInput.Write(json.Serialize(request)); p.StandardInput.Close();
+                p.StandardInput.Write(RequestJson(request)); p.StandardInput.Close();
                 var stdout = p.StandardOutput.ReadToEndAsync(); var stderr = p.StandardError.ReadToEndAsync();
                 if (!p.WaitForExit(30000)) { p.Kill(); throw new Exception("操作超时，请重试并核对连接状态。"); }
                 Task.WaitAll(stdout,stderr);
@@ -156,34 +167,35 @@ class ConnectorWindow : Form {
         if (string.IsNullOrWhiteSpace(name.Text) || code.Text.Length!=43) { status.Text="请输入设备名称和网页生成的 43 位配对码。"; return; }
         if (paired && !replace.Checked) { status.Text="如需更换服务器，请勾选替换现有配对。"; return; }
         if (paired && MessageBox.Show(this,"新服务器验证配对码后，替换这台电脑的配对？请随后在原网页中撤销旧设备。",Text,MessageBoxButtons.OKCancel)!=DialogResult.OK) return;
-        Working(true); status.Text="正在验证配对码…";
+        Working(true); SetStatus("正在验证配对码…");
         int epoch=++actionEpoch;
-        try { var data=await Run(new { action="pair", origin=origin, name=name.Text.Trim(), code=code.Text, replace=replace.Checked }); paired=true; code.Clear(); replace.Checked=false; if(epoch==actionEpoch) {paused=data.ContainsKey("paused") && (bool)data["paused"]; watcherSubmitted=!paused; status.Text=paused ? "已绑定，连接已暂停" : "已绑定，后台正在等待 Codex，可关闭此窗口。";} }
-        catch(Exception e) { if(epoch==actionEpoch)status.Text=e.Message; Working(false); return; }
+        try { var data=await Run(new { action="pair", origin=origin, name=name.Text.Trim(), code=code.Text, replace=replace.Checked }); paired=true; code.Clear(); replace.Checked=false; if(epoch==actionEpoch) {paused=data.ContainsKey("paused") && (bool)data["paused"]; watcherSubmitted=!paused; SetStatus(paused ? "已绑定，连接已暂停" : "已绑定，后台正在等待 Codex，可关闭此窗口。");} }
+        catch(Exception e) { if(epoch==actionEpoch)SetStatus(e.Message); Working(false); return; }
         Working(false);
     }
     async Task Connect(string reason="manual") {
         if (busy || stopping) return;
-        Working(true); status.Text="正在连接 Codex…";
+        Working(true); SetStatus("正在连接 Codex…");
         int epoch=++actionEpoch;
-        try { var data=await Run(new { action="connect", reason=reason }); if(epoch==actionEpoch){paused=data.ContainsKey("paused") && (bool)data["paused"]; watcherSubmitted=!paused; status.Text=paused ? "连接已暂停" : "后台正在等待 Codex 和服务器，可关闭此窗口。";} }
-        catch(Exception e) { if(epoch==actionEpoch)status.Text="恢复启动失败："+e.Message; }
+        try { var data=await Run(new { action="connect", reason=reason }); if(epoch==actionEpoch){paused=data.ContainsKey("paused") && (bool)data["paused"]; watcherSubmitted=!paused; SetStatus(paused ? "连接已暂停" : "后台正在等待 Codex 和服务器，可关闭此窗口。");} }
+        catch(Exception e) { if(epoch==actionEpoch)SetStatus("恢复启动失败："+e.Message); }
         Working(false);
     }
     async Task Disconnect(bool quit) {
         if(stopping || exiting) return;
         ++actionEpoch;
-        stopping=true; Working(busy); status.Text="正在断开连接…"; trayStatus.Text=status.Text;
+        stopping=true; Working(busy); SetStatus("正在断开连接…");
         try {
             var data=await Run(new { action=quit ? "quit" : "disconnect" });
             if(!(bool)data["paused"] || !(bool)data["disconnectVerified"]) throw new Exception("连接状态已被另一操作修改，请重新断开。");
-            paused=true; watcherSubmitted=false; status.Text="连接已断开"; trayStatus.Text=status.Text;
+            paused=true; watcherSubmitted=false; SetStatus("连接已断开");
             if(quit){exiting=true;tray.Visible=false;Close();return;}
-        } catch(Exception error){status.Text="未能确认断开："+error.Message;trayStatus.Text="断开未确认";}
+        } catch(Exception error){SetStatus("未能确认断开："+error.Message);}
         stopping=false; Working(busy);
     }
     async Task RefreshStatus(bool reconnect) {
         if (busy) return;
+        statusReadSucceeded=false;
         int epoch=actionEpoch;
         Working(true);
         try {
@@ -195,12 +207,13 @@ class ConnectorWindow : Form {
                 var state=Convert.ToString(data["state"]);
                 if (!domain.Focused && !replace.Checked) domain.Text=Convert.ToString(data["origin"]);
                 details.Text="设备：" + Convert.ToString(data["deviceId"]);
-                if(!stopping) status.Text=state=="paused" ? "连接已断开" : state=="stopping" ? "连接已暂停，断开尚未确认" : state=="online" || state=="connected" ? "已连接 Codex 和配对服务器" : "正在等待 Codex 或服务器连接";
-                trayStatus.Text=status.Text; tray.Text=status.Text.Length>63 ? status.Text.Substring(0,63) : status.Text;
+                if(!stopping) SetStatus(state=="paused" ? "连接已断开" : state=="stopping" ? "连接已暂停，断开尚未确认" : state=="online" || state=="connected" ? "已连接 Codex 和配对服务器" : "正在等待 Codex 或服务器连接");
+                statusReadSucceeded=true;
                 Working(false); return;
             }
-            status.Text="安装完成，请先登录网页获取配对码。";
-        } catch(Exception e) { if(epoch==actionEpoch){status.Text=e.Message;trayStatus.Text="连接状态读取失败";tray.Text=trayStatus.Text;} }
+            SetStatus("尚未绑定这台电脑");
+            statusReadSucceeded=true;
+        } catch(Exception e) { if(epoch==actionEpoch)SetStatus("连接状态读取失败："+e.Message); }
         Working(false);
     }
     async Task Install() {
@@ -233,7 +246,7 @@ class ConnectorWindow : Form {
     static bool IsDefaultRoot(string path) { return string.Equals(path,Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"CodexMobileConnector"),StringComparison.OrdinalIgnoreCase); }
     static void Register(string root) {
         using(var key=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexMobileConnector")) {
-            key.SetValue("DisplayName","Codex 手机桥接"); key.SetValue("DisplayVersion","0.1.2");
+            key.SetValue("DisplayName","Codex 手机桥接"); key.SetValue("DisplayVersion","0.1.3");
             key.SetValue("InstallLocation",root); key.SetValue("UninstallString","\""+Path.Combine(root,"CodexMobileConnector.exe")+"\" --uninstall");
             key.SetValue("NoModify",1); key.SetValue("NoRepair",1);
         }
@@ -273,6 +286,7 @@ class ConnectorWindow : Form {
         form.UninstallMode=uninstall;
         if(args.Length==4 && args[0]=="--install-root" && args[2]=="--capture") form.CapturePath=Path.GetFullPath(args[3]);
         if(args.Length==4 && args[0]=="--install-root" && args[2]=="--qa-lifecycle" && !IsDefaultRoot(root)) form.LifecycleEvidence=Path.GetFullPath(args[3]);
+        if(args.Length==4 && args[0]=="--install-root" && args[2]=="--qa-status" && !IsDefaultRoot(root)) form.StatusEvidence=Path.GetFullPath(args[3]);
         if(uninstall) form.Shown+=(s,e)=>form.Uninstall();
         if(args.Length==3 && args[0]=="--install-root" && args[2]=="--install") { form.Unattended=true; form.Shown+=async(s,e)=>await form.Install(); }
         if(installed) Task.Run(()=>{while(!form.IsDisposed){int action=WaitHandle.WaitAny(new WaitHandle[]{wake,remove},1000);if(action<2 && form.IsHandleCreated && !form.IsDisposed) try{form.BeginInvoke(action==0 ? new Action(form.Wake) : new Action(form.Uninstall));}catch(InvalidOperationException){}}});

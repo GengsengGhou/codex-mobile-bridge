@@ -50,7 +50,43 @@ test('inflight limit, cancellation and timeout settle requests without replay', 
   const pending = fetch(`${origin}/api/status`); await dispatched;
   assert.equal((await fetch(`${origin}/api/status`)).status, 503);
   relay.cancelSession('session'); const revoked = await pending; assert.equal(revoked.status, 401); assert.equal((await revoked.json()).code, 'SESSION_REVOKED');
-  const timedOut = await fetch(`${origin}/api/status`); assert.equal(timedOut.status, 503);
+  const timedOut = await fetch(`${origin}/api/status`); assert.equal(timedOut.status, 504); assert.equal((await timedOut.json()).code, 'RELAY_TIMEOUT');
+  assert.equal(relay.status('desktop'), true);
+});
+
+test('connector read errors preserve known reasons while mutation errors remain uncertain', async t => {
+  const { ws, origin } = await fixture(t);
+  ws.on('message', (data, isBinary) => {
+    const message = decode(data, isBinary);
+    if (message.type === 'request') control(ws, {
+      type: 'error', id: message.id,
+      code: message.method === 'GET' ? 'BRIDGE_ROUTE_UNSUPPORTED' : 'BRIDGE_BUSY',
+    });
+  });
+  const unsupported = await fetch(`${origin}/api/status`);
+  assert.equal(unsupported.status, 502); assert.equal((await unsupported.json()).code, 'BRIDGE_ROUTE_UNSUPPORTED');
+  const busy = await fetch(`${origin}/api/threads`, { method: 'POST', body: '{}' });
+  assert.equal(busy.status, 409); assert.equal((await busy.json()).code, 'DELIVERY_UNKNOWN');
+  assert.equal((await fetch(`${origin}/api/status`)).status, 502);
+});
+
+test('read in flight during connector replacement reports reconnecting while replacement serves requests', async t => {
+  const { ws, origin, connect, relay } = await fixture(t);
+  const dispatched = new Promise(resolve => ws.once('message', (data, isBinary) => resolve(decode(data, isBinary))));
+  const pending = fetch(`${origin}/api/status`);
+  await dispatched;
+  const replacement = await connect(); t.after(() => replacement.terminate());
+  const response = await pending;
+  assert.equal(response.status, 503); assert.equal((await response.json()).code, 'DEVICE_RECONNECTING');
+  replacement.on('message', (data, isBinary) => {
+    const message = decode(data, isBinary);
+    if (message.type === 'end' && message.direction === 'upload') {
+      control(replacement, { type: 'response', id: message.id, status: 200 });
+      control(replacement, { type: 'end', id: message.id, direction: 'download' });
+    }
+  });
+  assert.equal((await fetch(`${origin}/api/status`)).status, 200);
+  assert.equal(relay.status('desktop'), true);
 });
 test('replacing connector fences old socket and settles dispatched writes', async t => {
   const { ws, origin, connect } = await fixture(t);

@@ -93,7 +93,9 @@ export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 
         if (ws !== socket || stopped) return;
         const message = decode(data, isBinary);
         if (message.type === 'request') {
-          if (requests.has(message.id) || requests.size >= maxInFlight || !allowedBridgeRequest(message.method, message.path)) throw new Error('Invalid request');
+          if (requests.has(message.id) || typeof message.method !== 'string' || typeof message.path !== 'string' || !message.headers || typeof message.headers !== 'object' || Array.isArray(message.headers)) throw new Error('Invalid request');
+          if (!allowedBridgeRequest(message.method, message.path)) { control(socket, { type: 'error', id: message.id, code: 'BRIDGE_ROUTE_UNSUPPORTED' }); return; }
+          if (requests.size >= maxInFlight) { control(socket, { type: 'error', id: message.id, code: 'BRIDGE_BUSY' }); return; }
           const request = { id: message.id, ws: socket, method: message.method, path: message.path, headers: message.headers, uploadBytes: 0, uploadPending: false, uploadEnded: false, cancelled: false, downloadAck: null };
           requests.set(message.id, request);
           request.timer = setTimeout(() => fail(request), requestTimeoutMs);

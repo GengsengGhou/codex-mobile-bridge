@@ -101,8 +101,11 @@ export async function hydrateAgentContext(agents, bridge) {
     try {
       const data = await bridge.read(item.threadId, undefined, { turnLimit: 1 });
       if (data.thread?.id !== item.threadId || data.thread.kind !== 'codex' || data.thread.hostId && data.thread.hostId !== 'local') return item;
-      return { ...item, name: text(data.thread.title) ?? item.name, status: text(data.thread.status, 64) ?? 'unknown', canRead: true };
-    } catch { return { ...item, status: 'unknown', canRead: false }; }
+      const nativeStatus = text(data.thread.status, 64) ?? 'unknown';
+      // A dormant snapshot describes loading state, not the latest recorded completion event.
+      const status = item.status === 'completed' && ['idle', 'notLoaded', 'notloaded', 'not_loaded', 'unknown'].includes(nativeStatus) ? 'completed' : nativeStatus;
+      return { ...item, name: text(data.thread.title) ?? item.name, status, canRead: true };
+    } catch { return { ...item, status: item.status === 'completed' ? 'completed' : 'unknown', canRead: false }; }
   }));
   return { ...agents, items };
 }

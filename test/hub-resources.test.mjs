@@ -94,7 +94,7 @@ test('global/account admission and connector replacement cannot bypass shared re
     const c = relay.proxy('three', third.req, third.res, '/api/status').catch(error => error.code);
     const global = request(); await assert.rejects(relay.proxy('three', global.req, global.res, '/api/status'), { code: 'HUB_BUSY' });
     assert.equal(relay.active, 3);
-    relay.attach('one', new Socket(), { userId: 'account' }); assert.equal(await a, 'DEVICE_OFFLINE'); assert.equal(relay.active, 2);
+    relay.attach('one', new Socket(), { userId: 'account' }); assert.equal(await a, 'DEVICE_RECONNECTING'); assert.equal(relay.active, 2);
     relay.cancelDevice('two'); relay.cancelDevice('three'); await Promise.all([b, c]);
     assert.equal(relay.active, 0); assert.equal(relay.userRequests.size, 0); assert.equal(relay.bandwidth.queue.length, 0);
     relay.cancelDevice('three'); assert.equal(relay.active, 0);
