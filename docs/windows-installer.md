@@ -1,6 +1,6 @@
 # Windows graphical connector
 
-中文下载与首次配对步骤见 [简易配置教程](quick-start.md#配对-windows-电脑)。安装包和 SHA-256 清单见公开的 [v0.1.1 预发行版](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v0.1.1)，无需 GitHub 令牌或桥接账号即可下载。下面记录安装器细节与构建验证。
+中文下载与首次配对步骤见 [简易配置教程](quick-start.md#配对-windows-电脑)。安装包和 SHA-256 清单见公开的 [发行版本](https://github.com/GengsengGhou/codex-mobile-bridge/releases)，无需 GitHub 令牌或桥接账号即可下载。下面记录安装器细节与构建验证。
 
 Distribute `dist/CodexMobileConnector-Setup.exe` with its published SHA-256 checksum.
 The Windows x64 installer embeds the application, its `ws` dependency, and Node.js.

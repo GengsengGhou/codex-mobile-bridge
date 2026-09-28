@@ -49,7 +49,7 @@
 
 部署向导需要入口域名、首次管理员初始化和持久化目录。首次管理员仅能通过服务器端一次性初始化建立，不能由公网访问者抢先认领；密码和设备密钥不写入仓库或安装脚本。
 
-`npm run release:package` 生成服务器 tar.gz、Windows ZIP、Windows EXE 及 `SHA256SUMS`，均在 `dist/`。不包含 `.local`、数据库、设备密钥或验收工作文件。公开下载见 [v0.1.1 预发行版](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v0.1.1)，下载无需桥接账号。受邀用户先用管理员私下提供的网址和邀请注册，之后再生成电脑配对码；自行部署者提供自己的 VPS 和域名。升级应保留数据与设备归属，支持版本核对、失败回退和单独撤销设备。
+`npm run release:package` 生成服务器 tar.gz、Windows ZIP、Windows EXE 及 `SHA256SUMS`，均在 `dist/`。不包含 `.local`、数据库、设备密钥或验收工作文件。公开下载见 [发行版本](https://github.com/GengsengGhou/codex-mobile-bridge/releases)，下载无需桥接账号。受邀用户先用管理员私下提供的网址和邀请注册，之后再生成电脑配对码；自行部署者提供自己的 VPS 和域名。升级应保留数据与设备归属，支持版本核对、失败回退和单独撤销设备。
 
 ## 分阶段验收
 

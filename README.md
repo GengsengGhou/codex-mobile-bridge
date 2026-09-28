@@ -2,7 +2,7 @@
 
 通过正在运行的 Codex 桌面任务接口读取与发送消息，复用桌面的模型与配置，不需要在网页填写模型密钥。本项目是实验性的非官方客户端，桌面内部接口升级后可能需要重新适配。
 
-源码仓库：[GengsengGhou/codex-mobile-bridge](https://github.com/GengsengGhou/codex-mobile-bridge)。安装包与校验清单：[v0.1.1 预发行版](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v0.1.1)。公开仓库与 Release 可直接下载；源码下载不授予桥接服务账号，使用已有服务仍需管理员邀请。
+源码仓库：[GengsengGhou/codex-mobile-bridge](https://github.com/GengsengGhou/codex-mobile-bridge)。安装包与校验清单：[发行版本](https://github.com/GengsengGhou/codex-mobile-bridge/releases)。公开仓库与 Release 可直接下载；源码下载不授予桥接服务账号，使用已有服务仍需管理员邀请。
 
 ## 开始使用
 

@@ -15,7 +15,7 @@
 
 ## 下载与校验
 
-打开 [v0.1.1 预发行版](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v0.1.1)，下载需要的文件和 `SHA256SUMS`：
+打开 [发行版本](https://github.com/GengsengGhou/codex-mobile-bridge/releases)，选择需要的版本，下载同一版本的文件和 `SHA256SUMS`：
 
 | 文件 | 用途 |
 | --- | --- |
