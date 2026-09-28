@@ -19,6 +19,10 @@ try {
     foreach ($item in @('package.json','package-lock.json','README.md','src','hub','public','scripts','deploy','docs')) { Copy-Item -LiteralPath (Join-Path $root $item) -Destination $app -Recurse }
     $verification = Join-Path $app 'docs/verification'
     if (Test-Path -LiteralPath $verification) { Remove-Item -LiteralPath $verification -Recurse -Force }
+    foreach ($item in Get-ChildItem -LiteralPath $app -Recurse -Force) {
+        $relative = $item.FullName.Substring($app.Length + 1).Replace([IO.Path]::DirectorySeparatorChar,[char]'/')
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $relative -match '(^|/)(\.local|work|data|mobile-uploads|coverage|\.cache)(/|$)' -or ($item.Name -ne '.env.example' -and $item.Name -match '^\.env(\.|$)') -or $item.Name -match '\.(sqlite(-.*)?|db(-.*)?|pem|key|pfx|p12|log|tmp)$') { throw "Private or local-only installer input rejected: $relative" }
+    }
     New-Item -ItemType Directory -Path (Join-Path $app 'node_modules') | Out-Null
     Copy-Item -LiteralPath (Join-Path $root 'node_modules/ws') -Destination (Join-Path $app 'node_modules') -Recurse
     New-Item -ItemType Directory -Path (Join-Path $app 'runtime') | Out-Null

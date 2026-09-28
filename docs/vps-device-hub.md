@@ -2,6 +2,8 @@
 
 状态：已实现并完成受控部署验收。下文使用 `https://codex.example.com` 作为示例地址，自行部署时替换为自己的域名。
 
+首次使用先读 [简易配置教程](quick-start.md)，新 VPS 按 [原生 Ubuntu / Debian 部署](native-vps-deployment.md) 或 [Docker Compose 部署](compose-deployment.md) 选择一种方案。本文主要解释结构与权限边界。
+
 ## 使用目标
 
 部署者有 VPS 和域名，最终用户无需自己的域名、VPS 或公网 IP。用户在手机浏览器登录统一入口，只能选择自己绑定的电脑，继续该电脑上的 Codex 会话。电脑须已开机、联网，Codex 与连接器须运行。
@@ -47,7 +49,7 @@
 
 部署向导需要入口域名、首次管理员初始化和持久化目录。首次管理员仅能通过服务器端一次性初始化建立，不能由公网访问者抢先认领；密码和设备密钥不写入仓库或安装脚本。
 
-`npm run release:package` 生成服务器 tar.gz、Windows ZIP、Windows EXE 及 `SHA256SUMS`，均在 `dist/`。不包含 `.local`、数据库、设备密钥或验收工作文件。目前尚未发布 GitHub Release，请自行构建。普通用户只需入口地址和配对码；自行部署者提供自己的 VPS 和域名。升级应保留数据与设备归属，支持版本核对、失败回退和单独撤销设备。
+`npm run release:package` 生成服务器 tar.gz、Windows ZIP、Windows EXE 及 `SHA256SUMS`，均在 `dist/`。不包含 `.local`、数据库、设备密钥或验收工作文件。下载见 [v0.1.0 预发行版](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v0.1.0)，私有仓库需登录并有访问权。受邀用户先用管理员私下提供的网址和邀请注册，之后再生成电脑配对码；自行部署者提供自己的 VPS 和域名。升级应保留数据与设备归属，支持版本核对、失败回退和单独撤销设备。
 
 ## 分阶段验收
 
@@ -60,6 +62,8 @@
 已通过模拟多账号隔离、真实本机桥接、真实 VPS HTTPS 登录与当前电脑持久 WSS 连接。公网前端验收用真实页面模块在 jsdom 中执行，仅发 GET，没有聊天或审批变更。真实手机流量、触摸与视觉、第二台实际电脑尚未验收，详细结果见 `verification.md`。
 
 ## Windows 首次安装与再次启动
+
+普通 Windows 用户优先使用中文 EXE，按 [简易教程](quick-start.md#配对-windows-电脑) 下载校验并配对。下面是备用 ZIP 的终端流程，两者不要同时安装到同一目录。
 
 解压 Windows ZIP，双击 `deploy/install-connector.cmd`。安装器优先使用已有 Node.js 22.16+；否则下载官方 Windows x64 Node.js，验证 SHA256，并保存在包内 `.local/tools`，不修改系统 PATH。包包含 ws，不需要 npm 下载运行依赖。
 

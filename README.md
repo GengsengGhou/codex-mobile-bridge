@@ -2,7 +2,16 @@
 
 通过正在运行的 Codex 桌面任务接口读取与发送消息，复用桌面的模型与配置，不需要在网页填写模型密钥。本项目是实验性的非官方客户端，桌面内部接口升级后可能需要重新适配。
 
-源码仓库：[GengsengGhou/codex-mobile-bridge](https://github.com/GengsengGhou/codex-mobile-bridge)。目前尚未发布 GitHub Release，可执行 `npm run release:package` 自行构建安装产物。
+源码仓库：[GengsengGhou/codex-mobile-bridge](https://github.com/GengsengGhou/codex-mobile-bridge)。安装包与校验清单：[v0.1.0 预发行版](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v0.1.0)。仓库目前私有，下载需登录有访问权的 GitHub 账号；服务账号与 GitHub 访问权相互独立。
+
+## 开始使用
+
+| 你的情况 | 下一步 |
+| --- | --- |
+| 有自己的 VPS，希望独立运行服务 | 按 [Ubuntu / Debian 部署教程](docs/native-vps-deployment.md) 配置自己的域名、HTTPS 和管理员，再安装电脑连接器。也有 [Docker Compose 方案](docs/compose-deployment.md)。 |
+| 受邀使用已有服务，不部署 VPS | 向服务管理员私下获取入口网址和一次性邀请，按 [受邀使用与电脑配对](docs/quick-start.md#受邀使用已有服务) 注册并安装连接器。 |
+
+[简易配置教程](docs/quick-start.md) 汇总下载、账号、设备配对和排错。仓库与安装器不预设运营者的实际 VPS 域名或 IP；受邀用户仍需知道管理员提供的入口网址。邀请用于注册账号，设备配对码用于绑定电脑，不能混用。
 
 ## 已实现
 

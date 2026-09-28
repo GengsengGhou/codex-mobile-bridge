@@ -1,10 +1,20 @@
-import { mkdir, readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, mkdtemp, rm, readdir } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const root = fileURLToPath(new URL('..', import.meta.url));
+async function checkReleaseInput(relative) {
+  const entries = await readdir(join(root, relative), { withFileTypes: true });
+  for (const entry of entries) {
+    const path = `${relative}/${entry.name}`;
+    if (path === 'docs/verification') continue;
+    if (entry.isSymbolicLink() || /(?:^|\/)(?:\.local|work|data|mobile-uploads|coverage|\.cache)(?:\/|$)/.test(path) || (entry.name !== '.env.example' && /^\.env(?:\.|$)/.test(entry.name)) || /\.(?:sqlite(?:-.*)?|db(?:-.*)?|pem|key|pfx|p12|log|tmp)$/i.test(entry.name)) throw new Error(`Private or local-only release input rejected: ${path}`);
+    if (entry.isDirectory()) await checkReleaseInput(path);
+  }
+}
+for (const directory of ['hub', 'public', 'src', 'scripts', 'deploy', 'docs']) await checkReleaseInput(directory);
 await mkdir(new URL('../dist/', import.meta.url), { recursive: true });
 const file = 'dist/codex-device-hub.tar.gz';
 const result = spawnSync('tar', ['--exclude=.env', '--exclude=*.sqlite*', '--exclude=*.tmp', '--exclude=docs/verification', '-czf', file, 'package.json', 'package-lock.json', 'README.md', 'hub', 'public', 'src', 'scripts', 'deploy', 'node_modules/ws', 'docs'], { cwd: root, stdio: 'inherit' });
