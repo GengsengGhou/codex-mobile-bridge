@@ -29,6 +29,22 @@ test("local setup probes only when opened and never starts automatically", async
   assert.equal(calls[1][0], "/api/remote-access"); assert.equal(calls[1][1], undefined);
 });
 
+test("login invalidation callback covers expiry events and successful logout", async t => {
+  const dom = new JSDOM('<aside id="taskDrawer"><div class="drawer-foot"></div></aside>', { url: "https://example.test" });
+  t.after(() => dom.window.close());
+  let invalidations = 0;
+  const calls = [];
+  const panel = createAccessPanel({ document: dom.window.document, window: dom.window, api: async () => ({ mode: "remote" }), onLoginRequired: () => invalidations++, fetchImpl: async (path, options) => { calls.push({ path, method: options.method }); return { ok: true }; } });
+  await panel.ready;
+  const logout = [...dom.window.document.querySelectorAll("button")].find(button => button.textContent === "退出登录");
+  logout.click(); await tick();
+  assert.equal(invalidations, 1);
+  assert.deepEqual(calls, [{ path: "/auth/logout", method: "POST" }]);
+  dom.window.dispatchEvent(new dom.window.Event("bridge-login-required"));
+  assert.equal(invalidations, 2);
+  logout.click(); await tick(); assert.equal(calls.length, 1);
+});
+
 function localSetup(api) {
   const dom = new JSDOM('<aside id="taskDrawer"></aside>', { url: "http://localhost" });
   const panel = createAccessPanel({ document: dom.window.document, window: dom.window, api: (path, options) => path === "/api/access" ? Promise.resolve({ mode: "local" }) : api(options) });

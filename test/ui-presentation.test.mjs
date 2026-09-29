@@ -16,6 +16,7 @@ test('keeps user messages and final answers in order around folded work segments
 
   assert.deepEqual(blocks.map(block => block.type), ['user', 'work', 'final', 'user', 'work', 'final']);
   assert.deepEqual(blocks[1].items.map(item => item.id), ['a1', 'c1']);
+  assert.deepEqual(blocks.filter(block => block.type === 'work').map(block => block.summaryEligible), [false, true]);
   assert.equal(blocks[2].item.id, 'f1');
   assert.equal(blocks[3].item.id, 'u2');
   assert.equal(blocks[5].item.id, 'f2');
@@ -29,6 +30,22 @@ test('summarizes active and completed work durations', () => {
   assert.equal(formatWorkSummary({ status: 'completed' }), '工作过程 · 已完成');
   assert.equal(formatWorkSummary({ status: 'completed', durationMs: null }), '工作过程 · 已完成');
   assert.equal(formatWorkSummary({ status: 'interrupted' }), '工作过程 · 已中断');
+});
+
+test('only the last work segment carries the whole-turn duration and status', () => {
+  const turn = { status: 'completed', durationMs: 62000, items: [
+    { type: 'activity', id: 'read', text: 'Reading files' },
+    { type: 'userMessage', id: 'question', text: 'Which file?' },
+    { type: 'activity', id: 'update', text: 'Updating tests' },
+    { type: 'agentMessage', id: 'final', phase: 'final_answer', text: 'Done' },
+  ] };
+  const blocks = buildTurnBlocks(turn).filter(block => block.type === 'work');
+  assert.deepEqual(blocks.map(block => formatWorkSummary(turn, block)), ['工作过程', '工作过程 · 用时 1 分 2 秒']);
+
+  const active = { ...turn, status: 'inProgress' };
+  assert.equal(formatWorkSummary(active, blocks[0]), '工作过程');
+  assert.equal(formatWorkSummary(active, blocks[1]), '工作过程 · 进行中');
+  assert.equal(formatWorkSummary(turn), '工作过程 · 用时 1 分 2 秒');
 });
 
 test('groups matching project keys together and collects unscoped sessions', () => {

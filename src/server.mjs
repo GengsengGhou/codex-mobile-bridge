@@ -23,6 +23,13 @@ import { publicAssets, assetContentType, appCsp } from './static-assets.mjs';
 
 const publicRoot = new URL('../public/', import.meta.url);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function ownerReadReason(error, subject, canSend) {
+  const reason = error.controlDiagnostic?.reason;
+  const message = reason === 'request-timeout' ? `读取${subject}超时，可刷新重试`
+    : ['client-disconnected', 'server-closed'].includes(reason) ? `${subject}连接已断开，正在重试`
+      : `暂时无法读取${subject}，可刷新重试`;
+  return `${message}${canSend ? '；沿用桌面设置仍可发送消息' : ''}`;
+}
 async function creationSupplementRead(operation) {
   let timer;
   try {
@@ -276,7 +283,7 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
             ...(!canOverride ? { reason: snapshot.permissionActive ? '正在运行，权限选择将在下一轮发送时生效' : '此会话当前不能覆盖权限' } : {}) }, git, agents, sources: context.sources });
         } catch (error) {
           const code = ['PROTOCOL_ERROR', 'PROTOCOL_INCOMPATIBLE', 'OWNER_UNAVAILABLE', 'UNSUPPORTED_THREAD'].includes(error.code) ? error.code : 'CONTROL_UNAVAILABLE';
-          const reason = code === 'OWNER_UNAVAILABLE' ? '请在桌面载入此会话后重试' : '暂时无法读取桌面会话信息';
+          const reason = code === 'OWNER_UNAVAILABLE' ? ownerReadReason(error, '会话权限与运行状态', sendAccess(thread).canSend) : '暂时无法读取会话信息，可刷新重试';
           json(res, 200, { threadId: id, available: false, code, reason, permissions: { supported: false, current: 'unknown', canOverride: false, options: [] }, git: await readGitContext(thread.cwd), agents: unavailable(reason), sources: unavailable(reason) });
         }
         return;
@@ -300,9 +307,9 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
         } catch (error) {
           const code = ['PROTOCOL_ERROR', 'PROTOCOL_INCOMPATIBLE', 'OWNER_UNAVAILABLE', 'UNSUPPORTED_THREAD'].includes(error.code) ? error.code : 'CONTROL_UNAVAILABLE';
           const reason = ['PROTOCOL_ERROR', 'PROTOCOL_INCOMPATIBLE'].includes(code) ? '当前桌面版本的运行控制不兼容，会话读写仍可使用'
-            : code === 'OWNER_UNAVAILABLE' ? '桌面尚未载入此会话的运行实例，请稍后重试'
+            : code === 'OWNER_UNAVAILABLE' ? ownerReadReason(error, '运行状态', sendAccess(thread).canSend)
               : code === 'UNSUPPORTED_THREAD' ? '此类会话暂不支持网页运行控制'
-                : '暂时无法读取运行控制，请在桌面操作';
+                : '暂时无法读取运行状态，可刷新重试';
           json(res, 200, { available: false, canStop: false, threadId: id, code, reason });
         }
         return;

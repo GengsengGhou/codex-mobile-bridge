@@ -31,7 +31,6 @@ import { createAgentViewer } from "./agent-viewer.js";
 
   const API_HEADERS = { "X-Bridge-Client": "mobile-v1" };
   const requestApi = createApi({ headers: API_HEADERS, fetchImpl: scopedFetch, onSnapshot: deviceScope.acceptSnapshot });
-  createAccessPanel({ document, window, api: requestApi, fetchImpl: scopedFetch, deviceContext: deviceScope.context });
   const STATUS_POLL_MS = 15000;
   const LIST_POLL_MS = 15000;
   const DRAFT_PREFIX = "codex-mobile-draft:";
@@ -87,6 +86,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     creationResult: $("creationResult"), creationResultText: $("creationResultText"), enterCreatedThread: $("enterCreatedThread")
   };
   const modelUI = { button: $("modelSettingsButton"), dialog: $("modelSettingsDialog"), model: $("messageModel"), thinking: $("messageThinking"), message: $("modelSettingsState"), createModel: $("createModel"), createThinking: $("createThinking") };
+  const followupUI = { dialog: $("followupDraftDialog"), preview: $("followupDraftPreview"), cancel: $("followupDraftCancel"), append: $("followupDraftAppend") };
   const modelSettings = new Map();
   function readModelSettings(id) {
     if (!modelSettings.has(id)) {
@@ -130,6 +130,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     modelUI.button.disabled = !state.selectedId || state.sending;
     modelUI.button.textContent = selection.model ? `${selection.model.replace(/^gpt-/, "")}${selection.thinking ? ` · ${selection.thinking}` : ""} ▾` : "沿用桌面 ▾";
     modelUI.button.title = `下一轮：${selection.model || "沿用桌面设置"}${selection.thinking ? ` · ${selection.thinking}` : ""}`;
+    modelUI.button.setAttribute("aria-label", `模型与推理强度，${modelUI.button.title}`);
     modelUI.message.textContent = state.sendMode === "follow-up" ? "本轮补充沿用运行中的模型，所选设置用于下一轮。" : !modelChoices("send").length ? "桌面暂未提供可用模型目录；沿用桌面设置仍可发送。" : "";
   }
   const state = {
@@ -143,7 +144,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     lastStatusAt: 0, lastListAt: 0, sidebarOrder: { revision: 0, order: { projects: [], threads: {} } },
     orderLoaded: false, orderConfigured: false, orderSaving: false, orderDirty: false, sorting: false, dragging: null,
     receiptChecks: new Map(), receiptCheckAt: new Map(), draftRevisions: new Map(), threadAction: null, managing: false,
-    execution: null, controlReads: new Set(), stopping: false, responding: new Set(), responseStates: new Map(),
+    execution: null, controlReads: new Set(), stopping: false, responding: new Set(), responseStates: new Map(), followupDraft: null, sessionExpired: false,
     pendingCards: new Map(), pendingDrafts: new Map(), controlUnavailable: false,
     controlOpen: false, controlSeen: new Set(), historyFingerprint: "", historyDismissed: "",
     projects: [], projectsLoaded: false, projectsLoading: false, projectsCanCreate: null, projectsError: "",
@@ -156,6 +157,7 @@ import { createAgentViewer } from "./agent-viewer.js";
   const uploads = createUploads({ document, window, storage: sessionStorage, fetchImpl: scopedFetch, getThread: id => ({ id, cwd: (state.thread?.id === id ? state.thread.cwd : "") || state.threads.find(item => item.id === id)?.cwd || "" }), canUpload: () => maySendSelected() && state.connected && state.canSend, onChange: updateControls });
   createArchivesPanel({ document, window, api: requestApi, onRestored: () => refreshTasks() });
   createRecoveryPanel({ document, api: requestApi });
+  createAccessPanel({ document, window, api: requestApi, fetchImpl: scopedFetch, deviceContext: deviceScope.context, onLoginRequired: () => { state.sessionExpired = true; clearFollowupDraft(); } });
 
   async function api(path, options = {}) {
     state.inFlight += 1;
@@ -179,7 +181,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     if (["completed", "complete", "done", "finished", "succeeded", "success"].includes(value)) return { label: "已完成", kind: "completed" };
     if (["failed", "error", "errored", "systemerror", "system_error"].includes(value)) return { label: "系统错误", kind: "error" };
     if (["interrupted", "cancelled", "canceled", "stopped"].includes(value)) return { label: "已中断", kind: "" };
-    if (["idle", "not_loaded", "notloaded"].includes(value)) return { label: value === "idle" ? "空闲" : "尚未载入", kind: "" };
+    if (["idle", "not_loaded", "notloaded"].includes(value)) return { label: value === "idle" ? "空闲" : "等待继续", kind: "" };
     if (value === "unknown" || !value) return { label: "状态未知", kind: "" };
     return { label: text(status), kind: "" };
   }
@@ -310,23 +312,33 @@ import { createAgentViewer } from "./agent-viewer.js";
     ui.input.disabled = !state.selectedId;
     uploads.setThread(state.selectedId);
     const attachmentStatus = uploads.status(state.selectedId);
-    ui.send.disabled = !canWrite || state.sending || attachmentStatus.blocked || (!ui.input.value.trim() && !attachmentStatus.count);
+    const hasInput = !!ui.input.value.trim() || attachmentStatus.count > 0 || attachmentStatus.blocked;
+    ui.send.disabled = !canWrite || state.sending || state.stopping || attachmentStatus.blocked || !hasInput;
     ui.olderButton.disabled = !state.connected || state.loadingOlder;
     const execution = state.execution?.threadId === state.selectedId ? state.execution : null;
-    ui.stop.hidden = !execution?.canStop;
-    ui.stop.disabled = state.stopping || state.sending || !state.connected;
-    ui.stop.textContent = state.stopping ? "停止中…" : "停止";
-    ui.send.querySelector("span:last-child").textContent = state.sending ? "发送中" : state.sendMode === "follow-up" ? "补充" : "发送";
-    ui.send.title = state.sendMode === "follow-up" ? "补充到正在运行的会话" : "发送到桌面会话";
+    const active = state.sendMode === "follow-up" || normalizeStatus(state.thread?.status).kind === "running" || !!(execution?.canStop && execution.turnId);
+    const showStop = active && !hasInput;
+    ui.stop.hidden = !showStop;
+    ui.send.hidden = showStop;
+    ui.stop.disabled = state.stopping || state.sending || !state.connected || unknownPending || !!state.selectionController || !execution?.canStop || !execution.turnId;
+    const stopLabel = state.stopping ? "正在停止当前轮次" : "停止当前轮次";
+    ui.stop.setAttribute("aria-label", stopLabel);
+    ui.stop.title = showStop && !execution?.canStop ? execution?.reason || "正在确认当前运行轮次" : stopLabel;
+    const sendLabel = state.sending ? "正在发送消息" : state.sendMode === "follow-up" ? "补充到当前轮次" : "发送消息";
+    ui.send.setAttribute("aria-label", sendLabel);
+    ui.send.title = attachmentStatus.blocked ? "附件尚未就绪" : sendLabel;
+    ui.send.setAttribute("aria-busy", String(state.sending));
+    ui.stop.setAttribute("aria-busy", String(state.stopping));
     if (unknownPending) ui.composerHint.textContent = "正在核对送达状态；不会自动重发";
     else if (state.selectionController) ui.composerHint.textContent = "正在读取所选会话，草稿已保留";
     else if (!state.selectedId) ui.composerHint.textContent = "选择任务后查看发送权限";
     else if (!state.connected) ui.composerHint.textContent = "连接中断，草稿会保留";
     else if (!maySendSelected()) ui.composerHint.textContent = "此会话暂不允许发送";
     else if (!state.canSend) ui.composerHint.textContent = state.sendDisabledReason || "此会话当前不允许发送";
-    else if (state.sendMode === "follow-up") ui.composerHint.textContent = "补充到当前轮次，沿用当前模型与权限";
-    else ui.composerHint.textContent = "发送到桌面上的同一任务";
-    ui.composerHint.classList.toggle("sr-only", !!state.selectedId && canWrite && !state.sending && !attachmentStatus.blocked && state.sendMode !== "follow-up");
+    else if (attachmentStatus.blocked) ui.composerHint.textContent = "附件尚未就绪，草稿已保留";
+    else if (showStop && ui.stop.disabled && !state.sending && !state.stopping) ui.composerHint.textContent = execution?.reason || "正在确认当前运行轮次";
+    else ui.composerHint.textContent = "";
+    ui.composerHint.classList.toggle("sr-only", !ui.composerHint.textContent);
     updateCreateControls();
   }
 
@@ -1123,7 +1135,8 @@ import { createAgentViewer } from "./agent-viewer.js";
   async function stopExecution() {
     const execution = state.execution;
     const id = state.selectedId;
-    if (state.stopping || state.sending || !state.connected || execution?.threadId !== id || !execution.canStop || !execution.turnId) return;
+    const attachments = uploads.status(id);
+    if (ui.input.value.trim() || attachments.count || attachments.blocked || state.selectionController || isUnknown(id) || state.stopping || state.sending || !state.connected || execution?.threadId !== id || !execution.canStop || !execution.turnId) return;
     state.stopping = true;
     updateControls();
     try {
@@ -1853,7 +1866,7 @@ import { createAgentViewer } from "./agent-viewer.js";
   }
 
   function appendSafeMarkdown(parent, source) {
-    renderMarkdown(parent, text(source, ""));
+    renderMarkdown(parent, text(source, ""), document, { allowFollowups: true });
   }
 
   function displayDetail(value) {
@@ -1932,9 +1945,10 @@ import { createAgentViewer } from "./agent-viewer.js";
         const details = document.createElement("details");
         details.className = "work-process";
         details.dataset.turnId = text(turn.id);
+        details.dataset.summaryEligible = String(block.summaryEligible === true);
         restoreDetailsState(details, key);
         const summary = document.createElement("summary");
-        summary.textContent = formatWorkSummary(turn);
+        summary.textContent = formatWorkSummary(turn, block);
         const content = document.createElement("div");
         content.className = "work-process-content";
         for (const item of block.items) {
@@ -1993,7 +2007,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     for (const details of ui.transcript.querySelectorAll("details.work-process[data-turn-id]")) {
       const turn = state.turns.get(details.dataset.turnId);
       const summary = details.querySelector(":scope > summary");
-      if (turn && summary) summary.textContent = formatWorkSummary(turn);
+      if (turn && summary) summary.textContent = formatWorkSummary(turn, { type: "work", summaryEligible: details.dataset.summaryEligible === "true" });
     }
   }
 
@@ -2175,6 +2189,7 @@ import { createAgentViewer } from "./agent-viewer.js";
   async function selectThread(id) {
     const selectionRequest = ++state.selecting;
     const pendingSelection = state.selectionController;
+    if (id !== state.selectedId || pendingSelection) clearFollowupDraft();
     pendingSelection?.abort();
     state.selectionController = null;
     if (pendingSelection) updateControls();
@@ -2363,6 +2378,33 @@ import { createAgentViewer } from "./agent-viewer.js";
     updateControls();
   }
 
+  function clearFollowupDraft() {
+    state.followupDraft = null;
+    followupUI.preview.textContent = "";
+    if (followupUI.dialog.open) followupUI.dialog.close();
+  }
+
+  function fillFollowupDraft(prompt, append = false) {
+    if (state.sessionExpired || state.selectionController || !state.selectedId || ui.input.disabled || typeof prompt !== "string" || !prompt.trim()) return;
+    const current = ui.input.value;
+    const next = append && current.trim() ? `${current}\n\n${prompt}` : prompt;
+    if (next.length > ui.input.maxLength) { showNotice("建议加入后超过消息长度上限，原草稿已保留。", "error"); return; }
+    ui.input.value = next;
+    autosizeInput();
+    ui.input.focus();
+    ui.input.setSelectionRange(next.length, next.length);
+  }
+
+  function openFollowupDraft(button) {
+    const prompt = button?.dataset.codexFollowup;
+    if (state.sessionExpired || state.selectionController || !state.selectedId || ui.input.disabled || typeof prompt !== "string" || !prompt.trim()) return;
+    if (!ui.input.value.trim()) { fillFollowupDraft(prompt); return; }
+    if (ui.input.value.trim() === prompt.trim()) { ui.input.focus(); return; }
+    state.followupDraft = { threadId: state.selectedId, prompt };
+    followupUI.preview.textContent = prompt;
+    followupUI.dialog.showModal();
+  }
+
   function updatePendingMessage(threadId, requestId, change) {
     const pending = [...(state.pendingByThread.get(threadId) || (threadId === state.selectedId ? state.pendingMessages : []))];
     const index = pending.findIndex(message => message.requestId === requestId);
@@ -2383,6 +2425,8 @@ import { createAgentViewer } from "./agent-viewer.js";
     event.preventDefault();
     const id = state.selectedId;
     const draftPrompt = ui.input.value.trim();
+    const attachments = uploads.status(id);
+    if (attachments.blocked || (!draftPrompt && !attachments.count) || state.stopping) return;
     if (state.selectionController || !maySendSelected() || !id || !state.connected || !state.canSend || isUnknown(id) || state.sending) return;
     const revision = draftRevision(id);
     const selection = state.sendMode === "follow-up" ? {} : { ...readModelSettings(id) };
@@ -2472,6 +2516,17 @@ import { createAgentViewer } from "./agent-viewer.js";
   }
 
   function init() {
+    ui.transcript.addEventListener("click", event => {
+      const button = event.target.closest?.("button.markdown-followup[data-codex-followup]");
+      if (button && ui.transcript.contains(button) && !button.disabled) openFollowupDraft(button);
+    });
+    followupUI.cancel.addEventListener("click", () => followupUI.dialog.close());
+    followupUI.append.addEventListener("click", () => {
+      const suggestion = state.followupDraft;
+      followupUI.dialog.close();
+      if (suggestion?.threadId === state.selectedId) fillFollowupDraft(suggestion.prompt, true);
+    });
+    followupUI.dialog.addEventListener("close", () => { if (!followupUI.dialog.open) clearFollowupDraft(); });
     ui.controlToggle.addEventListener("click", () => setControlExpansion(!state.controlOpen));
     ui.closePending.addEventListener("click", () => setControlExpansion(false));
     ui.closeHistory.addEventListener("click", () => {

@@ -5,6 +5,8 @@ try { katex = (await import("./vendor/katex/katex.mjs")).default; }
 catch { /* A stale gateway or failed asset load must not prevent reading the conversation. */ }
 const MAX_MATH_SOURCE = 4096;
 const MAX_MATH_PER_MESSAGE = 128;
+const MAX_DIRECTIVE_SOURCE = 8192;
+const MAX_DIRECTIVES_PER_MESSAGE = 128;
 
 const INLINE_URL = /^https?:\/\/[^\s<>]+/i;
 const TRAILING_URL_PUNCTUATION = /[.,!?;:，。！？、）\]}]+$/;
@@ -66,17 +68,93 @@ function mathAt(source, index) {
   return { type: "math", text: source.slice(from, end), raw: source.slice(index, end + closing.length), display: opening === "$$" || opening === "\\[", end: end + closing.length };
 }
 
-export function parseInline(source) {
+// Attribute values are read as quoted strings; task text never enters an HTML parser.
+function directiveAt(source, index) {
+  const limit = Math.min(source.length, index + MAX_DIRECTIVE_SOURCE);
+  let cursor = index + 7;
+  while (cursor < limit && /[a-z-]/.test(source[cursor])) cursor++;
+  const name = source.slice(index + 1, cursor);
+  let label = "";
+  if (source[cursor] === "[") {
+    cursor++;
+    while (cursor < limit && source[cursor] !== "]" && source[cursor] !== "\n") {
+      if (source[cursor] === "\\" && /[\\\]]/.test(source[cursor + 1] || "")) cursor++;
+      label += source[cursor++];
+    }
+    if (source[cursor++] !== "]") return null;
+  }
+  if (source[cursor++] !== "{") return null;
+  const attributes = Object.create(null);
+  let valid = true;
+  while (cursor < limit) {
+    while (cursor < limit && /[ \t]/.test(source[cursor])) cursor++;
+    if (source[cursor] === "}") {
+      const end = cursor + 1;
+      if (!valid) return { end };
+      const keys = Object.keys(attributes);
+      if (name === "codex-file-citation" && !label && keys.every(key => ["path", "purpose"].includes(key)) && attributes.path) {
+        const path = attributes.path;
+        const local = !/[\u0000-\u001f\u007f]/.test(path) && !/^[\\/]{2}/.test(path) && splitLocalReference(path);
+        if (local && !local.path.startsWith("//")) return { end, node: { type: "file", ...local, image: false, label: [{ type: "text", text: local.path.split("/").at(-1) || "预览文件" }] } };
+      }
+      if (name === "codex-followup" && label.trim() && label.length <= 512 && !/[\u0000-\u001f\u007f]/.test(label) && keys.length === 1 && attributes.prompt?.trim() && attributes.prompt.length <= 4096 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(attributes.prompt)) {
+        return { end, node: { type: "followup", label, prompt: attributes.prompt } };
+      }
+      return { end };
+    }
+    const keyStart = cursor;
+    while (cursor < limit && /[a-zA-Z]/.test(source[cursor])) cursor++;
+    const key = source.slice(keyStart, cursor);
+    if (!key || source[cursor++] !== "=" || source[cursor++] !== '"') return null;
+    let value = "";
+    while (cursor < limit && source[cursor] !== '"' && source[cursor] !== "\n") {
+      if (source[cursor] === "\\" && /[\\"]/.test(source[cursor + 1] || "")) cursor++;
+      value += source[cursor++];
+    }
+    if (source[cursor++] !== '"') return null;
+    if (Object.hasOwn(attributes, key)) valid = false;
+    attributes[key] = value;
+    if (source[cursor] !== "}" && !/[ \t]/.test(source[cursor] || "")) return null;
+  }
+  return null;
+}
+
+export function parseInline(source, context = { directives: MAX_DIRECTIVES_PER_MESSAGE }) {
+  if (typeof context !== "object" || !context) context = { directives: MAX_DIRECTIVES_PER_MESSAGE };
   const nodes = [];
   let index = 0;
+  const literalLine = /(?:^|\n)\s*>/.test(source) || /(?:示例|example|literal|syntax)\s*[:：]/i.test(source);
   while (index < source.length) {
     if (source[index] === "`") {
-      const end = findUnescaped(source, "`", index + 1);
-      if (end > index + 1) {
-        nodes.push({ type: "code", text: source.slice(index + 1, end) });
-        index = end + 1;
+      let width = 1;
+      while (source[index + width] === "`") width++;
+      const end = findUnescaped(source, "`".repeat(width), index + width);
+      if (end >= index + width) {
+        nodes.push({ type: "code", text: source.slice(index + width, end) });
+        index = end + width;
         continue;
       }
+      appendText(nodes, source.slice(index)); break;
+    }
+
+    const quoteClose = { '"': '"', "'": "'", "“": "”", "‘": "’", "「": "」", "『": "』" }[source[index]];
+    if (quoteClose) {
+      const end = findUnescaped(source, quoteClose, index + 1);
+      if (end >= 0 && source.slice(index + 1, end).includes(":codex-")) {
+        appendText(nodes, source.slice(index, end + 1)); index = end + 1; continue;
+      }
+    }
+    if (source.startsWith(":codex-", index)) {
+      const directive = context.directives > 0 ? directiveAt(source, index) : null;
+      context.directives--;
+      if (directive) {
+        const htmlExample = /<(?:!--|\/?[a-z])/i.test(source.slice(0, index));
+        if (directive.node && !literalLine && !htmlExample && !isEscaped(source, index) && context.allowDirectives !== false) nodes.push(directive.node);
+        else appendText(nodes, source.slice(index, directive.end));
+        index = directive.end; continue;
+      }
+      // A malformed or oversized directive stays literal, including any embedded links.
+      appendText(nodes, source.slice(index)); break;
     }
 
     const math = mathAt(source, index);
@@ -97,7 +175,7 @@ export function parseInline(source) {
     if (marker) {
       const end = findUnescaped(source, marker, index + 2);
       if (end > index + 2) {
-        nodes.push({ type: "strong", children: parseInline(source.slice(index + 2, end)) });
+        nodes.push({ type: "strong", children: parseInline(source.slice(index + 2, end), context) });
         index = end + 2;
         continue;
       }
@@ -110,20 +188,34 @@ export function parseInline(source) {
       if (labelEnd > labelStart) {
         const destinationStart = labelEnd + 2;
         const angleWrapped = source[destinationStart] === "<";
-        const destinationEnd = angleWrapped ? source.indexOf(">", destinationStart + 1) : source.indexOf(")", destinationStart);
-        const close = angleWrapped ? destinationEnd + 1 : destinationEnd;
-        if (destinationEnd > destinationStart + (angleWrapped ? 1 : 0) && source[close] === ")") {
+        const encodedWrapped = source.startsWith("&lt;", destinationStart);
+        const wrapperWidth = encodedWrapped ? 4 : angleWrapped ? 1 : 0;
+        const destinationEnd = wrapperWidth ? source.indexOf(encodedWrapped ? "&gt;" : ">", destinationStart + wrapperWidth) : source.indexOf(")", destinationStart);
+        const close = destinationEnd + wrapperWidth;
+        const entityWrapper = /^&(?:lt;|amp;lt;|#(?:0*60|x0*3c);)/i.test(source.slice(destinationStart, destinationStart + 24));
+        if (entityWrapper && (!encodedWrapped || destinationEnd < 0 || source[close] !== ")")) {
+          appendText(nodes, source.slice(index)); break;
+        }
+        if (destinationEnd > destinationStart + wrapperWidth && source[close] === ")") {
           const label = source.slice(labelStart, labelEnd);
-          const destination = source.slice(destinationStart + (angleWrapped ? 1 : 0), destinationEnd).trim();
-          const local = splitLocalReference(destination);
+          let destination = source.slice(destinationStart + wrapperWidth, destinationEnd).trim();
+          // Native Markdown escapes angle wrappers and ampersands. Decode only this known
+          // destination syntax, once; raw paths and the rest of the message stay literal.
+          if (encodedWrapped) destination = destination.replaceAll("&amp;", "&");
+          const reference = splitLocalReference(destination);
+          const encodedNonLocal = encodedWrapped && /^(?:[a-z][a-z\d+.-]*&(?:colon|#0*58|#x0*3a);|&(?:sol|bsol|#0*(?:47|92)|#x0*(?:2f|5c));)/i.test(destination);
+          const local = reference && !encodedNonLocal && !reference.path.startsWith("//") && !/[\u0000-\u001f\u007f]/.test(reference.path) ? reference : null;
           const href = safeHref(destination);
           if (local) {
-            nodes.push({ type: "file", path: local.path, line: local.line, image, label: parseInline(label) });
+            nodes.push({ type: "file", path: local.path, line: local.line, image, label: parseInline(label, { ...context, allowDirectives: false }) });
             index = close + 1;
             continue;
           }
+          if (encodedWrapped) {
+            appendText(nodes, source.slice(index, close + 1)); index = close + 1; continue;
+          }
           if (href && !image) {
-            nodes.push({ type: "link", href, children: parseInline(label) });
+            nodes.push({ type: "link", href, children: parseInline(label, { ...context, allowDirectives: false }) });
             index = close + 1;
             continue;
           }
@@ -158,7 +250,7 @@ export function parseInline(source) {
   return nodes;
 }
 
-function isFence(line) { return /^ {0,3}```/.test(line); }
+function isFence(line) { return /^ {0,3}(?:`{3,}|~{3,})/.test(line); }
 function isHeading(line) { return /^ {0,3}#{1,6}\s+/.test(line); }
 function isCreatedTask(line) { return /^::created-thread\{(?:threadId|clientThreadId)="[0-9a-f-]{36}"\}\s*$/i.test(line); }
 function listMatch(line) { return line.match(/^ {0,3}([-+*]|\d+[.)])\s+(.*)$/); }
@@ -194,6 +286,8 @@ export function parseMarkdown(markdown) {
   const lines = String(markdown ?? "").replace(/\r\n?/g, "\n").split("\n");
   const blocks = [];
   let index = 0;
+  const context = { directives: MAX_DIRECTIVES_PER_MESSAGE };
+  const inline = source => parseInline(source, context);
 
   while (index < lines.length) {
     const line = lines[index];
@@ -206,11 +300,13 @@ export function parseMarkdown(markdown) {
     }
 
     if (isFence(line)) {
-      const opening = line.match(/^ {0,3}```([^`]*)$/);
-      const language = (opening?.[1] ?? "").trim().slice(0, 40);
+      const opening = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      const marker = opening[1];
+      const language = opening[2].trim().slice(0, 40);
+      const closing = new RegExp(`^ {0,3}${marker[0]}{${marker.length},}\\s*$`);
       const body = [];
       index += 1;
-      while (index < lines.length && !/^ {0,3}```+\s*$/.test(lines[index])) body.push(lines[index++]);
+      while (index < lines.length && !closing.test(lines[index])) body.push(lines[index++]);
       if (index < lines.length) index += 1;
       blocks.push({ type: "codeBlock", language, text: body.join("\n") });
       continue;
@@ -226,24 +322,24 @@ export function parseMarkdown(markdown) {
         const suffix = lines[index + consumed.length - 1].slice(consumed.at(-1).length);
         blocks.push({ type: "mathBlock", text: math.text, raw: math.raw });
         index += consumed.length;
-        if (suffix.trim()) blocks.push({ type: "paragraph", children: parseInline(suffix) });
+        if (suffix.trim()) blocks.push({ type: "paragraph", children: inline(suffix) });
         continue;
       }
     }
 
     const heading = line.match(/^ {0,3}(#{1,6})\s+(.*)$/);
     if (heading) {
-      blocks.push({ type: "heading", level: heading[1].length, children: parseInline(heading[2].trim()) });
+      blocks.push({ type: "heading", level: heading[1].length, children: inline(heading[2].trim()) });
       index += 1;
       continue;
     }
 
     if (line.includes("|") && isTableSeparator(lines[index + 1] ?? "")) {
-      const headers = splitCells(line).map(parseInline);
+      const headers = splitCells(line).map(inline);
       index += 2;
       const rows = [];
       while (index < lines.length && lines[index].trim() && lines[index].includes("|")) {
-        rows.push(splitCells(lines[index]).map(parseInline));
+        rows.push(splitCells(lines[index]).map(inline));
         index += 1;
       }
       blocks.push({ type: "table", headers, rows });
@@ -257,7 +353,7 @@ export function parseMarkdown(markdown) {
       while (index < lines.length) {
         const item = listMatch(lines[index]);
         if (!item || /^\d/.test(item[1]) !== ordered) break;
-        items.push(parseInline(item[2]));
+        items.push(inline(item[2]));
         index += 1;
       }
       blocks.push({ type: "list", ordered, items });
@@ -267,7 +363,7 @@ export function parseMarkdown(markdown) {
     const paragraph = [line];
     index += 1;
     while (index < lines.length && lines[index].trim() && !startsBlock(lines, index)) paragraph.push(lines[index++]);
-    blocks.push({ type: "paragraph", children: parseInline(paragraph.join("\n")) });
+    blocks.push({ type: "paragraph", children: inline(paragraph.join("\n")) });
   }
   return blocks;
 }
@@ -311,6 +407,18 @@ function appendInline(parent, nodes, doc, budget) {
       link.rel = "noopener noreferrer";
       appendInline(link, node.children, doc, budget);
       parent.append(link);
+    } else if (node.type === "followup") {
+      const button = doc.createElement("button");
+      button.type = "button";
+      button.className = "markdown-followup";
+      button.textContent = node.label;
+      button.setAttribute("aria-label", `使用建议：${node.label}`);
+      button.disabled = !budget.allowFollowups;
+      if (budget.allowFollowups) {
+        button.dataset.codexFollowup = node.prompt;
+        button.dataset.followupLabel = node.label;
+      }
+      parent.append(button);
     } else if (node.type === "file") {
       const button = doc.createElement("button");
       button.type = "button";
@@ -405,9 +513,9 @@ function appendBlock(parent, block, doc, budget) {
   } else if (block.type === "mathBlock") appendMath(parent, { ...block, display: true }, doc, budget);
 }
 
-export function appendMarkdown(parent, source, doc = globalThis.document) {
+export function appendMarkdown(parent, source, doc = globalThis.document, options = {}) {
   if (!doc?.createElement || !parent?.append) throw new TypeError("A DOM parent and document are required");
-  const budget = { remaining: MAX_MATH_PER_MESSAGE };
+  const budget = { remaining: MAX_MATH_PER_MESSAGE, allowFollowups: options.allowFollowups === true };
   for (const block of parseMarkdown(source)) appendBlock(parent, block, doc, budget);
 }
 

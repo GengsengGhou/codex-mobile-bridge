@@ -84,7 +84,7 @@ function renderTurn(turn, document, openDisclosures) {
       details.open = openDisclosures.get(disclosureKey) === true;
       details.addEventListener("toggle", () => openDisclosures.set(disclosureKey, details.open));
       const summary = document.createElement("summary");
-      summary.textContent = formatWorkSummary(turn);
+        summary.textContent = formatWorkSummary(turn, block);
       summary.dataset.viewerDisclosureKey = disclosureKey;
       const content = document.createElement("div");
       content.className = "work-process-content";

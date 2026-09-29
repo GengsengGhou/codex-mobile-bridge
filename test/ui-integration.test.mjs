@@ -70,7 +70,7 @@ async function mount(t, route = () => undefined, { session = {}, expectedRows = 
   for (const match of source.matchAll(/^import \{([^}]+)\} from "(\.\/[^"\n]+)";$/gm)) {
     const modules = { ...await import(new URL('../public/' + match[2].slice(2), import.meta.url)) };
     if (modules.createApi) { const create = modules.createApi; modules.createApi = options => create({ ...options, fetchImpl: window.fetch }); }
-    if (modules.appendMarkdown) { const append = modules.appendMarkdown; modules.appendMarkdown = (parent, value) => append(parent, value, window.document); }
+    if (modules.appendMarkdown) { const append = modules.appendMarkdown; modules.appendMarkdown = (parent, value, _doc, options) => append(parent, value, window.document, options); }
     window.__modules[match[2]] = modules;
   }
   source = source.replace(/^import \{([^}]+)\} from "(\.\/[^"\n]+)";$/gm, (_, names, path) => `const {${names.replace(/\s+as\s+/g, ':')}} = globalThis.__modules[${JSON.stringify(path)}];`);
@@ -114,7 +114,7 @@ test('model settings stay scoped to each chat and omit overrides for default and
   [...ui.doc.querySelectorAll('.task-item')].find(row => row.textContent === 'Alpha').click();
   await until(() => ui.doc.getElementById('threadTitle').textContent === 'Alpha', 'first chat restored');
   assert.match(ui.doc.getElementById('modelSettingsButton').textContent, /6-luna/);
-  await until(() => ui.doc.getElementById('sendButton').textContent.includes('补充'), 'active send mode');
+  await until(() => ui.doc.getElementById('sendButton').getAttribute('aria-label') === '补充到当前轮次', 'active send mode');
   input.value = 'supplement'; input.dispatchEvent(new ui.window.Event('input'));
   ui.doc.getElementById('composer').dispatchEvent(new ui.window.Event('submit', { cancelable: true }));
   await until(() => ui.requests.filter(call => call.method === 'POST').length === 2, 'active supplement');
@@ -134,6 +134,124 @@ test('null model storage does not break the page and desktop default sends no ov
   await until(() => !ui.doc.getElementById('modelSettingsButton').disabled, 'default send settled');
 });
 
+test('followup suggestions fill only the current draft and confirm before appending to existing text', async t => {
+  const prompt = '将这份示例报告精简为适合20分钟汇报的版本，保留关键图表和主要结论。';
+  const ui = await mount(t, call => call.path === `/api/threads/${A}` ? response(snapshot(A, `Alpha reply\n\n- :codex-followup[精简为20分钟版]{prompt=${JSON.stringify(prompt)}}`)) : undefined);
+  const button = ui.doc.querySelector('.markdown-followup'), input = ui.doc.getElementById('promptInput');
+  assert.ok(button && !button.disabled);
+  button.click();
+  assert.equal(input.value, prompt);
+  assert.equal(ui.window.sessionStorage.getItem(`codex-mobile-draft:${A}`), prompt);
+  assert.equal(ui.requests.some(call => call.method === 'POST'), false);
+  input.value = '保留原来的草稿'; input.dispatchEvent(new ui.window.Event('input'));
+  button.click();
+  assert.equal(input.value, '保留原来的草稿');
+  assert.equal(ui.doc.getElementById('followupDraftDialog').open, true);
+  ui.doc.getElementById('followupDraftCancel').click();
+  assert.equal(input.value, '保留原来的草稿');
+  button.click(); ui.doc.getElementById('followupDraftAppend').click();
+  assert.equal(input.value, `保留原来的草稿\n\n${prompt}`);
+  assert.equal(ui.requests.some(call => call.method === 'POST'), false);
+  assert.deepEqual(ui.errors, []);
+});
+
+test('composer shows one icon action and empty submission never stops an active turn', async t => {
+  let active = false;
+  const ui = await mount(t, call => {
+    if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', defaultThreadId: A, executionControl: true });
+    if (call.path === `/api/threads/${A}`) return response(snapshot(A, 'Alpha reply', active ? 'active' : 'idle'));
+    if (call.path === `/api/threads/${A}/control`) return response({ threadId: A, available: true, canStop: active, turnId: active ? 'active-turn' : null, pendingRequestCount: 0 });
+  });
+  const input = ui.doc.getElementById('promptInput'), send = ui.doc.getElementById('sendButton'), stop = ui.doc.getElementById('stopButton');
+  assert.equal(send.hidden, false); assert.equal(send.disabled, true); assert.equal(send.textContent, '↑'); assert.equal(stop.hidden, true);
+  active = true; ui.doc.getElementById('refreshButton').click();
+  await until(() => !stop.hidden && !stop.disabled, 'authoritative active stop');
+  assert.equal(send.hidden, true); assert.equal(stop.textContent, ''); assert.ok(stop.querySelector('.stop-icon'));
+  ui.doc.getElementById('composer').dispatchEvent(new ui.window.Event('submit', { cancelable: true }));
+  assert.equal(ui.requests.some(call => call.method === 'POST'), false);
+  input.value = '补充内容'; input.dispatchEvent(new ui.window.Event('input'));
+  assert.equal(send.hidden, false); assert.equal(stop.hidden, true); assert.equal(send.disabled, false);
+  assert.equal(send.getAttribute('aria-label'), '补充到当前轮次');
+  assert.equal(ui.doc.getElementById('composerHint').textContent, '');
+  stop.click();
+  assert.equal(ui.requests.some(call => call.method === 'POST'), false);
+  input.value = ''; input.dispatchEvent(new ui.window.Event('input'));
+  assert.equal(stop.hidden, false); assert.equal(send.hidden, true);
+});
+
+test('followup confirmation clears on selection change and login expiry without changing drafts', async t => {
+  const suggestion = ':codex-followup[继续检查]{prompt="未发送的私有建议"}';
+  const ui = await mount(t, call => call.path === `/api/threads/${A}` ? response(snapshot(A, `Alpha reply\n\n${suggestion}`)) : undefined);
+  const input = ui.doc.getElementById('promptInput'), dialog = ui.doc.getElementById('followupDraftDialog'), preview = ui.doc.getElementById('followupDraftPreview');
+  input.value = '原始草稿'; input.dispatchEvent(new ui.window.Event('input'));
+  ui.doc.querySelector('.markdown-followup').click(); assert.equal(dialog.open, true);
+  [...ui.doc.querySelectorAll('.task-item')].find(row => row.textContent === 'Beta').click();
+  assert.equal(dialog.open, false); assert.equal(preview.textContent, '');
+  await until(() => ui.doc.getElementById('threadTitle').textContent === 'Beta', 'selection switch completed');
+  ui.doc.getElementById('followupDraftAppend').click(); assert.equal(input.value, '');
+  [...ui.doc.querySelectorAll('.task-item')].find(row => row.textContent === 'Alpha').click();
+  await until(() => ui.doc.getElementById('threadTitle').textContent === 'Alpha' && !input.disabled, 'original draft restored');
+  assert.equal(input.value, '原始草稿');
+  ui.doc.querySelector('.markdown-followup').click(); assert.equal(dialog.open, true);
+  ui.window.dispatchEvent(new ui.window.Event('bridge-login-required'));
+  assert.equal(dialog.open, false); assert.equal(preview.textContent, '');
+  ui.doc.getElementById('followupDraftAppend').click(); ui.doc.querySelector('.markdown-followup').click();
+  assert.equal(dialog.open, false); assert.equal(input.value, '原始草稿');
+  assert.equal(ui.window.sessionStorage.getItem(`codex-mobile-draft:${A}`), '原始草稿');
+  assert.equal(ui.requests.some(call => call.method === 'POST'), false);
+});
+
+test('successful logout clears a pending followup confirmation and prevents a late append', async t => {
+  const ui = await mount(t, call => {
+    if (call.path === '/api/access') return response({ mode: 'remote' });
+    if (call.path === `/api/threads/${A}`) return response(snapshot(A, 'Alpha reply\n\n:codex-followup[继续检查]{prompt="未发送的私有建议"}'));
+    if (call.path === '/auth/logout') return response({ loggedOut: true });
+  });
+  const input = ui.doc.getElementById('promptInput'); input.value = '保留的草稿'; input.dispatchEvent(new ui.window.Event('input'));
+  ui.doc.querySelector('.markdown-followup').click();
+  [...ui.doc.querySelectorAll('.access-panel button')].find(button => button.textContent === '退出登录').click();
+  await until(() => !ui.doc.querySelector('.access-notice').hidden, 'logout confirmed');
+  assert.equal(ui.doc.getElementById('followupDraftDialog').open, false);
+  assert.equal(ui.doc.getElementById('followupDraftPreview').textContent, '');
+  ui.doc.getElementById('followupDraftAppend').click(); ui.doc.querySelector('.markdown-followup').click();
+  assert.equal(input.value, '保留的草稿'); assert.equal(ui.doc.getElementById('followupDraftDialog').open, false);
+  assert.deepEqual(ui.requests.filter(call => call.method === 'POST').map(call => call.path), ['/auth/logout']);
+});
+
+test('an unready attachment keeps the active arrow disabled and cannot trigger stop', async t => {
+  const pendingUpload = { ...readyAttachment(), state: 'unknown', receipt: undefined };
+  const ui = await mount(t, call => {
+    if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', defaultThreadId: A, executionControl: true });
+    if (call.path === `/api/threads/${A}`) return response(snapshot(A, 'Alpha reply', 'active'));
+    if (call.path === `/api/threads/${A}/control`) return response({ threadId: A, available: true, canStop: true, turnId: 'active-turn', pendingRequestCount: 0 });
+  }, { session: { [`codex-mobile-uploads:${A}`]: JSON.stringify([pendingUpload]) } });
+  assert.equal(ui.doc.getElementById('sendButton').hidden, false); assert.equal(ui.doc.getElementById('sendButton').disabled, true);
+  assert.equal(ui.doc.getElementById('stopButton').hidden, true);
+  ui.doc.getElementById('stopButton').click();
+  ui.doc.getElementById('composer').dispatchEvent(new ui.window.Event('submit', { cancelable: true }));
+  assert.equal(ui.requests.some(call => call.method === 'POST'), false);
+});
+
+test('a cold historical chat can explicitly send with inherited settings while runtime controls remain unavailable', async t => {
+  const ui = await mount(t, call => {
+    if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', defaultThreadId: A, executionControl: true });
+    if (call.path === '/api/threads') return response({ threads: rows.map(row => row.id === A ? { ...row, status: 'notLoaded' } : row) });
+    if (call.path === `/api/threads/${A}`) return response(snapshot(A, 'Alpha reply', 'notLoaded'));
+    if (call.path === `/api/threads/${A}/control`) return response({ threadId: A, available: false, canStop: false, code: 'OWNER_UNAVAILABLE', reason: '暂时无法读取运行状态，可刷新重试；沿用桌面设置仍可发送消息' });
+    if (call.path === `/api/threads/${A}/messages`) return response({ accepted: true });
+  });
+  await until(() => ui.doc.getElementById('controlSummary').textContent.includes('仍可发送'), 'scoped runtime warning');
+  assert.equal(ui.doc.getElementById('threadStatus').textContent, '等待继续');
+  const input = ui.doc.getElementById('promptInput'); input.value = '继续同一会话'; input.dispatchEvent(new ui.window.Event('input'));
+  assert.equal(ui.doc.getElementById('sendButton').disabled, false); assert.equal(ui.doc.getElementById('stopButton').hidden, true);
+  ui.doc.getElementById('composer').dispatchEvent(new ui.window.Event('submit', { cancelable: true }));
+  await until(() => ui.requests.some(call => call.path.endsWith('/messages') && call.method === 'POST'), 'explicit ordinary cold send');
+  const body = JSON.parse(ui.requests.find(call => call.method === 'POST').body);
+  assert.equal(body.prompt, '继续同一会话'); assert.equal(body.permissionMode, undefined);
+  assert.equal(ui.requests.filter(call => call.method === 'POST').length, 1);
+  await until(() => ui.doc.getElementById('notice').textContent.includes('桌面已接收消息') && !ui.doc.getElementById('modelSettingsButton').disabled, 'cold send refreshed and settled');
+});
+
 test('composer sends explicit permission only for a new turn and preserves the next choice for active supplements', async t => {
   let active = false;
   const ui = await mount(t, call => {
@@ -147,11 +265,67 @@ test('composer sends explicit permission only for a new turn and preserves the n
   assert.equal(JSON.parse(ui.requests.find(call => call.method === 'POST').body).permissionMode, 'request-approval');
   await until(() => !select.disabled, 'permission send settled');
   active = true; ui.doc.getElementById('refreshButton').click();
-  await until(() => ui.doc.getElementById('sendButton').textContent.includes('补充'), 'active mode');
+  await until(() => ui.doc.getElementById('sendButton').getAttribute('aria-label') === '补充到当前轮次', 'active mode');
   send('active supplement'); await until(() => ui.requests.filter(call => call.method === 'POST').length === 2, 'supplement send');
   assert.equal(JSON.parse(ui.requests.filter(call => call.method === 'POST')[1].body).permissionMode, undefined);
   await until(() => !select.disabled, 'supplement settled');
   assert.equal(ui.window.sessionStorage.getItem(`codex-mobile-permission:${A}`), 'request-approval');
+});
+
+test('one native turn shows 165 minutes 36 seconds once across split work blocks and unchanged polls', async t => {
+  let reads = 0;
+  const turn = { id: 'long-native-turn', status: 'completed', startedAt: 1000, durationMs: (165 * 60 + 36) * 1000, items: [
+    { id: 'work-one', type: 'activity', text: '恢复连接' },
+    { id: 'question', type: 'agentMessage', phase: 'final_answer', text: 'Alpha reply 当前页面是否已正常加载？' },
+    { id: 'work-two', type: 'activity', text: '核对状态' },
+    { id: 'answer', type: 'userMessage', text: '已正常加载' },
+    { id: 'work-three', type: 'activity', text: '读取子智能体历史' },
+    { id: 'followup', type: 'userMessage', text: '但是显示的内容非常复杂' },
+    { id: 'done', type: 'agentMessage', phase: 'final_answer', text: '已完成调整' },
+  ] };
+  const ui = await mount(t, call => {
+    if (call.path === `/api/threads/${A}`) { reads++; return response({ ...snapshot(A), turns: [turn] }); }
+  });
+  const summaries = () => [...ui.doc.querySelectorAll('.work-process > summary')].map(node => node.textContent);
+  assert.deepEqual(summaries(), ['工作过程', '工作过程', '工作过程 · 用时 165 分 36 秒']);
+  ui.doc.getElementById('refreshButton').click();
+  await until(() => reads >= 2, 'unchanged native poll');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(summaries(), ['工作过程', '工作过程', '工作过程 · 用时 165 分 36 秒']);
+  assert.deepEqual(ui.errors, []);
+});
+
+test('transformed two-image native input reconciles one pending copy and preserves a distinct repeated user message', async t => {
+  const names = ['Screenshot_20260929_091208_com.huawei.browser.jpg', 'Screenshot_20260929_091228_com.huawei.browser.jpg'];
+  const ids = [UPLOAD, '00000000-0000-0000-0000-000000000005'];
+  const paths = names.map((name, index) => `E:/project/mobile-uploads/${ids[index]}/${name}`);
+  const draft = '请比较两张示例图片，并核对显示内容和累计用时。';
+  const prompt = `${draft}\n\n附件：\n${names.map((name, index) => `[${name}](<${paths[index]}>)`).join('\n')}`;
+  const nativePrompt = prompt.replaceAll('\n', '\r\n').replaceAll('(<', '(&lt;').replaceAll('>)', '&gt;)');
+  const old = { id: 'preexisting-turn', startedAt: 1, status: 'completed', items: [{ id: 'old-native-user', type: 'userMessage', text: prompt }] };
+  const current = { id: 'current-native-turn', startedAt: 2, status: 'inProgress', items: [{ id: 'new-native-user', type: 'userMessage', text: nativePrompt }, { id: 'reply', type: 'agentMessage', phase: 'final_answer', text: 'Alpha reply' }] };
+  const pending = [{ requestId: '00000000-0000-0000-0000-000000000006', prompt, draftPrompt: draft, attachmentIds: ids, baselineKeys: ['preexisting-turn\u001fold-native-user'], state: 'accepted' }];
+  const ui = await mount(t, call => {
+    if (call.path === `/api/threads/${A}`) return response({ ...snapshot(A), turns: [old, current], page: { hasMore: true, nextCursor: 'before' } });
+    if (call.path === `/api/threads/${A}?cursor=before`) return response({ ...snapshot(A), turns: [old], page: { hasMore: false } });
+    if (call.path.startsWith(`/api/threads/${A}/file?`)) return response({ code: 'FILE_FORBIDDEN', error: 'isolated access fixture' }, 403);
+  }, { session: { [`codex-mobile-pending:${A}`]: JSON.stringify(pending) } });
+  assert.equal(ui.doc.querySelectorAll('#transcript .message.user').length, 2);
+  assert.equal(ui.doc.querySelectorAll('.message-pending').length, 0);
+  const links = [...ui.doc.querySelectorAll('[data-turn-id="current-native-turn"] button[data-local-file]')];
+  assert.deepEqual(links.map(node => node.dataset.localFile), paths);
+  links[0].click();
+  await until(() => ui.requests.some(call => call.path.startsWith(`/api/threads/${A}/file?`)), 'file reference stays scoped to selected thread');
+  const fileCall = ui.requests.find(call => call.path.startsWith(`/api/threads/${A}/file?`));
+  assert.equal(new URL(fileCall.path, 'http://fixture').searchParams.get('path'), paths[0]);
+  ui.doc.getElementById('filesClose').click();
+  ui.doc.getElementById('olderButton').click();
+  await until(() => ui.doc.getElementById('olderButton').hidden, 'older page merged');
+  ui.doc.getElementById('refreshButton').click();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(ui.doc.querySelectorAll('#transcript .message.user').length, 2);
+  assert.equal(ui.doc.querySelectorAll('.message-pending').length, 0);
+  assert.equal(ui.requests.some(call => call.method === 'POST'), false);
 });
 
 test('older bridge blocks a restored explicit permission without clearing the draft or posting', async t => {

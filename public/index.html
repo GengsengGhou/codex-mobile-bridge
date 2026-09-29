@@ -77,7 +77,7 @@
             <label class="sr-only" for="promptInput">发送消息</label>
             <textarea id="promptInput" rows="1" placeholder="发送消息…" maxlength="12000" disabled></textarea>
             <span class="sr-only" id="attachmentHelp">先上传到当前会话目录，发送后供 Codex 读取</span>
-            <div class="composer-footer"><button id="attachButton" type="button" class="icon-button" aria-label="添加附件" aria-describedby="attachmentHelp" title="添加附件：先上传到当前会话目录，发送后供 Codex 读取" disabled>＋</button><div class="composer-settings"><button id="modelSettingsButton" type="button" class="model-settings-button" title="模型与推理强度" aria-label="模型与推理强度">沿用桌面 ▾</button><label class="permission-control"><span class="sr-only">下一轮权限</span><select id="messagePermission" aria-describedby="permissionState" title="下一轮权限" disabled><option value="">权限 · 沿用桌面</option></select></label></div><span id="permissionState" class="permission-state" role="status" hidden></span><span class="composer-hint" id="composerHint" role="status" aria-live="polite">选择任务后查看发送权限</span><button class="stop-button" id="stopButton" type="button" hidden>停止</button><button class="send-button" id="sendButton" type="submit" disabled><span class="send-icon" aria-hidden="true">↑</span><span>发送</span></button></div>
+            <div class="composer-footer"><button id="attachButton" type="button" class="icon-button" aria-label="添加附件" aria-describedby="attachmentHelp" title="添加附件：先上传到当前会话目录，发送后供 Codex 读取" disabled>＋</button><div class="composer-settings"><button id="modelSettingsButton" type="button" class="model-settings-button" title="模型与推理强度" aria-label="模型与推理强度">沿用桌面 ▾</button><label class="permission-control"><span class="sr-only">下一轮权限</span><select id="messagePermission" aria-describedby="permissionState" title="下一轮权限" disabled><option value="">权限 · 沿用桌面</option></select></label></div><span id="permissionState" class="permission-state" role="status" hidden></span><span class="composer-hint" id="composerHint" role="status" aria-live="polite">选择任务后查看发送权限</span><button class="stop-button composer-action" id="stopButton" type="button" aria-label="停止当前轮次" title="停止当前轮次" hidden><span class="stop-icon" aria-hidden="true"></span></button><button class="send-button composer-action" id="sendButton" type="submit" aria-label="发送消息" title="发送消息" disabled><span class="send-icon" aria-hidden="true">↑</span></button></div>
           </form>
         </section>
         <div class="context-scrim" id="contextScrim" hidden></div>
@@ -110,6 +110,11 @@
         <div class="agent-viewer-older-row"><button class="older-button" id="agentViewerOlder" type="button" hidden>↑　较早的消息</button><span id="agentViewerHistoryState" class="history-state" role="status"></span></div>
         <p class="agent-viewer-empty" id="agentViewerEmpty">正在读取历史…</p>
       </div>
+    </dialog>
+    <dialog id="followupDraftDialog" class="font-dialog" aria-labelledby="followupDraftTitle">
+      <h2 id="followupDraftTitle">加入现有草稿</h2>
+      <p id="followupDraftPreview" class="followup-draft-preview"></p>
+      <div class="font-dialog-footer"><button id="followupDraftCancel" type="button">取消</button><button id="followupDraftAppend" type="button">追加到草稿</button></div>
     </dialog>
     <dialog id="modelSettingsDialog" class="font-dialog" aria-labelledby="modelSettingsTitle">
       <h2 id="modelSettingsTitle">下一轮设置</h2>

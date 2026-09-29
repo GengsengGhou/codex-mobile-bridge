@@ -2,6 +2,53 @@ function messageKey(turn, item) {
   return `${String(turn?.id ?? "")}\u001f${String(item?.id ?? "")}`;
 }
 
+function attachmentPromptKey(value, expectedCount) {
+  if (typeof value !== "string" || !Number.isInteger(expectedCount) || expectedCount < 1 || expectedCount > 5) return null;
+  const text = value.replace(/\r\n?/g, "\n").trim();
+  const marker = "\n\n附件：\n";
+  const markerIndex = text.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const base = text.slice(0, markerIndex);
+  const lines = text.slice(markerIndex + marker.length).split("\n");
+  if (lines.length !== expectedCount) return null;
+
+  const htmlDecode = input => {
+    let result = input;
+    for (let pass = 0; pass < 2; pass++) {
+      const decoded = result.replace(/&(?:amp|lt|gt|quot|#39|#x27);/gi, entity => ({
+        "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'", "&#x27;": "'",
+      })[entity.toLowerCase()] ?? entity);
+      if (decoded === result) break;
+      result = decoded;
+    }
+    return result;
+  };
+  const links = [];
+  for (const source of lines) {
+    const line = htmlDecode(source);
+    const match = line.match(/^\[((?:\\.|[^\]])*)\]\((.*)\)$/);
+    if (!match) return null;
+    let path = match[2];
+    if (path.startsWith("<") && path.endsWith(">")) path = path.slice(1, -1);
+    const drive = path.match(/^([a-z]):[\\/]/i);
+    const unc = path.startsWith("\\\\");
+    if (drive) path = `${drive[1].toLowerCase()}:${path.slice(2).replaceAll("\\", "/")}`;
+    else if (unc) path = `//${path.slice(2).replaceAll("\\", "/")}`;
+    else if (!path.startsWith("/") || path.startsWith("//")) return null;
+    const label = htmlDecode(match[1].replace(/\\([\\[\]])/g, "$1"));
+    links.push([label, path]);
+  }
+  return JSON.stringify([base, links]);
+}
+
+function sameUserMessage(message, item) {
+  if (item?.text === message.prompt) return true;
+  const attachmentCount = Array.isArray(message.attachmentIds) ? message.attachmentIds.length : 0;
+  if (!attachmentCount) return false;
+  const expected = attachmentPromptKey(message.prompt, attachmentCount);
+  return expected !== null && expected === attachmentPromptKey(item?.text, attachmentCount);
+}
+
 export function reconcileOptimisticMessages(pending, turns) {
   const matched = new Set();
   for (const turn of Array.isArray(turns) ? turns : []) {
@@ -16,8 +63,9 @@ export function reconcileOptimisticMessages(pending, turns) {
       for (const item of Array.isArray(turn?.items) ? turn.items : []) {
         const key = messageKey(turn, item);
         const stableId = item?.id == null ? "" : String(item.id);
-        const preexisting = message.baselineKeys?.some(value => value === key || stableId && value.endsWith(`\u001f${stableId}`));
-        if (item?.type === "userMessage" && item.text === message.prompt
+        const baselineKeys = Array.isArray(message.baselineKeys) ? message.baselineKeys : [];
+        const preexisting = baselineKeys.some(value => value === key || stableId && value.endsWith(`\u001f${stableId}`));
+        if (item?.type === "userMessage" && sameUserMessage(message, item)
           && !preexisting && available.has(key)) {
           available.delete(key);
           return false;

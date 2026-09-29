@@ -38,10 +38,18 @@ export function buildTurnBlocks(turn) {
     }
   }
   flushWork();
+  let summaryAssigned = false;
+  for (let index = blocks.length - 1; index >= 0; index--) {
+    if (blocks[index].type === "work") {
+      blocks[index].summaryEligible = !summaryAssigned;
+      summaryAssigned = true;
+    }
+  }
   return blocks;
 }
 
-export function formatWorkSummary(turn) {
+export function formatWorkSummary(turn, block) {
+  if (block !== undefined && (block?.type !== "work" || block.summaryEligible !== true)) return "工作过程";
   const status = statusName(turn?.status);
   if (ACTIVE_TURN_STATUSES.has(status)) return "工作过程 · 进行中";
 

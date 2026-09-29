@@ -11,10 +11,10 @@ const ID = '00000000-0000-0000-0000-000000000001';
 const OTHER = '00000000-0000-0000-0000-000000000002';
 const ATTEMPT = '00000000-0000-0000-0000-000000000003';
 const PENDING = { requestId: 'private-request', kind: 'userInput', token: 'a'.repeat(64), actionable: true, attemptId: ATTEMPT, fingerprint: 'b'.repeat(64) };
-async function fixture(t, { enableSend = true, sendScope = 'single', properties = {}, failStop = false, controlError, responseError, gate, pending = PENDING, historicalQuestions = [], deliveryStore } = {}) {
+async function fixture(t, { enableSend = true, sendScope = 'single', properties = {}, failStop = false, controlError, controlDiagnostic, responseError, gate, pending = PENDING, historicalQuestions = [], deliveryStore } = {}) {
   let stops = 0, responses = 0;
   const control = {
-    snapshot: async id => { if (controlError) throw new BridgeError('internal diagnostic', controlError, 503); return { threadId: id, currentTurnId: 'turn-1', ownerClientId: 'private-owner', pendingRequests: [pending], historicalQuestions }; },
+    snapshot: async id => { if (controlError) throw Object.assign(new BridgeError('internal diagnostic', controlError, 503), { controlDiagnostic }); return { threadId: id, currentTurnId: 'turn-1', ownerClientId: 'private-owner', pendingRequests: [pending], historicalQuestions }; },
     respond: async (id, body, { beforeDispatch }) => {
       if (body.token !== pending.token) throw new BridgeError('Changed request', 'REQUEST_CHANGED', 409);
       if (!body.answers) throw new BridgeError('Invalid answer', 'INVALID_REQUEST', 400);
@@ -140,5 +140,17 @@ test('control compatibility and unloaded-owner failures leave conversation reads
     assert.equal(thread.thread.id, ID);
     assert.equal(thread.canSend, true);
     assert.equal(f.stops(), 0);
+  }
+});
+
+test('owner read diagnostics distinguish timeout and disconnect without claiming the entire chat cannot continue', async t => {
+  for (const [reason, expected] of [['no-client-found', /暂时无法读取/], ['request-timeout', /超时/], ['client-disconnected', /连接已断开/], ['server-closed', /连接已断开/]]) {
+    const f = await fixture(t, { properties: { status: 'notLoaded' }, controlError: 'OWNER_UNAVAILABLE', controlDiagnostic: { reason, method: 'thread-owner-discovery', version: 1 } });
+    const control = await (await f.read(ID)).json();
+    assert.equal(control.code, 'OWNER_UNAVAILABLE'); assert.equal(control.canStop, false);
+    assert.match(control.reason, expected); assert.match(control.reason, /沿用桌面设置仍可发送/);
+    assert.doesNotMatch(control.reason, /载入|运行实例|请在桌面/);
+    const thread = await (await f.readThread(ID)).json();
+    assert.equal(thread.canSend, true); assert.equal(f.stops(), 0);
   }
 });

@@ -1,10 +1,10 @@
-export function createAccessPanel({ document, window, api, fetchImpl = fetch, deviceContext = null }) {
+export function createAccessPanel({ document, window, api, fetchImpl = fetch, deviceContext = null, onLoginRequired = () => {} }) {
   const css = document.createElement("link"); css.rel = "stylesheet"; css.href = "./access.css"; document.head.append(css);
   const notice = document.createElement("div"); notice.className = "access-notice"; notice.hidden = true; notice.setAttribute("role", "alert");
   const message = document.createElement("span"); message.textContent = "登录已过期，草稿已保留。";
   const signIn = document.createElement("a"); signIn.href = deviceContext ? "/" : "/login"; signIn.textContent = "重新登录"; notice.append(message, signIn); document.body.prepend(notice);
   let expired = false;
-  const requireLogin = () => { expired = true; notice.hidden = false; const tag = document.querySelector(".environment-tag"); if (tag) tag.textContent = "手机访问"; };
+  const requireLogin = () => { expired = true; notice.hidden = false; const tag = document.querySelector(".environment-tag"); if (tag) tag.textContent = "手机访问"; onLoginRequired(); };
   window.addEventListener("bridge-login-required", requireLogin);
   // Block new submissions while preserving editable inputs and existing draft storage.
   document.addEventListener("submit", event => { if (expired && event.target.id !== "loginForm") { event.preventDefault(); event.stopImmediatePropagation(); } }, true);

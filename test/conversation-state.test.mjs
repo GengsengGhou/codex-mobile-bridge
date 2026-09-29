@@ -44,3 +44,52 @@ test("identical text with distinct stable IDs remains visible and moved baseline
   const repeated = mergeTranscriptTurns(migrated, [{ id: "active-turn", items: [...migrated[0].items, { id: "new-desktop-item", type: "userMessage", text: "same supplement" }] }]);
   assert.equal(repeated[0].items.length, 2); assert.deepEqual(reconcileOptimisticMessages(pending, repeated), []);
 });
+
+test("two Huawei photo attachments reconcile across native link escaping and Windows line endings", () => {
+  const names = ["IMG_20260928_173422.jpg", "IMG_20260928_173429.jpg"];
+  const paths = names.map(name => `C:\\Users\\Huawei User\\AppData\\Local\\Codex\\mobile-uploads\\upload-id\\${name}`);
+  const prompt = `请帮我对比这两张照片。\n\n附件：\n${names.map((name, index) => `[${name}](<${paths[index]}>)`).join("\n")}`;
+  const nativeText = [
+    "请帮我对比这两张照片。",
+    "",
+    "附件：",
+    ...names.map((name, index) => `[${name}](&lt;${paths[index].replaceAll("\\", "/")}&gt;)`),
+  ].join("\r\n");
+  const turn = { id: "native-turn", items: [{ id: "native-images", type: "userMessage", text: nativeText, source: "desktop-bridge" }] };
+
+  for (const state of ["sending", "unknown", "accepted"]) {
+    const pending = { requestId: `request-${state}`, prompt, attachmentIds: ["upload-one", "upload-two"], baselineKeys: [], state };
+    assert.deepEqual(reconcileOptimisticMessages([pending], [turn]), [], `${state} attachment send should be represented by its native item`);
+  }
+  const duplicateSends = ["accepted", "unknown"].map((state, index) => ({
+    requestId: `duplicate-${index}`, prompt, attachmentIds: ["upload-one", "upload-two"], baselineKeys: [], state,
+  }));
+  assert.deepEqual(reconcileOptimisticMessages(duplicateSends, [turn]), [duplicateSends[1]]);
+});
+
+test("attachment reconciliation is one-to-one across refresh and pagination and respects reassigned baseline IDs", () => {
+  const prompt = "查看这两张照片。\n\n附件：\n[IMG_20260928_173422.jpg](<C:\\photos\\one\\IMG_20260928_173422.jpg>)\n[IMG_20260928_173429.jpg](<C:\\photos\\two\\IMG_20260928_173429.jpg>)";
+  const pending = { requestId: "unknown-send", prompt, attachmentIds: ["upload-one", "upload-two"], baselineKeys: [], state: "unknown" };
+  const nativeItem = { id: "stable-photo-message", type: "userMessage", text: prompt };
+  const latest = mergeTranscriptTurns([], [{ id: "current", items: [nativeItem] }]);
+  assert.deepEqual(reconcileOptimisticMessages([pending], latest), []);
+  const paged = mergeTranscriptTurns(latest, [{ id: "older", items: [nativeItem] }], { latest: false });
+  assert.equal(paged.flatMap(turn => turn.items).filter(item => item.id === nativeItem.id).length, 1);
+  assert.deepEqual(reconcileOptimisticMessages([pending], paged), []);
+
+  const reassigned = mergeTranscriptTurns(latest, [{ id: "active", items: [nativeItem] }]);
+  const baselinePending = { ...pending, requestId: "new-send", baselineKeys: ["previous-turn\u001fstable-photo-message"] };
+  assert.equal(reassigned.flatMap(turn => turn.items).filter(item => item.id === nativeItem.id).length, 1);
+  assert.deepEqual(reconcileOptimisticMessages([baselinePending], reassigned), [baselinePending]);
+});
+
+test("attachment links do not make legitimate repeated user messages interchangeable", () => {
+  const firstPrompt = "再看一下。\n\n附件：\n[IMG_20260928_173422.jpg](<C:\\uploads\\first\\IMG_20260928_173422.jpg>)\n[IMG_20260928_173429.jpg](<C:\\uploads\\first\\IMG_20260928_173429.jpg>)";
+  const nextPrompt = firstPrompt.replaceAll("\\first\\", "\\second\\");
+  const first = { id: "first", items: [{ id: "user-first", type: "userMessage", text: firstPrompt }] };
+  const pending = { requestId: "next", prompt: nextPrompt, attachmentIds: ["new-one", "new-two"], baselineKeys: ["first\u001fuser-first"], state: "sending" };
+  assert.deepEqual(reconcileOptimisticMessages([pending], [first]), [pending]);
+  const repeated = mergeTranscriptTurns([first], [{ id: "second", items: [{ id: "user-second", type: "userMessage", text: firstPrompt }] }]);
+  assert.equal(repeated.flatMap(turn => turn.items).filter(item => item.type === "userMessage").length, 2);
+  assert.deepEqual(reconcileOptimisticMessages([pending], repeated), [pending]);
+});
