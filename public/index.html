@@ -75,9 +75,19 @@
             <ul id="attachmentList" class="attachment-list"></ul>
             <div id="attachmentError" class="attachment-error" role="status" hidden></div>
             <label class="sr-only" for="promptInput">发送消息</label>
-            <textarea id="promptInput" rows="1" placeholder="发送消息…" maxlength="12000" disabled></textarea>
             <span class="sr-only" id="attachmentHelp">先上传到当前会话目录，发送后供 Codex 读取</span>
-            <div class="composer-footer"><button id="attachButton" type="button" class="icon-button" aria-label="添加附件" aria-describedby="attachmentHelp" title="添加附件：先上传到当前会话目录，发送后供 Codex 读取" disabled>＋</button><div class="composer-settings"><button id="modelSettingsButton" type="button" class="model-settings-button" title="模型与推理强度" aria-label="模型与推理强度">沿用桌面 ▾</button><label class="permission-control"><span class="sr-only">下一轮权限</span><select id="messagePermission" aria-describedby="permissionState" title="下一轮权限" disabled><option value="">权限 · 沿用桌面</option></select></label></div><span id="permissionState" class="permission-state" role="status" hidden></span><span class="composer-hint" id="composerHint" role="status" aria-live="polite">选择任务后查看发送权限</span><button class="stop-button composer-action" id="stopButton" type="button" aria-label="停止当前轮次" title="停止当前轮次" hidden><span class="stop-icon" aria-hidden="true"></span></button><button class="send-button composer-action" id="sendButton" type="submit" aria-label="发送消息" title="发送消息" disabled><span class="send-icon" aria-hidden="true">↑</span></button></div>
+            <div class="composer-input-row">
+              <button id="attachButton" type="button" class="icon-button" aria-label="添加附件" aria-describedby="attachmentHelp" title="添加附件：先上传到当前会话目录，发送后供 Codex 读取" disabled>＋</button>
+              <textarea id="promptInput" rows="1" placeholder="发送消息…" maxlength="12000" disabled></textarea>
+              <button id="modelSettingsButton" type="button" class="model-settings-button" title="下一轮设置：模型、推理强度与权限" aria-label="下一轮设置：模型、推理强度与权限" aria-haspopup="dialog" aria-controls="modelSettingsDialog">
+                <!-- Lucide settings, ISC license. -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span id="modelSettingsLabel" class="sr-only">沿用桌面</span>
+              </button>
+              <button class="stop-button composer-action" id="stopButton" type="button" aria-label="停止当前轮次" title="停止当前轮次" hidden><span class="stop-icon" aria-hidden="true"></span></button>
+              <button class="send-button composer-action" id="sendButton" type="submit" aria-label="发送消息" title="发送消息" disabled><span class="send-icon" aria-hidden="true">↑</span></button>
+            </div>
+            <span class="composer-hint" id="composerHint" role="status" aria-live="polite">选择任务后查看发送权限</span>
           </form>
         </section>
         <div class="context-scrim" id="contextScrim" hidden></div>
@@ -120,6 +130,8 @@
       <h2 id="modelSettingsTitle">下一轮设置</h2>
       <label class="new-thread-label" for="messageModel">模型</label><select id="messageModel" class="new-thread-control"></select>
       <label class="new-thread-label" for="messageThinking">推理强度</label><select id="messageThinking" class="new-thread-control"></select>
+      <label class="new-thread-label" for="messagePermission">权限</label><select id="messagePermission" class="new-thread-control" aria-describedby="permissionState" title="下一轮权限" disabled><option value="">权限 · 沿用桌面</option></select>
+      <p id="permissionState" class="permission-state" role="status" hidden></p>
       <p id="modelSettingsState" class="model-settings-state" role="status"></p>
       <div class="font-dialog-footer"><button id="modelSettingsDone" type="button">完成</button></div>
     </dialog>

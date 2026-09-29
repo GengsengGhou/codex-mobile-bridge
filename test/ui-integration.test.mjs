@@ -28,7 +28,34 @@ async function until(predicate, label) {
   assert.fail(`Timed out: ${label}`);
 }
 
-async function mount(t, route = () => undefined, { session = {}, expectedRows = 3, urlThread = A } = {}) {
+function pollingClock(window) {
+  let now = Date.now(), nextId = 0;
+  const timers = new Map();
+  window.Date.now = () => now;
+  window.setTimeout = (callback, delay = 0, ...args) => {
+    const id = ++nextId;
+    timers.set(id, { callback, args, at: now + Math.max(0, Number(delay) || 0) });
+    return id;
+  };
+  window.clearTimeout = id => timers.delete(id);
+  return {
+    get pending() { return timers.size; },
+    async advance(ms) {
+      const target = now + ms;
+      for (let count = 0; count < 1000; count++) {
+        const next = [...timers].filter(([, timer]) => timer.at <= target).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) { now = target; return; }
+        const [id, timer] = next;
+        timers.delete(id);
+        now = timer.at;
+        await timer.callback(...timer.args);
+      }
+      assert.fail('Polling clock did not settle');
+    },
+  };
+}
+
+async function mount(t, route = () => undefined, { session = {}, expectedRows = 3, urlThread = A, automaticClock = false } = {}) {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const dom = new JSDOM(html, { url: `http://127.0.0.1:4317/?thread=${urlThread}`, runScripts: 'outside-only', pretendToBeVisual: true });
   t.after(() => dom.window.close());
@@ -44,6 +71,7 @@ async function mount(t, route = () => undefined, { session = {}, expectedRows = 
   window.HTMLDialogElement.prototype.show = function () { this.open = true; };
   window.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new window.Event('close')); };
   window.setInterval = callback => { intervals.push(callback); return intervals.length; };
+  const clock = automaticClock ? pollingClock(window) : null;
   window.addEventListener('error', event => { errors.push(event.error); event.preventDefault(); });
   let savedOrder = { revision: 0, order: { projects: [], threads: {} } };
   window.fetch = async (path, options = {}) => {
@@ -80,7 +108,7 @@ async function mount(t, route = () => undefined, { session = {}, expectedRows = 
     throw new Error(`${error.message}; app errors: ${errors.map(item => item?.message || item).join('; ')}`);
   });
   assert.deepEqual(errors, []);
-  return { window, doc, requests, errors, intervals, savedOrder: () => savedOrder };
+  return { window, doc, requests, errors, intervals, clock, savedOrder: () => savedOrder };
 }
 
 test('model settings stay scoped to each chat and omit overrides for default and active supplements', async t => {
@@ -438,7 +466,9 @@ test('task detail expansion survives polling and remains scoped to each thread w
 test('idle composer keeps attachment and font controls accessible without a routine status row', async t => {
   const ui = await mount(t);
   assert.equal(ui.doc.querySelector('#composerHint').classList.contains('sr-only'), true);
-  assert.equal(ui.doc.querySelector('#attachButton').parentElement.className, 'composer-footer');
+  assert.equal(ui.doc.querySelector('#attachButton').parentElement.className, 'composer-input-row');
+  assert.equal(ui.doc.querySelector('#sendButton').parentElement, ui.doc.querySelector('#promptInput').parentElement);
+  assert.equal(ui.doc.querySelector('#messagePermission').closest('dialog').id, 'modelSettingsDialog');
   assert.equal(ui.doc.querySelector('#attachButton').getAttribute('aria-describedby'), 'attachmentHelp');
   assert.match(ui.doc.querySelector('#attachmentHelp').textContent, /当前会话目录/);
   assert.equal(ui.doc.querySelector('#fontControl').closest('.conversation-header') !== null, true);
@@ -977,6 +1007,108 @@ test('actual sidebar controls save project order and disable reordering during s
   await until(() => ui.doc.querySelector('.project-order-row')?.dataset.orderKey === 'project-two', 'visible project order');
   const search = ui.doc.querySelector('#taskSearch'); search.value = 'Alpha'; search.dispatchEvent(new ui.window.Event('input'));
   assert.equal(ui.doc.querySelector('#sortToggle').disabled, true);
+  assert.deepEqual(ui.errors, []);
+});
+
+test('automatic polling follows desktop project and conversation ranks through new chats without saving an order', async t => {
+  let desktopRows = rows.map(row => ({ ...row }));
+  const D = '00000000-0000-0000-0000-000000000005', E = '00000000-0000-0000-0000-000000000006';
+  const ui = await mount(t, call => {
+    if (call.path === '/api/threads') return response({ threads: desktopRows });
+    if (call.path === `/api/threads/${A}`) return response({ ...snapshot(A), thread: desktopRows.find(row => row.id === A) });
+  }, { automaticClock: true });
+  const projectKeys = () => [...ui.doc.querySelectorAll('.project-order-row')].map(node => node.dataset.orderKey);
+  const threadIds = key => [...ui.doc.querySelectorAll(`.task-row[data-order-key="${key}"]`)].map(node => node.dataset.orderId);
+  await until(() => ui.clock.pending > 0, 'automatic poll scheduled');
+  await new Promise(resolve => setTimeout(resolve, 15));
+  await ui.clock.advance(30000);
+  const initialFolder = ui.doc.querySelector('.project-folder');
+  await ui.clock.advance(30000);
+  assert.equal(ui.doc.querySelector('.project-folder'), initialFolder, 'unchanged desktop metadata retains sidebar nodes');
+
+  const input = ui.doc.querySelector('#promptInput'); input.value = 'Unsent Alpha draft'; input.dispatchEvent(new ui.window.Event('input'));
+  const one = ui.doc.querySelector('.project-folder[data-project-key="project-one"]');
+  one.open = false; one.dispatchEvent(new ui.window.Event('toggle'));
+  desktopRows = [...desktopRows, { id: D, title: 'Delta', projectKey: 'project-one', projectName: 'One', projectOrder: 0, projectThreadOrder: 2, status: 'idle' }];
+  await ui.clock.advance(60000);
+  assert.deepEqual(threadIds('project-one'), [A, B, D], 'new native conversation appears automatically');
+  desktopRows = desktopRows.map(row => ({ ...row, projectOrder: row.projectKey === 'project-two' ? 0 : 1, projectThreadOrder: row.id === A ? 1 : row.id === B ? 0 : row.projectThreadOrder }));
+  await ui.clock.advance(60000);
+  assert.deepEqual(projectKeys(), ['project-two', 'project-one']);
+  assert.deepEqual(threadIds('project-one'), [B, A, D]);
+  assert.equal(ui.doc.querySelector('.project-folder[data-project-key="project-one"]').open, false);
+
+  desktopRows = [
+    ...desktopRows.map(row => ({ ...row, projectOrder: row.projectKey === 'project-one' ? 0 : 2, projectThreadOrder: row.id === A ? 2 : row.id === D ? 0 : 1 })),
+    { id: E, title: 'Epsilon', projectKey: 'project-three', projectName: 'Three', projectOrder: 1, projectThreadOrder: 0, status: 'idle' },
+  ];
+  await ui.clock.advance(60000);
+  assert.deepEqual(projectKeys(), ['project-one', 'project-three', 'project-two']);
+  assert.deepEqual(threadIds('project-one'), [D, B, A]);
+
+  desktopRows = desktopRows.map(row => ({ ...row, pinned: row.id === B || row.id === D, pinnedIndex: row.id === D ? 0 : 1 }));
+  await ui.clock.advance(60000);
+  assert.deepEqual(threadIds('@pinned'), [D, B]);
+  desktopRows = desktopRows.map(row => ({ ...row, pinnedIndex: row.id === B ? 0 : 1 }));
+  await ui.clock.advance(60000);
+  assert.deepEqual(threadIds('@pinned'), [B, D]);
+  desktopRows = desktopRows.map(row => ({ ...row, pinned: row.id === D }));
+  await ui.clock.advance(60000);
+  assert.deepEqual(threadIds('@pinned'), [D]);
+  assert.deepEqual(threadIds('project-one'), [B, A]);
+
+  const search = ui.doc.querySelector('#taskSearch'); search.value = 'Alpha'; search.dispatchEvent(new ui.window.Event('input'));
+  desktopRows = desktopRows.map(row => ({ ...row, projectOrder: row.projectKey === 'project-two' ? 0 : 1 }));
+  await ui.clock.advance(60000);
+  assert.equal(search.value, 'Alpha'); assert.deepEqual([...ui.doc.querySelectorAll('.task-item')].map(node => node.textContent), ['Alpha']);
+  search.value = ''; search.dispatchEvent(new ui.window.Event('input'));
+  assert.equal(ui.doc.querySelector('.project-folder[data-project-key="project-one"]').open, false);
+  assert.equal(input.value, 'Unsent Alpha draft'); assert.equal(ui.doc.querySelector('#threadTitle').textContent, 'Alpha');
+  assert.equal(ui.window.location.search, `?thread=${A}`);
+  assert.equal(ui.doc.querySelector('#resetOrder').disabled, true);
+  assert.deepEqual(ui.savedOrder(), { revision: 0, order: { projects: [], threads: {} } });
+  assert.equal(ui.requests.some(call => call.method === 'PUT' || call.method === 'POST'), false);
+  assert.deepEqual(ui.errors, []);
+});
+
+test('automatic desktop updates preserve saved web ordering and append new items without another write', async t => {
+  let desktopRows = rows.map(row => ({ ...row }));
+  const D = '00000000-0000-0000-0000-000000000005', E = '00000000-0000-0000-0000-000000000006';
+  const ui = await mount(t, call => {
+    if (call.path === '/api/threads') return response({ threads: desktopRows });
+    if (call.path === `/api/threads/${A}`) return response({ ...snapshot(A), thread: desktopRows.find(row => row.id === A) });
+  }, { automaticClock: true });
+  await until(() => ui.clock.pending > 0, 'automatic poll scheduled');
+  ui.doc.querySelector('#sortToggle').click();
+  ui.doc.querySelector('.project-order-row[data-order-key="project-one"] > .order-controls .order-handle')
+    .dispatchEvent(new ui.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+  await until(() => ui.doc.querySelector('#orderState').textContent.includes('已保存'), 'custom order saved');
+  ui.doc.querySelector(`.task-row[data-order-id="${A}"] .order-handle`)
+    .dispatchEvent(new ui.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+  await until(() => ui.savedOrder().order.threads['project-one']?.[0] === B && ui.doc.querySelector('#orderState').textContent.includes('已保存'), 'custom conversation order saved');
+  ui.doc.querySelector('#sortToggle').click();
+  const writes = ui.requests.filter(call => call.method === 'PUT').length;
+  const saved = JSON.parse(JSON.stringify(ui.savedOrder()));
+  desktopRows = [
+    ...desktopRows.map(row => ({ ...row, projectOrder: row.projectKey === 'project-one' ? 0 : 2, projectThreadOrder: row.id === A ? 0 : 2 })),
+    { id: D, title: 'Delta', projectKey: 'project-one', projectName: 'One', projectOrder: 0, projectThreadOrder: 1, status: 'idle' },
+    { id: E, title: 'Epsilon', projectKey: 'project-three', projectName: 'Three', projectOrder: 1, projectThreadOrder: 0, status: 'idle' },
+  ];
+  await ui.clock.advance(60000);
+  assert.deepEqual([...ui.doc.querySelectorAll('.project-order-row')].map(node => node.dataset.orderKey), ['project-two', 'project-one', 'project-three']);
+  assert.deepEqual([...ui.doc.querySelectorAll('.task-row[data-order-key="project-one"]')].map(node => node.dataset.orderId), [B, A, D]);
+  assert.deepEqual(ui.savedOrder(), saved);
+  assert.equal(ui.requests.filter(call => call.method === 'PUT').length, writes);
+  assert.equal(ui.doc.querySelector('#orderState').textContent, '网页排序 · 已保存');
+  ui.doc.querySelector('#resetOrder').click();
+  await until(() => ui.savedOrder().order.projects.length === 0 && ui.doc.querySelector('#resetOrder').disabled, 'follow desktop reset saved');
+  desktopRows = desktopRows.map(row => ({ ...row, projectOrder: row.projectKey === 'project-two' ? 0 : row.projectKey === 'project-three' ? 1 : 2, projectThreadOrder: row.id === A ? 2 : row.id === B ? 0 : 1 }));
+  await ui.clock.advance(60000);
+  assert.deepEqual([...ui.doc.querySelectorAll('.project-order-row')].map(node => node.dataset.orderKey), ['project-two', 'project-three', 'project-one']);
+  assert.deepEqual([...ui.doc.querySelectorAll('.task-row[data-order-key="project-one"]')].map(node => node.dataset.orderId), [B, D, A]);
+  assert.deepEqual(ui.savedOrder().order, { projects: [], threads: {} });
+  assert.equal(ui.requests.filter(call => call.method === 'PUT').length, writes + 1, 'only the explicit reset writes again');
+  assert.equal(ui.doc.querySelector('#orderState').hidden, true);
   assert.deepEqual(ui.errors, []);
 });
 

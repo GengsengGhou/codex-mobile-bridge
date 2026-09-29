@@ -1,9 +1,10 @@
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function initializeHub({ document, window, fetchImpl = fetch }) {
   const $ = id => document.getElementById(id);
-  let user = null, registering = false, busy = false, generation = 0;
+  let user = null, registering = false, busy = false, generation = 0, pairingTicket = null, pairingExpiryTimer = null, pendingPairingName = '';
   const notify = message => { $("feedback").textContent = message; };
-  function clearSecrets() { $("password").value = $("pairCode").value = $("inviteLink").value = ""; $("pairResult").hidden = $("inviteResult").hidden = true; $("pairCode").type = "password"; $("showPair").textContent = "显示配对码"; }
+  function clearPairingTicket() { clearTimeout(pairingExpiryTimer); pairingExpiryTimer = null; pairingTicket = null; pendingPairingName = ''; $("pairCode").value = ""; $("pairResult").hidden = true; $("pairCode").type = "password"; $("showPair").textContent = "显示配对码"; }
+  function clearSecrets() { clearPairingTicket(); $("password").value = $("inviteLink").value = ""; $("inviteResult").hidden = true; }
   function authMode(value) { registering = value; $("authTitle").textContent = $("authSubmit").textContent = value ? "邀请注册" : "登录"; $("inviteLabel").hidden = !value; $("invite").required = value; $("password").minLength = value ? 12 : 1; $("password").autocomplete = value ? "new-password" : "current-password"; $("authMode").textContent = value ? "已有账户，登录" : "使用邀请注册"; }
   function signedOut() { ++generation; user = null; clearSecrets(); $("deviceList").replaceChildren(); $("auth").hidden = false; $("dashboard").hidden = $("logout").hidden = true; $("accountName").textContent = ""; }
   async function request(path, options = {}) {
@@ -44,26 +45,36 @@ export function initializeHub({ document, window, fetchImpl = fetch }) {
     try {
       const result = await request(path, { method, body: JSON.stringify(body || {}) });
       if (path === "/api/hub/pairings") {
-        $("pairCode").value = result.pairingCode; $("pairCode").type = "password"; $("showPair").textContent = "显示配对码"; $("pairResult").hidden = false; $("pairExpiry").textContent = `有效期至 ${new Date(result.expiresAt).toLocaleString("zh-CN")}`;
+        const expiresAt = new Date(result.expiresAt);
+        if (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now() || !/^[A-Za-z0-9_-]{43}$/.test(result.pairingCode || "")) throw new Error("服务返回的配对信息无效。");
+        pairingTicket = { type: "codex-mobile-pairing", version: 1, server: new URL(window.location.href).origin, code: result.pairingCode, name: pendingPairingName, expiresAt: expiresAt.toISOString() };
+        $("pairCode").value = result.pairingCode; $("pairCode").type = "password"; $("showPair").textContent = "显示配对码"; $("pairResult").hidden = false; $("pairExpiry").textContent = `有效期至 ${expiresAt.toLocaleString("zh-CN")}`;
+        pairingExpiryTimer = window.setTimeout(() => { clearPairingTicket(); notify("配对信息已过期，请重新生成。"); }, Math.max(0, expiresAt.getTime() - Date.now()));
       } else if (path === "/api/hub/invitations") {
         const link = new URL("/", window.location.origin); link.searchParams.set("invite", result.invite); $("inviteLink").value = link.href; $("inviteResult").hidden = false; $("inviteExpiry").textContent = `有效期至 ${new Date(result.expiresAt).toLocaleString("zh-CN")}`;
       } else if (path === "/api/hub/logout") signedOut();
       else { if (result.user) signedIn(result); await refresh(); }
     } catch (error) {
       $("password").value = "";
+      if (path === "/api/hub/pairings") clearPairingTicket();
       if (!error.status) { clearSecrets(); await refresh(); notify("操作结果未确认，请核对当前状态后再操作。" + (["/api/hub/pairings", "/api/hub/invitations"].includes(path) ? "本次配对码或邀请链接无法恢复。" : "")); }
       else notify(path.endsWith("/login") || path.endsWith("/register") ? error.status === 429 ? error.message : "无法登录或注册，请检查账户信息与邀请码。" : error.message);
     } finally { setBusy(false); }
   }
   $("authForm").addEventListener("submit", event => { event.preventDefault(); mutate(`/api/hub/${registering ? "register" : "login"}`, { username: $("username").value, password: $("password").value, ...(registering ? { invite: $("invite").value } : {}) }); });
   $("authMode").addEventListener("click", () => authMode(!registering));
-  $("pairForm").addEventListener("submit", event => { event.preventDefault(); $("pairCode").value = ""; $("pairResult").hidden = true; mutate("/api/hub/pairings", { name: $("deviceName").value }); });
+  $("pairForm").addEventListener("submit", event => { event.preventDefault(); clearPairingTicket(); pendingPairingName = $("deviceName").value.trim(); mutate("/api/hub/pairings", pendingPairingName ? { name: pendingPairingName } : {}); });
   $("createInvite").addEventListener("click", () => mutate("/api/hub/invitations", {}));
   $("logout").addEventListener("click", () => mutate("/api/hub/logout", {}));
   $("refreshDevices").addEventListener("click", () => { if (!busy) refresh(); });
   $("showPair").addEventListener("click", () => { const hidden = $("pairCode").type === "password"; $("pairCode").type = hidden ? "text" : "password"; $("showPair").textContent = hidden ? "隐藏配对码" : "显示配对码"; });
   async function copy(id) { try { await window.navigator.clipboard.writeText($(id).value); notify("已复制"); } catch { notify("无法复制，请选择文本复制。"); } }
-  $("copyPair").addEventListener("click", () => copy("pairCode")); $("copyInvite").addEventListener("click", () => copy("inviteLink"));
+  async function copyPairingInformation() {
+    if (!pairingTicket || Date.parse(pairingTicket.expiresAt) <= Date.now()) { clearPairingTicket(); notify("配对信息已过期，请重新生成。"); return; }
+    try { await window.navigator.clipboard.writeText(JSON.stringify(pairingTicket, null, 2)); notify("配对信息已复制"); }
+    catch { notify("无法复制，请重新生成配对信息后重试。"); }
+  }
+  $("copyPair").addEventListener("click", copyPairingInformation); $("copyInvite").addEventListener("click", () => copy("inviteLink"));
   const invite = new URL(window.location.href).searchParams.get("invite"); authMode(!!invite); if (invite) $("invite").value = invite;
   const ready = refresh();
   return { ready, refresh };

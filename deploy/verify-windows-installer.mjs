@@ -19,7 +19,9 @@ const status=spawnSync(node,[join(fixture,'scripts/connector-gui.mjs')],{encodin
 assert.deepEqual(JSON.parse(status.stdout).paired,false);
 const digest=file=>readFile(file).then(bytes=>createHash('sha256').update(bytes).digest('hex'));
 assert.equal(await digest(exe),await digest(setup));
-const screenshot=join(root,'docs/verification/windows-companion-render.png');
+const evidenceDirectory=join(root,'work/verification');
+await mkdir(evidenceDirectory,{recursive:true});
+const screenshot=join(evidenceDirectory,'windows-companion-render.png');
 await rm(screenshot,{force:true});
 const literal=value=>"'"+value.replaceAll("'","''")+"'";
 const validationScript=`$assembly=[Reflection.Assembly]::LoadFile(${literal(exe)}); $method=$assembly.GetType('ConnectorWindow').GetMethod('ValidatedHub'); $valid=$method.Invoke($null,@('https://hub.example:8443')); $invalid=@('http://hub.example','https://user:secret@hub.example','https://hub.example/path','https://hub.example/?x=1','javascript:alert(1)'); $rejected=0; foreach($url in $invalid){try{$method.Invoke($null,@($url))|Out-Null}catch{$rejected++}}; @{valid=$valid;rejected=$rejected}|ConvertTo-Json -Compress`;
@@ -38,5 +40,5 @@ assert.equal(uninstall.status,0,uninstall.stderr);
 await assert.rejects(access(exe));
 assert.equal(await readFile(join(fixture,'.local/preserved-fixture.txt'),'utf8'),'fixture-data-survives-install-and-uninstall');
 const evidence={fixture,runtime:runtime.stdout.trim(),installerSha256:await digest(setup),unattendedInstall:'passed',bundledRuntime:'passed',noGlobalNodeNeeded:'passed',validatedHubLoginAddress:'passed (HTTPS origin only; path/query/userinfo/insecure schemes rejected)',rerunPreservesExistingFiles:'passed',uninstallPreservesLocalData:'passed',startupRegistrations:'not created for isolated QA root',renderedControls:screenshot,desktopScreenshot:'unavailable: Windows desktop is locked; native UI input stopped'};
-await writeFile(join(root,'docs/verification/windows-installer-evidence.json'),JSON.stringify(evidence,null,2)+'\n');
+await writeFile(join(evidenceDirectory,'windows-installer-evidence.json'),JSON.stringify(evidence,null,2)+'\n');
 console.log(JSON.stringify(evidence,null,2));

@@ -85,7 +85,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     createRetry: $("createRetry"), checkCreateReceipt: $("checkCreateReceipt"), enterCreatedFromDialog: $("enterCreatedFromDialog"),
     creationResult: $("creationResult"), creationResultText: $("creationResultText"), enterCreatedThread: $("enterCreatedThread")
   };
-  const modelUI = { button: $("modelSettingsButton"), dialog: $("modelSettingsDialog"), model: $("messageModel"), thinking: $("messageThinking"), message: $("modelSettingsState"), createModel: $("createModel"), createThinking: $("createThinking") };
+  const modelUI = { button: $("modelSettingsButton"), label: $("modelSettingsLabel"), dialog: $("modelSettingsDialog"), model: $("messageModel"), thinking: $("messageThinking"), permission: $("messagePermission"), message: $("modelSettingsState"), createModel: $("createModel"), createThinking: $("createThinking") };
   const followupUI = { dialog: $("followupDraftDialog"), preview: $("followupDraftPreview"), cancel: $("followupDraftCancel"), append: $("followupDraftAppend") };
   const modelSettings = new Map();
   function readModelSettings(id) {
@@ -128,9 +128,10 @@ import { createAgentViewer } from "./agent-viewer.js";
   function renderModelSettings() {
     const selection = readModelSettings(state.selectedId);
     modelUI.button.disabled = !state.selectedId || state.sending;
-    modelUI.button.textContent = selection.model ? `${selection.model.replace(/^gpt-/, "")}${selection.thinking ? ` · ${selection.thinking}` : ""} ▾` : "沿用桌面 ▾";
-    modelUI.button.title = `下一轮：${selection.model || "沿用桌面设置"}${selection.thinking ? ` · ${selection.thinking}` : ""}`;
-    modelUI.button.setAttribute("aria-label", `模型与推理强度，${modelUI.button.title}`);
+    modelUI.label.textContent = selection.model ? `${selection.model}${selection.thinking ? ` · ${selection.thinking}` : ""}` : "沿用桌面";
+    modelUI.button.dataset.customized = String(!!(selection.model || selection.thinking || modelUI.permission.value));
+    modelUI.button.title = `下一轮设置：模型、推理强度与权限；${selection.model || "沿用桌面设置"}${selection.thinking ? ` · ${selection.thinking}` : ""}`;
+    modelUI.button.setAttribute("aria-label", modelUI.button.title);
     modelUI.message.textContent = state.sendMode === "follow-up" ? "本轮补充沿用运行中的模型，所选设置用于下一轮。" : !modelChoices("send").length ? "桌面暂未提供可用模型目录；沿用桌面设置仍可发送。" : "";
   }
   const state = {
@@ -1669,7 +1670,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       query, selected: state.selectedId, sorting: state.sorting, order: state.sidebarOrder.order,
       management: state.statusSnapshot?.threadManagement, connected: state.connected, managing: state.managing,
       expanded: [...state.expandedProjects].sort(([a], [b]) => a.localeCompare(b)),
-      threads: filtered.map(thread => [thread.id, thread.title, thread.status, thread.projectKey, thread.projectPath, thread.projectName, thread.projectId, thread.cwd, thread.pinnedIndex, isThreadPinned(thread)])
+      threads: filtered.map(thread => [thread.id, thread.title, thread.status, thread.projectKey, thread.projectPath, thread.projectName, thread.projectId, thread.cwd, thread.projectOrder, thread.projectThreadOrder, thread.pinnedIndex, isThreadPinned(thread)])
     });
     ui.taskCount.textContent = query ? `${filtered.length} / ${state.threads.length}` : `${state.threads.length} 个会话`;
     if (fingerprint === state.taskListFingerprint) return;
@@ -2543,6 +2544,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     $("modelSettingsDone").addEventListener("click", () => modelUI.dialog.close());
     modelUI.model.addEventListener("change", () => saveModelControls("send", true));
     modelUI.thinking.addEventListener("change", () => saveModelControls("send"));
+    modelUI.permission.addEventListener("change", renderModelSettings);
     modelUI.createModel.addEventListener("change", () => saveModelControls("create", true));
     modelUI.createThinking.addEventListener("change", () => saveModelControls("create"));
     populateModelControls("create");

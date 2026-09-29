@@ -30,9 +30,12 @@ public static class ConnectorToken {
 export async function readConnectorControl(root) {
   let value;
   try { value = JSON.parse(await readFile(resolve(root, '.local/connector-control.json'), 'utf8')); }
-  catch (error) { if (error.code === 'ENOENT') return { version: 1, paused: false, autoStart: null, revision: 'absent', disconnectVerified: false }; throw new Error('连接意图文件无法读取；已禁止自动连接，请在窗口中明确重试连接。'); }
-  if (value.version !== 1 || typeof value.paused !== 'boolean' || typeof value.autoStart !== 'boolean' || typeof value.revision !== 'string' || (value.paused && typeof value.pausedSession !== 'string')) throw new Error('连接意图文件损坏；已禁止自动连接，请在窗口中明确重试连接。');
-  return value;
+  catch (error) { if (error.code === 'ENOENT') return { version: 2, paused: false, pauseScope: 'none', pausedSession: null, autoStart: false, autoStartSelected: false, startupPending: false, bootstrapPending: false, revision: 'absent', settingsRevision: 'absent', disconnectVerified: false }; throw new Error('连接意图文件无法读取；已禁止自动连接，请在窗口中明确重试连接。'); }
+  if (value.version === 1 && typeof value.paused === 'boolean' && typeof value.autoStart === 'boolean' && typeof value.revision === 'string' && (!value.paused || typeof value.pausedSession === 'string')) {
+    return { ...value, version: 2, pauseScope: value.paused ? 'session' : 'none', autoStartSelected: true, startupPending: false, bootstrapPending: false, settingsRevision: 'legacy' };
+  }
+  if (value.version !== 2 || typeof value.paused !== 'boolean' || !['none', 'session', 'persistent'].includes(value.pauseScope) || typeof value.pausedSession !== 'string' && value.pausedSession !== null || typeof value.autoStart !== 'boolean' || typeof value.autoStartSelected !== 'boolean' || typeof value.revision !== 'string' || typeof value.settingsRevision !== 'string' || typeof value.disconnectVerified !== 'boolean' || (value.startupPending !== undefined && typeof value.startupPending !== 'boolean') || (value.bootstrapPending !== undefined && typeof value.bootstrapPending !== 'boolean') || (value.paused ? value.pauseScope === 'none' : value.pauseScope !== 'none') || (value.pauseScope === 'session' && typeof value.pausedSession !== 'string')) throw new Error('连接意图文件损坏；已禁止自动连接，请在窗口中明确重试连接。');
+  return { ...value, startupPending: value.startupPending === true, bootstrapPending: value.bootstrapPending === true };
 }
 export async function connectorMayRun(root, revision) {
   const value = await readConnectorControl(root);
@@ -85,6 +88,10 @@ throw '无法确认连接器已停止；暂停意图已保存，请重试断开�
 export function createConnectorControl({ root, registration, session = currentLogonSession, stop = stopOwnedConnectorProcesses } = {}) {
   const startup = registration || createCompanionRegistration({ root });
   const path = resolve(root, '.local/connector-control.json');
+  const paired = async () => {
+    try { await readFile(resolve(root, '.local/hub-connector.json')); return true; }
+    catch (error) { if (error.code === 'ENOENT') return false; throw new Error('配对配置无法读取；已禁止更改自动启动设置。'); }
+  };
   async function mutate(operation) {
     if (process.platform !== 'win32') {
       const previous = localMutations.get(path) || Promise.resolve();
@@ -115,12 +122,14 @@ try{try{$held=$mutex.WaitOne(5000)}catch [Threading.AbandonedMutexException]{$he
   async function save(value) { await writeRecoveryFile(path, value); await privateFile(path); return value; }
   async function initialize() {
     return mutate(async () => {
-      const value = await readConnectorControl(root);
-      if (value.autoStart !== null) return value;
-      const autoStart = (await startup.read()).enabled;
-      const applied = await startup.set(autoStart);
-      if (applied.enabled !== autoStart) throw new Error('无法确认 Windows 登录启动迁移，请重试。');
-      return save({ ...value, autoStart, revision: randomUUID() });
+      let value = await readConnectorControl(root);
+      let changed = false;
+      if (!value.autoStartSelected && await paired()) {
+        const autoStart = (await startup.read()).enabled;
+        value = { ...value, autoStart, autoStartSelected: true };
+        changed = true;
+      }
+      return !changed && value.revision !== 'absent' ? value : save({ ...value, version: 2, revision: value.revision === 'absent' ? randomUUID() : value.revision });
     });
   }
   return {
@@ -129,16 +138,17 @@ try{try{$held=$mutex.WaitOne(5000)}catch [Threading.AbandonedMutexException]{$he
     resume: reason => mutate(async () => {
       let value;
       try { value = await readConnectorControl(root); }
-      catch (e) { if (reason === 'startup') throw e; value = { version: 1, paused: true, autoStart: false }; }
-      if (value.autoStart === null) value = { ...value, autoStart: (await startup.read()).enabled };
+      catch (e) { if (reason === 'startup') throw e; value = { version: 2, paused: true, pauseScope: 'session', pausedSession: await session(), autoStart: false, autoStartSelected: false, revision: 'repair', settingsRevision: 'repair', disconnectVerified: false }; }
       const login = await session();
-      if (reason === 'startup' && (!value.autoStart || (value.paused && value.pausedSession === login))) return value;
-      return save({ ...value, paused: false, pausedSession: null, revision: randomUUID(), disconnectVerified: false, lastError: null });
+      if (reason === 'startup' && (!value.autoStart || value.pauseScope === 'persistent' || (value.pauseScope === 'session' && value.pausedSession === login))) return value;
+      return save({ ...value, version: 2, paused: false, pauseScope: 'none', pausedSession: null, revision: randomUUID(), disconnectVerified: false, lastError: null });
     }),
-    pause: async () => {
+    pause: async (scope = 'session') => {
+      if (!['session', 'persistent'].includes(scope)) throw new Error('暂停范围无效。');
       const paused = await mutate(async () => {
-        let value; try { value = await readConnectorControl(root); } catch { value = { version: 1, autoStart: false }; }
-        return save({ ...value, autoStart: value.autoStart === true, paused: true, pausedSession: await session(), revision: randomUUID(), disconnectVerified: false, lastError: null });
+        let value; try { value = await readConnectorControl(root); } catch { value = { version: 2, autoStart: false, autoStartSelected: false, settingsRevision: 'repair' }; }
+        const effectiveScope = value.pauseScope === 'persistent' && scope === 'session' ? 'persistent' : scope;
+        return save({ ...value, version: 2, autoStart: value.autoStart === true, autoStartSelected: value.autoStartSelected === true, paused: true, pauseScope: effectiveScope, pausedSession: effectiveScope === 'session' ? await session() : null, revision: randomUUID(), disconnectVerified: false, lastError: null });
       });
       let error;
       try { const result = await stop({ root }); if (!result.stopped) throw new Error('无法确认连接器已停止。'); } catch (e) { error = e; }
@@ -153,9 +163,53 @@ try{try{$held=$mutex.WaitOne(5000)}catch [Threading.AbandonedMutexException]{$he
     configure: autoStart => mutate(async () => {
       if (typeof autoStart !== 'boolean') throw new Error('登录启动设置无效。');
       const value = await readConnectorControl(root);
-      const applied = await startup.set(autoStart);
-      if (applied.enabled !== autoStart) throw new Error('无法确认 Windows 登录启动设置，请重试。');
-      return save({ ...value, autoStart, revision: value.revision === 'absent' ? randomUUID() : value.revision });
+      if (await paired()) {
+        const applied = await startup.set(autoStart);
+        if (applied.enabled !== autoStart) throw new Error('无法确认 Windows 登录启动设置，请重试。');
+      }
+      return save({ ...value, version: 2, autoStart, autoStartSelected: true, startupPending: false, settingsRevision: randomUUID() });
+    }),
+    completePairing: (expectedRevision, expectedSettingsRevision, { newPair = true } = {}) => mutate(async () => {
+      const value = await readConnectorControl(root);
+      if (value.revision !== expectedRevision) {
+        let autoStart = value.autoStart;
+        let autoStartSelected = value.autoStartSelected;
+        if (value.settingsRevision === expectedSettingsRevision && !autoStartSelected) {
+          autoStart = newPair ? true : (await startup.read()).enabled;
+          autoStartSelected = true;
+        }
+        const intent = await save({ ...value, autoStart, autoStartSelected, startupPending: await paired(), bootstrapPending: newPair });
+        return { superseded: true, intent };
+      }
+      let autoStart = value.autoStart;
+      let autoStartSelected = value.autoStartSelected;
+      if (value.settingsRevision === expectedSettingsRevision && !autoStartSelected) {
+        autoStart = newPair ? true : (await startup.read()).enabled;
+        autoStartSelected = true;
+      }
+      const isPaired = await paired();
+      const intent = await save({ ...value, version: 2, autoStart, autoStartSelected, startupPending: isPaired, bootstrapPending: newPair, paused: false, pauseScope: 'none', pausedSession: null, revision: randomUUID(), disconnectVerified: false, lastError: null });
+      if (isPaired) {
+        const applied = await startup.set(autoStart);
+        if (applied.enabled !== autoStart) throw new Error('无法确认 Windows 登录启动设置，请重试。');
+      }
+      const finalized = intent.startupPending ? await save({ ...intent, startupPending: false }) : intent;
+      return { superseded: false, intent: finalized };
+    }),
+    finishStartupRegistration: expectedRevision => mutate(async () => {
+      const value = await readConnectorControl(root);
+      if (value.revision !== expectedRevision || value.paused || !value.startupPending) return value;
+      if (await paired()) {
+        const applied = await startup.set(value.autoStart);
+        if (applied.enabled !== value.autoStart) throw new Error('无法确认 Windows 登录启动设置，请重试。');
+      }
+      const current = await readConnectorControl(root);
+      return current.revision === value.revision && !current.paused ? save({ ...current, startupPending: false }) : current;
+    }),
+    finishBootstrapEnrollment: expectedRevision => mutate(async () => {
+      const value = await readConnectorControl(root);
+      if (value.revision !== expectedRevision || value.paused || !value.bootstrapPending) return value;
+      return save({ ...value, bootstrapPending: false });
     })
   };
 }

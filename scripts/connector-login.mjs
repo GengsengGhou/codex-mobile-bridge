@@ -157,6 +157,21 @@ export async function launchConnectorLoginWatcher({ root = defaultRoot, launch =
   return launch({ root, nodePath: process.execPath, supervisorPath: resolve(root, 'scripts/connector-login.mjs'), env: {}, instanceName: 'connector-login', logName: 'connector-login' });
 }
 
+export async function startConnectorLoginAtLogon({ root = defaultRoot, registration, launch = launchConnectorLoginWatcher } = {}) {
+  root = resolve(root);
+  const control = createConnectorControl({ root, registration });
+  await control.initialize();
+  let intent = await control.read();
+  if (!intent.paused && intent.bootstrapPending) {
+    await registerDeferredConnectorLogin({ root, allowBootstrap: true, registerStartup: false });
+    intent = await control.finishBootstrapEnrollment(intent.revision);
+  }
+  if (!intent.paused && intent.startupPending) intent = await control.finishStartupRegistration(intent.revision);
+  const value = await control.resume('startup');
+  if (!value.paused && value.autoStart) await launch({ root });
+  return value;
+}
+
 export async function restoreConnectorLogin({ root = defaultRoot, ensureBridge, bootstrap = ensureLocalBridge, finishBootstrap = registerConnectorLogin, probe = probeLocalBridge, verify = verifyBridge, start = startBridge, choosePort = chooseFreePort, launch = launchWindowsBridge, sleep = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms)), signal, output = console, monitor = false, now = Date.now, readState = readRecoveryFile, mayRun = connectorMayRun } = {}) {
   root = resolve(root);
   if (!await mayRun(root)) return { submitted: false, paused: true };
@@ -235,8 +250,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     if (process.argv.includes('--register')) { const result = await registerConnectorLogin(); console.log(`已启用当前用户登录启动：${result.name}`); }
     else if (process.argv.includes('--startup')) {
-      const value = await createConnectorControl({ root: defaultRoot }).resume('startup');
-      if (!value.paused && value.autoStart) await launchConnectorLoginWatcher();
+      await startConnectorLoginAtLogon();
     }
     else if (process.argv.includes('--background')) {
       const result = await launchConnectorLoginWatcher();

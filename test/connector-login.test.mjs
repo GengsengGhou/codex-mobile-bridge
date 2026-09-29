@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { registerConnectorLogin, registerDeferredConnectorLogin, launchConnectorLoginWatcher, restoreConnectorLogin, connectorLoginCommand, registerConnectorLogonTask } from '../scripts/connector-login.mjs';
+import { registerConnectorLogin, registerDeferredConnectorLogin, launchConnectorLoginWatcher, restoreConnectorLogin, startConnectorLoginAtLogon, connectorLoginCommand, registerConnectorLogonTask } from '../scripts/connector-login.mjs';
 import { selectOrdinaryLocalThread } from '../scripts/bootstrap-bridge.mjs';
+import { pairConnector } from '../scripts/setup-connector.mjs';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const config = { version: 1, hubOrigin: 'https://hub.example.com', deviceId: id, deviceToken: 't'.repeat(43), bridgePort: 4339 };
@@ -127,6 +129,34 @@ test('logon task uses the current interactive user, retries at logon, and reject
   assert.match(script, /bridge''s test/);
 });
 
+test('legacy PowerShell startup fallback migrates an owned login entry before recovery', async t => {
+  const root = await fixture(t); let launches = 0;
+  const registration = { read: async () => ({ enabled: true, conflict: false }), set: async enabled => ({ enabled, conflict: false }) };
+  await writeFile(resolve(root, '.local/connector-login.json'), JSON.stringify({ version: 1, nodePath: process.execPath }));
+  const ps1 = await readFile(new URL('../scripts/connector-login.ps1', import.meta.url), 'utf8');
+  assert.match(ps1, /connector-login\.mjs'\) --startup/);
+  const recovered = await startConnectorLoginAtLogon({ root, registration, launch: async ({ root: launchRoot }) => { assert.equal(launchRoot, root); launches++; } });
+  assert.equal(recovered.autoStart, true); assert.equal(recovered.autoStartSelected, true); assert.equal(launches, 1);
+});
+
+test('explicitly disabled login recovery remains disabled in the startup fallback', async t => {
+  const root = await fixture(t); let launches = 0;
+  const registration = { read: async () => ({ enabled: false, conflict: false }), set: async enabled => ({ enabled, conflict: false }) };
+  await writeFile(resolve(root, '.local/connector-login.json'), JSON.stringify({ version: 1, nodePath: process.execPath }));
+  await writeFile(resolve(root, '.local/connector-control.json'), JSON.stringify({ version: 2, paused: false, pauseScope: 'none', pausedSession: null, autoStart: false, autoStartSelected: true, revision: 'explicit-off', settingsRevision: 'selected-off', disconnectVerified: false }));
+  const recovered = await startConnectorLoginAtLogon({ root, registration, launch: async () => { launches++; } });
+  assert.equal(recovered.autoStart, false); assert.equal(recovered.autoStartSelected, true); assert.equal(launches, 0);
+});
+
+test('pairing HTTP errors never expose response bodies or parser details', async t => {
+  const root = await fixture(t); const configPath = resolve(root, '.local/unpaired-fixture.json');
+  const secret = 'z'.repeat(43);
+  const server = createServer((_req, res) => { res.writeHead(401, { 'content-type': 'text/plain' }); res.end(secret); });
+  await new Promise(resolveServer => server.listen(0, '127.0.0.1', resolveServer));
+  t.after(() => new Promise(resolveClose => server.close(resolveClose)));
+  await assert.rejects(pairConnector({ origin: `http://127.0.0.1:${server.address().port}`, pairingCode: secret, name: 'fixture', configPath, allowInsecureLocal: true }), error => error.message === '设备配对失败；请在网页检查配对码并重新生成。' && !error.message.includes(secret));
+});
+
 test('explicit first pairing registers before Codex and logon watcher finishes bootstrap without a GUI', async t => {
   const root = await fixture(t, { withRuntime: false });
   let registrations = 0, attempts = 0, launches = 0, waits = 0;
@@ -151,7 +181,7 @@ test('explicit first pairing registers before Codex and logon watcher finishes b
     readState:async()=> launches ? {state:'online',updatedAt:new Date(10000).toISOString()} : {},
     sleep:async()=>{if(++waits===5)controller.abort();},
   });
-  assert.equal(attempts,3); assert.equal(launches,1); assert.equal(registrations,2);
+  assert.equal(attempts,3); assert.equal(launches,1); assert.equal(registrations,1);
   assert.deepEqual(JSON.parse(await readFile(resolve(root,'.local/connector-login.json'),'utf8')),{version:1,nodePath:process.execPath});
   assert.deepEqual(JSON.parse(await readFile(resolve(root,'.local/runtime.json'),'utf8')),runtime);
   await rm(resolve(root,'.local/runtime.json'));
