@@ -1,0 +1,151 @@
+'use strict';
+(() => {
+  const $ = id => document.getElementById(id);
+  const native = window.chrome?.webview;
+  const requests = new Map();
+  let requestId = 0, status = null, settingsVisible = false, changingServer = false;
+  let actionBusy = false, nativeBusy = false, mutationPending = 0, statusError = '', actionError = '', warning = '', viewBeforeSettings = 'pairing';
+  let serverTouched = false, nameTouched = false, defaultsApplied = false;
+
+  function command(action, payload = {}) {
+    if (!native) return Promise.reject(new Error('请从 Windows 连接器打开此页面。'));
+    const id = ++requestId;
+    return new Promise((resolve, reject) => {
+      requests.set(id, { resolve, reject });
+      native.postMessage({ id, action, payload });
+    });
+  }
+  function feedback(text, kind = 'error') {
+    $('feedback').textContent = text || '';
+    $('feedback').dataset.kind = kind;
+    $('feedback').hidden = !text;
+  }
+  function description() {
+    if (statusError) return '连接状态读取失败';
+    if (!status) return '正在检查连接';
+    if (status.paused) return '连接已断开';
+    if (warning) return '已配对，启动未完成';
+    if (status.state === 'stopping') return '断开尚未确认';
+    if (status.hubConnected && status.bridgeConnected) return '已连接';
+    if (status.hubState === 'connecting') return '正在连接服务器';
+    return '等待连接';
+  }
+  function render() {
+    const paired = status?.paired === true;
+    const pairing = !paired || changingServer;
+    $('pairingView').hidden = settingsVisible || !pairing;
+    $('connectionView').hidden = settingsVisible || pairing;
+    $('settingsView').hidden = !settingsVisible;
+    $('pairingHeading').textContent = changingServer ? '更换服务器' : '配对这台电脑';
+    $('cancelPairing').hidden = !paired;
+    $('pairButton').disabled = actionBusy;
+    $('pairProgress').hidden = !actionBusy;
+    $('openSetup').disabled = false;
+    $('pasteCode').disabled = actionBusy;
+    $('pasteInformation').disabled = actionBusy;
+    $('connectButton').hidden = !status?.paused;
+    $('disconnectButton').hidden = status?.paused === true;
+    $('retryButton').hidden = status?.paused === true || (!warning && !statusError && status?.hubConnected && status?.bridgeConnected);
+    $('connectButton').disabled = actionBusy;
+    $('retryButton').disabled = actionBusy;
+    $('autoStart').disabled = actionBusy;
+    $('refreshStatus').hidden = !statusError;
+    $('connectionHeading').textContent = description();
+    $('connectionDescription').textContent = statusError ? '' : status?.paused ? '已暂停自动连接' : status?.hubConnected && status?.bridgeConnected ? '手机可通过网页访问这台电脑' : !status?.bridgeConnected ? '等待本机 Codex 就绪' : '等待服务器连接';
+    $('stateMark').dataset.state = statusError ? 'error' : status?.hubConnected && status?.bridgeConnected ? 'online' : status?.state || 'waiting';
+    $('stateIcon').src = '../icons/' + (statusError ? 'circle-alert' : status?.paused ? 'unplug' : status?.hubConnected && status?.bridgeConnected ? 'check' : 'plug') + '.svg';
+    $('computerValue').textContent = status?.deviceName || '';
+    $('serverValue').textContent = status?.origin || '';
+    $('serverStatus').textContent = statusError ? '读取失败' : status?.paused ? '已断开' : status?.hubConnected ? '已连接' : status?.hubState === 'connecting' ? '正在连接' : '等待连接';
+    $('codexStatus').textContent = statusError ? '读取失败' : status?.bridgeConnected ? '已就绪' : '未就绪';
+    $('serverStatus').dataset.online = String(!statusError && !!status?.hubConnected);
+    $('codexStatus').dataset.online = String(!statusError && !!status?.bridgeConnected);
+    if (!actionBusy) $('autoStart').checked = status?.autoStart === true;
+    $('startupSummary').textContent = 'Windows 登录后自动连接 · ' + (status?.autoStart ? '已开启' : '已关闭');
+    $('diagnosticState').textContent = statusError || description();
+    $('footerState').textContent = statusError ? '状态读取失败' : paired ? description() : '尚未配对';
+    feedback(actionError || warning || statusError);
+  }
+  async function act(action, payload = {}) {
+    const mutating = ['pair', 'connect', 'disconnect', 'autostart'].includes(action);
+    if (mutating && actionBusy && action !== 'disconnect') return null;
+    if (mutating) { mutationPending++; actionBusy = true; render(); }
+    actionError = '';
+    try { const result = await command(action, payload); return result; }
+    catch (error) { actionError = error.message; render(); return null; }
+    finally { if (mutating) { mutationPending--; actionBusy = nativeBusy || mutationPending > 0; render(); } }
+  }
+  function normalizedServer() {
+    const value = $('server').value.trim();
+    return value && !/^[a-z][a-z\d+.-]*:\/\//i.test(value) && !/^[a-z][a-z\d+.-]*:/i.test(value.replace(/:\d+\/?$/, '')) ? 'https://' + value : value;
+  }
+  $('server').addEventListener('input', () => { serverTouched = true; });
+  $('deviceName').addEventListener('input', () => { nameTouched = true; });
+  $('pairingForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (actionBusy || !$('pairingForm').reportValidity()) return;
+    const result = await act('pair', { origin: normalizedServer(), name: $('deviceName').value.trim(), code: $('pairingCode').value });
+    if (result?.paired && !result.superseded) {
+      changingServer = false;
+      $('pairingCode').value = '';
+      warning = result.partialSuccess ? result.warning : '';
+      render();
+    }
+  });
+  $('openSetup').addEventListener('click', () => act('open-web', { origin: normalizedServer(), setup: true }));
+  $('pasteCode').addEventListener('click', async () => {
+    const result = await act('paste-code');
+    if (result) { $('pairingCode').value = result.code; $('pairingCode').focus(); }
+  });
+  $('pasteInformation').addEventListener('click', async () => {
+    const result = await act('paste-information');
+    if (result) {
+      $('server').value = result.origin; $('deviceName').value = result.name; $('pairingCode').value = result.code;
+      serverTouched = nameTouched = true; $('pairingCode').focus();
+    }
+  });
+  $('cancelPairing').addEventListener('click', () => { changingServer = false; render(); });
+  $('settingsButton').addEventListener('click', () => {
+    viewBeforeSettings = changingServer || !status?.paired ? 'pairing' : 'connection';
+    settingsVisible = !settingsVisible; render();
+  });
+  $('backSettings').addEventListener('click', () => { settingsVisible = false; changingServer = status?.paired && viewBeforeSettings === 'pairing'; render(); });
+  $('changeServer').addEventListener('click', () => { settingsVisible = false; changingServer = true; actionError = ''; render(); $('server').focus(); });
+  async function connect() {
+    const result = await act('connect');
+    if (result?.recoveryCompleted === true && !result.paused && !result.superseded) { warning = ''; render(); }
+  }
+  $('connectButton').addEventListener('click', connect);
+  $('retryButton').addEventListener('click', connect);
+  $('disconnectButton').addEventListener('click', () => act('disconnect'));
+  $('openHub').addEventListener('click', () => act('open-web', { origin: status?.origin || '', setup: false }));
+  $('openCodex').addEventListener('click', () => act('open-codex'));
+  $('autoStart').addEventListener('change', async () => { const enabled = $('autoStart').checked; await act('autostart', { enabled }); render(); });
+  $('openFolder').addEventListener('click', () => act('open-folder'));
+  $('uninstall').addEventListener('click', () => act('uninstall'));
+  $('refreshStatus').addEventListener('click', () => act('status'));
+  $('copyDiagnostics').addEventListener('click', async () => { const result = await act('diagnostics'); if (result) feedback('诊断信息已复制', 'success'); });
+  native?.addEventListener('message', event => {
+    const data = event.data;
+    if (data.type === 'result') {
+      const request = requests.get(data.id); if (!request) return;
+      requests.delete(data.id); data.ok ? request.resolve(data.result) : request.reject(new Error(data.error));
+    } else if (data.type === 'status') {
+      if (data.status) status = data.status;
+      statusError = data.error || '';
+      if (!defaultsApplied && status) {
+        if (!serverTouched && status.origin) $('server').value = status.origin;
+        if (!nameTouched && status.deviceName) $('deviceName').value = status.deviceName;
+        defaultsApplied = true;
+      }
+      if (data.warning !== undefined) warning = data.warning || '';
+      render();
+    } else if (data.type === 'busy') { nativeBusy = data.value; actionBusy = nativeBusy || mutationPending > 0; $('pairProgress').textContent = data.reason === 'initialize' ? '正在准备连接…' : '正在配对…'; render(); }
+  });
+  command('ready').then(info => {
+    if (!nameTouched && !$('deviceName').value) $('deviceName').value = info.deviceName;
+    $('installDirectory').textContent = info.root;
+    $('webviewVersion').textContent = info.webviewVersion;
+    $('versionLabel').textContent = 'v' + info.version;
+  }).catch(error => { actionError = error.message; render(); });
+})();

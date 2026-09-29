@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Codex 手机桥接</title>
+  <link rel="stylesheet" href="connector.css">
+  <script src="connector.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <img src="../icons/smartphone.svg" alt="" width="26" height="26">
+    <div class="brand"><strong>Codex 手机桥接</strong><span>Mobile Connector</span></div>
+    <button id="settingsButton" class="icon-button" title="设置" aria-label="设置"><img src="../icons/settings.svg" alt=""></button>
+  </header>
+  <main>
+    <div id="feedback" class="feedback" role="status" hidden></div>
+    <section id="pairingView">
+      <div class="section-heading"><h1 id="pairingHeading">配对这台电脑</h1><button id="cancelPairing" class="text-button" hidden><img src="../icons/arrow-left.svg" alt="">返回连接</button></div>
+      <form id="pairingForm" autocomplete="off">
+        <div class="setup-step">
+          <div class="step-heading"><span class="step-number">1</span><h2>服务器</h2></div>
+          <label for="server">HTTPS 服务器地址</label>
+          <div class="server-row"><input id="server" name="server" type="text" inputmode="url" placeholder="https://bridge.example.com" maxlength="2048" required spellcheck="false"><button id="openSetup" type="button" class="secondary"><img src="../icons/external-link.svg" alt="">打开网页登录</button></div>
+        </div>
+        <div class="setup-step">
+          <div class="step-heading"><span class="step-number">2</span><h2>这台电脑</h2></div>
+          <label for="deviceName">设备名称</label>
+          <input id="deviceName" name="deviceName" maxlength="80" required>
+          <label for="pairingCode">网页生成的配对码</label>
+          <div class="code-row"><input id="pairingCode" name="pairingCode" type="password" maxlength="43" minlength="43" pattern="[A-Za-z0-9_-]{43}" required spellcheck="false" autocomplete="off"><button id="pasteCode" type="button" class="icon-button bordered" title="粘贴配对码" aria-label="粘贴配对码"><img src="../icons/clipboard-paste.svg" alt=""></button></div>
+          <button id="pasteInformation" type="button" class="text-button"><img src="../icons/clipboard-paste.svg" alt="">粘贴完整配对信息</button>
+        </div>
+        <div class="pair-actions"><button id="pairButton" type="submit"><img src="../icons/link.svg" alt="">配对并连接</button><span id="pairProgress" class="muted" hidden>正在配对…</span></div>
+      </form>
+    </section>
+    <section id="connectionView" hidden>
+      <div class="connection-heading"><div class="state-mark" id="stateMark"><img id="stateIcon" src="../icons/plug.svg" alt=""></div><div><h1 id="connectionHeading">正在检查连接</h1><p id="connectionDescription" class="muted"></p></div></div>
+      <dl class="connection-details"><div><dt>这台电脑</dt><dd id="computerValue"></dd></div><div><dt>服务器</dt><dd id="serverValue"></dd></div></dl>
+      <div class="service-status"><div><img src="../icons/link.svg" alt=""><span>服务器连接</span><strong id="serverStatus">正在检查</strong></div><div><img src="../icons/monitor.svg" alt=""><span>本机 Codex</span><strong id="codexStatus">正在检查</strong></div></div>
+      <div class="actions"><button id="connectButton"><img src="../icons/plug.svg" alt="">连接</button><button id="disconnectButton" class="secondary"><img src="../icons/unplug.svg" alt="">断开连接</button><button id="retryButton" class="secondary"><img src="../icons/plug.svg" alt="">重试连接</button></div>
+      <div class="actions secondary-actions"><button id="openHub" class="secondary"><img src="../icons/external-link.svg" alt="">打开网页</button><button id="openCodex" class="secondary"><img src="../icons/external-link.svg" alt="">打开 Codex</button></div>
+      <p id="startupSummary" class="muted compact"></p>
+    </section>
+    <section id="settingsView" hidden>
+      <div class="section-heading"><h1>设置</h1><button id="backSettings" class="icon-button" title="返回" aria-label="返回"><img src="../icons/arrow-left.svg" alt=""></button></div>
+      <div class="settings-section"><h2>连接</h2><label class="toggle-row" for="autoStart"><span>Windows 登录后自动连接</span><input id="autoStart" type="checkbox" role="switch"></label><button id="changeServer" class="text-button"><img src="../icons/link.svg" alt="">更换服务器</button></div>
+      <div class="settings-section"><div class="section-heading"><h2>诊断</h2><button id="copyDiagnostics" class="text-button"><img src="../icons/clipboard-paste.svg" alt="">复制</button></div><dl id="diagnostics" class="diagnostics"><div><dt>安装目录</dt><dd id="installDirectory"></dd></div><div><dt>WebView2</dt><dd id="webviewVersion"></dd></div><div><dt>连接状态</dt><dd id="diagnosticState"></dd></div></dl></div>
+      <div class="settings-section settings-actions"><button id="openFolder" class="secondary"><img src="../icons/external-link.svg" alt="">打开安装目录</button><button id="uninstall" class="danger">卸载</button></div>
+    </section>
+    <button id="refreshStatus" class="text-button refresh-status" hidden><img src="../icons/plug.svg" alt="">重试读取状态</button>
+  </main>
+  <footer><span id="footerState">正在检查连接</span><span id="versionLabel">Windows</span></footer>
+</body>
+</html>

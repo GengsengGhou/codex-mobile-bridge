@@ -9,27 +9,15 @@ import { pairConnector, parsePairingInformation } from '../scripts/setup-connect
 import { createConnectorControl } from '../scripts/connector-control.mjs';
 import { registerDeferredConnectorLogin } from '../scripts/connector-login.mjs';
 
-test('native window viewing preserves pause and only startup explicitly requests startup connection',async()=>{
-  const source=await readFile(new URL('../deploy/windows/Connector.cs',import.meta.url),'utf8');
-  const shown=source.slice(source.indexOf('Shown += async'),source.indexOf('public void Wake()'));
-  assert.doesNotMatch(shown,/Connect\([^)]*"manual"/);
-  assert.match(shown,/TrayStartup&&initialized&&paired\)\{await Connect\("startup"\)/);
-  assert.doesNotMatch(shown,/TrayStartup\s*&&\s*paused[^\n]*Close\(/);
-  const wake=source.slice(source.indexOf('public void Wake()'),source.indexOf('async Task VerifyLifecycle()'));
-  assert.doesNotMatch(wake,/Connect\(|action="connect"/);
-  assert.equal((source.match(/Clipboard.GetText\(/g)||[]).length,1);
-  assert.match(source,/paste.Click\+=async[\s\S]*?Clipboard.GetText\(/);
-});
-
-test('native pairing validates pasted information before confirmation and keeps legacy code private',async()=>{
-  const source=await readFile(new URL('../deploy/windows/Connector.cs',import.meta.url),'utf8');
-  const pair=source.slice(source.indexOf('async Task Pair()'),source.indexOf('async Task Connect('));
-  assert.ok(pair.indexOf('action="validate-pairing"')<pair.indexOf('MessageBox.Show'));
-  assert.ok(pair.indexOf('MessageBox.Show')<pair.indexOf('await Run(request)'));
-  assert.match(pair,/information=information.Text,replace=paired/);
-  assert.match(source,/code.UseSystemPasswordChar=true/);
-  assert.match(source,/pairingPanel.Enabled=!value&&!stopping/);
-  assert.match(source,/tips.SetToolTip\(settingsButton,"设置"\)/);
+test('native host restricts page resources and host commands while passive reads have their own guard',async()=>{
+  const source=await readFile(new URL('../deploy/windows/WebViewConnector.cs',import.meta.url),'utf8');
+  assert.match(source,/e.Source!=Page/);assert.match(source,/AreHostObjectsAllowed=false/);
+  assert.match(source,/CoreWebView2HostResourceAccessKind.DenyCors/);
+  const refresh=source.slice(source.indexOf('async Task RefreshStatus()'),source.indexOf('void Fields('));
+  assert.match(refresh,/statusReadInFlight/);assert.match(refresh,/epoch!=actionEpoch/);
+  assert.doesNotMatch(refresh,/SetBusy\(|Enabled=|\.Text=/);
+  const wake=source.slice(source.indexOf('public void Wake()'),source.indexOf('public bool RecordUninstallIntent'));
+  assert.doesNotMatch(wake,/Mutate\(|action="connect"/);
   assert.ok((await readFile(new URL('../deploy/windows/icons/LICENSE',import.meta.url),'utf8')).includes('Permission to use'));
 });
 const control = {
@@ -45,6 +33,15 @@ test('unpaired GUI status succeeds without probing a bridge or launching a contr
 });
 test('GUI status preserves a control read failure instead of reporting checking or online',async()=>{
   await assert.rejects(guiCommand({action:'status'},{control:{read:async()=>{throw Error('intent fixture unreadable');}},read:async()=>null}),/intent fixture unreadable/);
+});
+test('GUI status reads fresh hub evidence after the Codex probe and keeps hub and local availability independent',async()=>{
+  const calls=[];
+  const status=await guiCommand({action:'status'},{read:async()=>({hubOrigin:'https://example.com',bridgePort:4317}),probe:async()=>{calls.push('probe');return null;},readState:async()=>{calls.push('state');return {state:'online',updatedAt:new Date().toISOString()};}});
+  assert.deepEqual(calls,['probe','state']);assert.equal(status.bridgeConnected,false);assert.equal(status.hubConnected,true);assert.equal(status.hubState,'online');assert.equal(status.state,'waiting');
+  for(const updatedAt of ['2000-01-01T00:00:00Z','2099-01-01T00:00:00Z','invalid']) {
+    const stale=await guiCommand({action:'status'},{read:async()=>({bridgePort:4317}),probe:async()=>({connected:true}),readState:async()=>({state:'online',updatedAt})});
+    assert.equal(stale.hubConnected,false);assert.equal(stale.hubState,'waiting');assert.equal(stale.bridgeConnected,true);
+  }
 });
 
 test('pairing information validates strictly and validation result never exposes the code',async()=>{

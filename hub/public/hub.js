@@ -2,6 +2,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function initializeHub({ document, window, fetchImpl = fetch }) {
   const $ = id => document.getElementById(id);
   let user = null, registering = false, busy = false, generation = 0, pairingTicket = null, pairingExpiryTimer = null, pendingPairingName = '';
+  const setupConnector = new URL(window.location.href).searchParams.get("setup") === "connector";
+  let setupFocusPending = setupConnector;
   const notify = message => { $("feedback").textContent = message; };
   function clearPairingTicket() { clearTimeout(pairingExpiryTimer); pairingExpiryTimer = null; pairingTicket = null; pendingPairingName = ''; $("pairCode").value = ""; $("pairResult").hidden = true; $("pairCode").type = "password"; $("showPair").textContent = "显示配对码"; }
   function clearSecrets() { clearPairingTicket(); $("password").value = $("inviteLink").value = ""; $("inviteResult").hidden = true; }
@@ -35,7 +37,7 @@ export function initializeHub({ document, window, fetchImpl = fetch }) {
   }
   async function refresh() {
     const token = ++generation;
-    try { const result = await request("/api/hub/me"); if (token !== generation) return; signedIn(result); renderDevices(result.devices || []); }
+    try { const result = await request("/api/hub/me"); if (token !== generation) return; signedIn(result); renderDevices(result.devices || []); if (setupFocusPending) { setupFocusPending = false; $("pairing").scrollIntoView?.({ block: "start" }); $("deviceName").focus(); } }
     catch (error) { if (token === generation) { signedOut(); notify(error.status === 401 ? "" : "无法连接服务，请稍后刷新。"); } }
   }
   function setBusy(value) { busy = value; for (const button of document.querySelectorAll("button")) button.disabled = value; }
@@ -70,12 +72,23 @@ export function initializeHub({ document, window, fetchImpl = fetch }) {
   $("showPair").addEventListener("click", () => { const hidden = $("pairCode").type === "password"; $("pairCode").type = hidden ? "text" : "password"; $("showPair").textContent = hidden ? "隐藏配对码" : "显示配对码"; });
   async function copy(id) { try { await window.navigator.clipboard.writeText($(id).value); notify("已复制"); } catch { notify("无法复制，请选择文本复制。"); } }
   async function copyPairingInformation() {
-    if (!pairingTicket || Date.parse(pairingTicket.expiresAt) <= Date.now()) { clearPairingTicket(); notify("配对信息已过期，请重新生成。"); return; }
+    if (!activePairingTicket()) return;
     try { await window.navigator.clipboard.writeText(JSON.stringify(pairingTicket, null, 2)); notify("配对信息已复制"); }
     catch { notify("无法复制，请重新生成配对信息后重试。"); }
   }
-  $("copyPair").addEventListener("click", copyPairingInformation); $("copyInvite").addEventListener("click", () => copy("inviteLink"));
-  const invite = new URL(window.location.href).searchParams.get("invite"); authMode(!!invite); if (invite) $("invite").value = invite;
+  function activePairingTicket() {
+    if (pairingTicket && Date.parse(pairingTicket.expiresAt) > Date.now()) return pairingTicket;
+    clearPairingTicket(); notify("配对信息已过期，请重新生成。"); return null;
+  }
+  async function copyPairingCode() {
+    const ticket = activePairingTicket(); if (!ticket) return;
+    try { await window.navigator.clipboard.writeText(ticket.code); notify("配对码已复制"); }
+    catch { notify("无法复制，请显示配对码后选择文本复制。"); }
+  }
+  $("copyPairCode").addEventListener("click", copyPairingCode); $("copyPair").addEventListener("click", copyPairingInformation); $("copyInvite").addEventListener("click", () => copy("inviteLink"));
+  const params = new URL(window.location.href).searchParams, invite = params.get("invite");
+  authMode(!!invite); if (invite) $("invite").value = invite;
+  if (setupConnector) { $("setupContext").hidden = false; $("pairingTitle").textContent = "绑定这台电脑"; }
   const ready = refresh();
   return { ready, refresh };
 }

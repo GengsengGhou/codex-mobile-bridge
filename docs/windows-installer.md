@@ -3,7 +3,13 @@
 中文下载与首次配对步骤见 [简易配置教程](quick-start.md#配对-windows-电脑)。安装包和 SHA-256 清单见公开的 [发行版本](https://github.com/GengsengGhou/codex-mobile-bridge/releases)，无需 GitHub 令牌或桥接账号即可下载。下面记录安装器细节与构建验证。
 
 Distribute `dist/CodexMobileConnector-Setup.exe` with its published SHA-256 checksum.
-The Windows x64 installer embeds the application, its `ws` dependency, and Node.js.
+The Windows x64 installer embeds the application, its `ws` dependency, Node.js,
+and the managed WebView2 SDK assemblies and x64 native loader. The WebView2 SDK
+is pinned by version and SHA-256 in `deploy/windows/webview2-sdk.json`; its license
+is included. Microsoft Edge WebView2 Runtime is supplied by Windows/Edge. When
+it is absent, a native recovery window opens Microsoft's official installer
+download. Setup and cold uninstall work without WebView2 or SDK assemblies.
+The desktop shell uses .NET Framework 4.8 and per-monitor DPI V2.
 The release build downloads Node.js 22 from the official distribution and verifies
 its published SHA-256 before embedding it. No manual Node installation is needed.
 The EXE is unsigned; Windows may show publisher reputation information.
@@ -14,10 +20,13 @@ previously chose to keep it off. Existing saved preferences or verifiable owned 
 entries preserve the automatic choice; an old v0.1.0 uninstall removes startup
 entries, so check and select login recovery again after reinstalling.
 It does not request administrator rights.
-The companion is localized in Chinese. Generate a one-time JSON pairing ticket on the
-Hub device page, copy it, and paste it into the companion. The ticket supplies the
-HTTPS Hub origin, pairing code, device name, and expiry; the companion validates these
-fields before asking you to confirm. No personal server domain is prefilled. Pairing can finish before
+The companion is localized in Chinese. Enter the server address (a plain hostname
+is normalized to HTTPS) and open login in the system browser. Log in or register
+with an invitation there, generate a one-time code, and enter it with this
+computer's name in the desktop window. Server, name and masked 43-character code
+fields are always visible during onboarding. A validated full JSON ticket can
+also be imported from the clipboard into those fields; importing never pairs
+automatically. No personal server domain is prefilled. Pairing can finish before
 Codex is open. Pairing records one-time bootstrap authorization and the selected
 login preference in private local state before attempting OS registration. A failed
 registration can be retried with “连接” without using the ticket again. Successful
@@ -28,17 +37,31 @@ The watcher waits for Codex and an existing ordinary local conversation, then
 saves the verified bridge identity, clears pending bootstrap authorization, and
 continues bridge/connector recovery. It never creates or sends a conversation
 to bootstrap the connection. The pairing ticket stays in process memory and is never
-logged; legacy manual pairing codes are masked and passed through stdin;
+logged; pairing codes are masked and passed through stdin;
 device tokens are saved with a current-user-only file ACL.
 
-The companion includes connection status, retry, Open Codex, server settings,
+The companion includes separate server and verified local Codex availability,
+connect/disconnect/retry, Open Web, Open Codex, settings and diagnostics,
 explicit replacement pairing, and uninstall. An expired or rejected replacement
 code preserves the previous credentials and connection. A verified replacement
 stops only this installation's old connector. Revoke the old device in its original
 Hub afterward. Uninstall removes owned app/startup entries and preserves `.local`
 pairing and runtime data. Reinstall can reuse that preserved data. Running the
 installer over an existing app refuses before overwriting files; use the existing
-companion or uninstall while keeping data before reinstalling.
+companion or uninstall while keeping data before reinstalling. One owner per
+installation/user handles repeated app launches; repeated Setup launches for
+the same destination also wake one installer. Independent installations retain
+their own state and identity.
+
+The installed interface is local HTML/CSS/JavaScript hosted by WebView2. Native
+C# owns setup, tray, lifecycle and a validated command bridge. Only bundled local
+assets can load in the embedded browser. External navigation, new windows,
+downloads, permissions and host objects are blocked; password autosave and form
+autofill are disabled. There is no desktop control
+HTTP server. Passive polling uses its own read guard and action epoch, never
+disables inputs or replaces drafts, and defers during mutations/confirmation.
+Initialization blocks mutations until intent is read while preserving editable
+inputs and browser handoff. Uninstall is gated centrally during pending mutations.
 
 ## 托盘、退出与登录启动
 
@@ -58,10 +81,11 @@ runtime download.
 
 `node --test test/connector-gui.test.mjs` checks deferred bootstrap, registration
 ordering, failed bootstrap, explicit replacement, preservation after rejection,
-and token-free status with isolated fixture Hub responses. Run
+and token-free status with isolated fixture Hub responses. Desktop DOM tests also
+cover focus/selection/drafts, optional import, duplicates and partial recovery. Run
 `node deploy/verify-windows-installer.mjs` after building to execute the actual EXE
-in a temporary installation, run its bundled Node, render its actual WinForms
-controls, check safe rerun refusal, and uninstall while preserving fixture data.
+in a temporary installation, run its bundled Node, capture its actual WebView2
+surface, check safe rerun refusal, and uninstall while preserving fixture data.
 `node deploy/verify-pending-watcher.mjs` additionally launches the actual WMI
 watcher in an isolated app root with an empty Codex home, checks that it survives
 without a GUI, prevents duplicate watchers, and is stopped by owned uninstall.
@@ -78,12 +102,25 @@ X-hide, tray state, second-instance behavior, and explicit Quit. It exercises th
 actual form methods; native mouse clicks on the Windows tray and real login-entry
 migration are not claimed. Isolated QA does not modify live pairing or startup entries.
 
-QA overrides do not add login entries or Start menu shortcuts. Evidence is saved
-under `docs/verification`, which is excluded from distributable bundles.
+`node deploy/windows/verify-webview-ui.mjs <setup.exe> <output-directory>` drives
+the installed WebView2 surface with isolated CDP input. It checks slow polling,
+initialization guards, browser handoff, Enter/duplicates, failures/retries,
+replacement drafts, assets, responsive bounds and native DPI/browser pixel ratio.
+It records browser-engine input separately from physical Windows keyboard input.
+Simulated device scales do not change or prove OS monitor DPI transitions.
+`node deploy/windows/verify-bootstrap.mjs <setup.exe> <output-directory>` checks
+actual setup/app single-instance wake, missing-runtime/SDK recovery, and cold
+uninstall cancellation/removal while preserving data. Its injected fixture
+confirmation does not claim native clicks. `DrawToBitmap` is used only for native
+recovery dialogs; the main interface uses WebView2 captures. The filled tray icon
+can be regenerated with `deploy/windows/generate-icons.mjs --brand-only` and a
+maintainer-only resvg installation. Its ICO includes 16/20/24/32/48/64/256px images.
 
-Current visual verification uses the running app's `DrawToBitmap` rendering.
-Native GUI input and interactive desktop screenshot acceptance were unavailable
-because the Windows desktop was locked; no GUI click acceptance is claimed.
+QA overrides do not add login entries or Start menu shortcuts. Isolated debug and
+capture runs suppress tray icons, except explicit lifecycle/tray acceptance.
+Evidence is saved under `work` or `docs/verification`; neither enters release
+bundles. Physical keyboard, native tray clicks and real monitor transitions require
+an unlocked desktop and are recorded separately from deterministic fixtures.
 
 ## 备用 ZIP 终端安装
 

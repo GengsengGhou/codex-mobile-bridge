@@ -1,4 +1,4 @@
-param([string]$OutputDirectory, [string]$RuntimeExecutable)
+param([string]$OutputDirectory, [string]$RuntimeExecutable, [string]$WebViewPackage)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 function File-Sha256([string]$Path) {
@@ -39,6 +39,22 @@ try {
         Copy-Item -LiteralPath (Join-Path $stage ('node/'+$match.Groups[2].Value.Replace('.zip','')+'/node.exe')) -Destination (Join-Path $app 'runtime/node.exe')
         Copy-Item -LiteralPath (Join-Path $stage ('node/'+$match.Groups[2].Value.Replace('.zip','')+'/LICENSE')) -Destination (Join-Path $app 'runtime/LICENSE')
     }
+    $sdk = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'windows/webview2-sdk.json') | ConvertFrom-Json
+    $sdkArchive = $WebViewPackage
+    if (-not $sdkArchive) {
+        $sdkArchive = Join-Path $env:TEMP ('codex-webview2-' + $sdk.version + '.nupkg')
+        if (-not (Test-Path -LiteralPath $sdkArchive)) { Invoke-WebRequest -UseBasicParsing -Uri $sdk.url -OutFile $sdkArchive }
+    }
+    if ((File-Sha256 $sdkArchive) -ne $sdk.sha256) { throw 'Pinned WebView2 SDK checksum mismatch.' }
+    $sdkRoot = Join-Path $stage 'webview2-sdk'
+    [IO.Compression.ZipFile]::ExtractToDirectory($sdkArchive,$sdkRoot)
+    $core = Join-Path $sdkRoot ('lib/' + $sdk.target + '/Microsoft.Web.WebView2.Core.dll')
+    $forms = Join-Path $sdkRoot ('lib/' + $sdk.target + '/Microsoft.Web.WebView2.WinForms.dll')
+    Copy-Item -LiteralPath $core,$forms -Destination $app
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'windows/Connector.exe.config') -Destination (Join-Path $app 'CodexMobileConnector.exe.config')
+    Copy-Item -LiteralPath (Join-Path $sdkRoot 'runtimes/win-x64/native/WebView2Loader.dll') -Destination $app
+    Copy-Item -LiteralPath (Join-Path $sdkRoot 'LICENSE.txt') -Destination (Join-Path $app 'runtime/WebView2-LICENSE.txt')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'windows/webview2-sdk.json') -Destination (Join-Path $app 'runtime/webview2-sdk.json')
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $payload = Join-Path $stage 'payload.zip'
     [IO.Compression.ZipFile]::CreateFromDirectory($app,$payload)
@@ -50,7 +66,7 @@ try {
     }
     $appIcon = Join-Path $PSScriptRoot 'windows/icons/connector.ico'
     $resources += "/resource:$appIcon,icons.connector.ico"
-    & $compiler /nologo /codepage:65001 /target:winexe /platform:x64 /optimize+ /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll /reference:Microsoft.CSharp.dll "/win32manifest:$(Join-Path $PSScriptRoot 'windows/Connector.manifest')" "/win32icon:$appIcon" $resources "/out:$output" (Join-Path $PSScriptRoot 'windows/Connector.cs')
+    & $compiler /nologo /codepage:65001 /target:winexe /platform:x64 /optimize+ /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll /reference:Microsoft.CSharp.dll "/reference:$core" "/reference:$forms" "/win32manifest:$(Join-Path $PSScriptRoot 'windows/Connector.manifest')" "/win32icon:$appIcon" $resources "/out:$output" (Join-Path $PSScriptRoot 'windows/Connector.cs') (Join-Path $PSScriptRoot 'windows/WebViewConnector.cs')
     if ($LASTEXITCODE -ne 0) { throw 'Windows installer compilation failed.' }
     $sha = File-Sha256 $output
     Set-Content -LiteralPath ($output+'.sha256') -Value ($sha+'  '+[IO.Path]::GetFileName($output)) -Encoding ascii

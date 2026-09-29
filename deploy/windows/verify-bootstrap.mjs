@@ -1,0 +1,48 @@
+import { spawn,spawnSync } from 'node:child_process';
+import { mkdtemp,mkdir,readFile,writeFile,copyFile,rm,access } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join,resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import assert from 'node:assert/strict';
+const source=fileURLToPath(new URL('../..',import.meta.url));
+const setup=resolve(process.argv[2]||join(source,'dist/CodexMobileConnector-Setup.exe'));
+const output=resolve(process.argv[3]||join(source,'work/webview-ui'));
+const fixture=await mkdtemp(join(tmpdir(),'codex-bootstrap-'));
+const app=join(fixture,'app');await mkdir(output,{recursive:true});
+const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function wait(check,message,timeout=25000){const end=Date.now()+timeout;while(Date.now()<end){try{if(await check())return;}catch{}await sleep(100);}throw Error(message);}
+const read=async path=>JSON.parse(await readFile(path,'utf8'));
+let owner,window;
+const evidence={physicalWindowsInputTested:false,startupRegistrationsModified:false};
+try {
+  const ownerFile=join(fixture,'setup-owner.json'),secondFile=join(fixture,'setup-second.json');
+  owner=spawn(setup,['--install-root',app,'--qa-instance-evidence',ownerFile,'--qa-instance-hide'],{windowsHide:true,stdio:'ignore'});
+  await wait(()=>read(ownerFile),'Installer owner did not open');
+  const second=spawnSync(setup,['--install-root',app,'--qa-instance-evidence',secondFile],{windowsHide:true,timeout:10000});assert.equal(second.status,0);assert.equal((await read(secondFile)).owner,false);
+  await wait(async()=>{const value=await read(ownerFile);return value.wakeCount===1&&value.visible;},'Second installer did not wake its single owner');
+  owner.kill();await new Promise(resolve=>owner.once('exit',resolve));owner=null;
+  evidence.setupSecondInstance={singleOwner:true,secondExits:true,existingOwnerShown:true};
+  const installed=spawnSync(setup,['--install-root',app,'--install'],{windowsHide:true,timeout:120000});assert.equal(installed.status,0);
+  await copyFile(join(source,'deploy/windows/native-qa-status.mjs'),join(app,'scripts/connector-gui.mjs'));await writeFile(join(app,'scripts/state.txt'),'paused\n');
+  const exe=join(app,'CodexMobileConnector.exe'),mainFile=join(fixture,'app-owner.json'),otherFile=join(fixture,'app-second.json');
+  window=spawn(exe,['--install-root',app,'--qa-instance-evidence',mainFile,'--qa-instance-hide','--qa-debug-port','9339'],{windowsHide:true,stdio:'ignore'});
+  await wait(()=>read(mainFile),'Installed owner did not open');
+  const duplicate=spawnSync(exe,['--install-root',app,'--qa-instance-evidence',otherFile],{windowsHide:true,timeout:10000});assert.equal(duplicate.status,0);assert.equal((await read(otherFile)).owner,false);
+  await wait(async()=>{const value=await read(mainFile);return value.wakeCount===1&&value.visible;},'Manual second launch did not show single installed owner');
+  const startup=spawnSync(exe,['--install-root',app,'--tray','--qa-instance-evidence',otherFile],{windowsHide:true,timeout:10000});assert.equal(startup.status,0);assert.equal((await read(otherFile)).wokeExisting,false);assert.equal((await read(mainFile)).wakeCount,1);
+  window.kill();await new Promise(resolve=>window.once('exit',resolve));window=null;await sleep(800);
+  evidence.installedSecondInstance={singleOwner:true,manualSecondExits:true,manualSecondShowsOwner:true,startupSecondDoesNotWakeOwner:true};
+  const runtimeEvidence=join(output,'missing-runtime.json');
+  window=spawn(exe,['--install-root',app,'--qa-no-runtime','--qa-dependency-evidence',runtimeEvidence,'--qa-instance-evidence',mainFile],{windowsHide:true,stdio:'ignore'});
+  await wait(()=>read(runtimeEvidence),'Missing-runtime recovery UI did not open');
+  spawnSync(exe,['--install-root',app],{windowsHide:true,timeout:10000});await wait(async()=>{const value=await read(mainFile);return value.wakeCount===1&&value.visible;},'Missing-runtime second launch did not wake recovery owner');
+  window.kill();await new Promise(resolve=>window.once('exit',resolve));window=null;await sleep(800);evidence.missingRuntime={recoveryRendered:true,secondLaunchShowsRecovery:true,screenshot:runtimeEvidence+'.png',runtimeOnMachineUnchanged:true};
+  for(const file of ['Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll'])await rm(join(app,file));
+  const dependencyEvidence=join(output,'missing-sdk.json');window=spawn(exe,['--install-root',app,'--qa-dependency-evidence',dependencyEvidence],{windowsHide:true,stdio:'ignore'});await wait(()=>read(dependencyEvidence),'Missing-SDK recovery bootstrap failed');window.kill();await new Promise(resolve=>window.once('exit',resolve));window=null;await sleep(500);evidence.missingSdk={nativeRecoveryRendered:true,screenshot:dependencyEvidence+'.png'};
+  const marker=join(app,'.local/preserve-fixture.txt');await mkdir(join(app,'.local'),{recursive:true});await writeFile(marker,'preserved');
+  const uninstallEvidence=join(fixture,'uninstall.json');
+  const cancelled=spawnSync(exe,['--install-root',app,'--uninstall','--qa-uninstall-decision','cancel','--qa-uninstall-evidence',uninstallEvidence],{windowsHide:true,timeout:10000});assert.equal(cancelled.status,0);assert.equal((await read(uninstallEvidence)).confirmationReached,true);assert.equal((await read(uninstallEvidence)).confirmed,false);await access(exe);
+  const accepted=spawnSync(exe,['--install-root',app,'--uninstall','--qa-uninstall-decision','confirm','--qa-uninstall-evidence',uninstallEvidence],{windowsHide:true,timeout:10000});assert.equal(accepted.status,0);assert.equal((await read(uninstallEvidence)).confirmed,true);
+  await wait(async()=>{try{await access(exe);return false;}catch{return true;}},'Cold uninstall did not remove app without WebView dependencies');assert.equal(await readFile(marker,'utf8'),'preserved');evidence.coldUninstall={cancelReachedConfirmation:true,cancelPreservesApp:true,confirmRemovesApp:true,preservesLocalData:true,requiresWebView2:false,nativeConfirmationClickTested:false};
+  evidence.passed=true;await writeFile(join(output,'bootstrap-evidence.json'),JSON.stringify(evidence,null,2)+'\n');console.log(JSON.stringify(evidence,null,2));
+} finally {owner?.kill();window?.kill();await sleep(500);await rm(fixture,{recursive:true,force:true,maxRetries:5,retryDelay:300});}

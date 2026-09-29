@@ -14,12 +14,17 @@ export async function guiCommand(command, deps = {}) {
   const configPath = deps.configPath || connectorConfigPath;
   const read = deps.read || (async () => { try { return JSON.parse(await readFile(configPath, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; return null; } });
   if (command.action === 'status') {
-    const intent = await control.read();
     const config = await read();
-    let state = {};
-    try { state = JSON.parse(await readFile(resolve(appRoot, '.local/hub-connector-state.json'), 'utf8')); } catch {}
     const bridgeConnected = !!config && !!await (deps.probe || probeLocalBridge)(config.bridgePort);
-    return { paired: !!config, origin: config?.hubOrigin, deviceId: config?.deviceId, deviceName: config?.deviceName || process.env.COMPUTERNAME || hostname(), bridgeConnected, paused: intent.paused, pauseScope: intent.pauseScope, persistentPaused: intent.pauseScope === 'persistent', autoStart: intent.autoStart === true, lastError: intent.lastError, state: intent.paused ? (intent.disconnectVerified ? 'paused' : 'stopping') : Date.now() - Date.parse(state.updatedAt) < 6000 && bridgeConnected ? state.state : 'waiting' };
+    // Read heartbeat and intent after the potentially slow local Codex probe.
+    const intent = await control.read();
+    let state = {};
+    try { state = deps.readState ? await deps.readState() : JSON.parse(await readFile(resolve(appRoot, '.local/hub-connector-state.json'), 'utf8')); } catch {}
+    const age = Date.now() - Date.parse(state.updatedAt);
+    const fresh = !!config && Number.isFinite(age) && age >= 0 && age < 6000;
+    const hubState = intent.paused ? 'paused' : fresh && ['online','connected','connecting','offline','stopped'].includes(state.state) ? state.state : 'waiting';
+    const hubConnected = !intent.paused && fresh && (state.state === 'online' || state.state === 'connected');
+    return { paired: !!config, origin: config?.hubOrigin, deviceId: config?.deviceId, deviceName: config?.deviceName || process.env.COMPUTERNAME || hostname(), bridgeConnected, hubConnected, hubState, paused: intent.paused, pauseScope: intent.pauseScope, persistentPaused: intent.pauseScope === 'persistent', autoStart: intent.autoStart === true, lastError: intent.lastError, state: intent.paused ? (intent.disconnectVerified ? 'paused' : 'stopping') : fresh && bridgeConnected ? state.state : 'waiting' };
   }
   if (command.action === 'initialize') return control.initialize();
   if (command.action === 'validate-pairing') {
