@@ -47,8 +47,17 @@ code preserves the previous credentials and connection. A verified replacement
 stops only this installation's old connector. Revoke the old device in its original
 Hub afterward. Uninstall removes owned app/startup entries and preserves `.local`
 pairing and runtime data. Reinstall can reuse that preserved data. Running the
-installer over an existing app refuses before overwriting files; use the existing
-companion or uninstall while keeping data before reinstalling. One owner per
+newer installer over a verified older installation shows Upgrade and replaces the
+application in place. Setup checks `installed.json` root/schema and the installed
+EXE version before stopping only this installation's GUI, watcher, connector and
+bridge processes. It keeps `.local`, automatic-login preference and explicit
+disconnect intent. A manually started connection resumes even when automatic login
+is off. A failed upgrade restores the previous application files and attempts to
+resume the previous connection. An interrupted upgrade keeps a transaction journal
+and backup beside the installation; rerunning Setup restores that transaction first.
+If restoration itself fails, Setup reports the retained backup path for recovery.
+Equal or older Setup versions and directories whose
+ownership cannot be verified are refused. One owner per
 installation/user handles repeated app launches; repeated Setup launches for
 the same destination also wake one installer. Independent installations retain
 their own state and identity.
@@ -85,7 +94,13 @@ and token-free status with isolated fixture Hub responses. Desktop DOM tests als
 cover focus/selection/drafts, optional import, duplicates and partial recovery. Run
 `node deploy/verify-windows-installer.mjs` after building to execute the actual EXE
 in a temporary installation, run its bundled Node, capture its actual WebView2
-surface, check safe rerun refusal, and uninstall while preserving fixture data.
+surface, check same-version rerun refusal, and uninstall while preserving fixture data.
+`node deploy/verify-windows-upgrade.mjs <new-setup.exe> <old-setup.exe> [another-old-setup.exe]`
+uses isolated roots to check real older package upgrades, preserved data, persistent
+disconnect, partial-copy rollback, interrupted transaction recovery, linked `.local`
+rejection and an active manually connected v0.1.6 watcher. The TLS fixture uses a
+private test CA: watcher and connector process restart is checked automatically;
+WSS reconnection is checked with that CA injected into a direct connector process.
 `node deploy/verify-pending-watcher.mjs` additionally launches the actual WMI
 watcher in an isolated app root with an empty Codex home, checks that it survives
 without a GUI, prevents duplicate watchers, and is stopped by owned uninstall.

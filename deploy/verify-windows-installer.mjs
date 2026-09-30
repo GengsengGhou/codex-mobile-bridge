@@ -33,13 +33,13 @@ let captured=false;
 for(let n=0;n<30;n++){try{await access(screenshot);captured=true;break;}catch{} await new Promise(r=>setTimeout(r,500));}
 assert.equal(captured,true,'Actual WebView2 surface did not render.'); capture.kill();
 const before=await digest(exe);
-const rerun=spawnSync(setup,['--install-root',fixture,'--install'],{windowsHide:false,timeout:3000});
-assert.equal(rerun.status,1); assert.match(await readFile(fixture+'.install-error.txt','utf8'),/已存在安装/); assert.equal(await digest(exe),before);
+const rerun=spawnSync(setup,['--install-root',fixture,'--install'],{windowsHide:false,timeout:120000});
+assert.equal(rerun.status,1); assert.match(await readFile(fixture+'.install-error.txt','utf8'),/not older than/); assert.equal(await digest(exe),before);
 assert.equal(await readFile(join(fixture,'.local/preserved-fixture.txt'),'utf8'),'fixture-data-survives-install-and-uninstall');
 const uninstall=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',join(fixture,'deploy/uninstall-connector.ps1'),'-Root',fixture],{windowsHide:true,encoding:'utf8',timeout:30000});
 assert.equal(uninstall.status,0,uninstall.stderr);
 await assert.rejects(access(exe));
 assert.equal(await readFile(join(fixture,'.local/preserved-fixture.txt'),'utf8'),'fixture-data-survives-install-and-uninstall');
-const evidence={fixture,runtime:runtime.stdout.trim(),installerSha256:await digest(setup),unattendedInstall:'passed (setup launched without external managed/native WebView2 dependencies)',bundledRuntime:'passed',bundledWebView2Sdk:'passed (managed assemblies, x64 loader and license)',noGlobalNodeNeeded:'passed',validatedHubLoginAddress:'passed (HTTPS origin only; path/query/userinfo/insecure schemes rejected)',rerunPreservesExistingFiles:'passed',uninstallPreservesLocalData:'passed',startupRegistrations:'not created for isolated QA root',renderedWebView2:screenshot,nativeKeyboardAcceptance:'separate verify-webview-ui / interactive desktop acceptance'};
+const evidence={fixture,runtime:runtime.stdout.trim(),installerSha256:await digest(setup),unattendedInstall:'passed (setup launched without external managed/native WebView2 dependencies)',bundledRuntime:'passed',bundledWebView2Sdk:'passed (managed assemblies, x64 loader and license)',noGlobalNodeNeeded:'passed',validatedHubLoginAddress:'passed (HTTPS origin only; path/query/userinfo/insecure schemes rejected)',sameVersionRerunRefused:'passed',uninstallPreservesLocalData:'passed',startupRegistrations:'not created for isolated QA root',renderedWebView2:screenshot,nativeKeyboardAcceptance:'separate verify-webview-ui / interactive desktop acceptance'};
 await writeFile(join(evidenceDirectory,'windows-installer-evidence.json'),JSON.stringify(evidence,null,2)+'\n');
 console.log(JSON.stringify(evidence,null,2));

@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -15,9 +17,9 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-[assembly: AssemblyVersion("0.1.7.0")]
-[assembly: AssemblyFileVersion("0.1.7.0")]
-[assembly: AssemblyInformationalVersion("0.1.7")]
+[assembly: AssemblyVersion("0.1.8.0")]
+[assembly: AssemblyFileVersion("0.1.8.0")]
+[assembly: AssemblyInformationalVersion("0.1.8")]
 
 // Keep setup and dependency recovery independent of WebView2 type loading.
 static class ConnectorBootstrap {
@@ -81,7 +83,7 @@ static class ConnectorBootstrap {
             string instanceEvidence=!IsDefaultRoot(root)?Argument(args,"--qa-instance-evidence"):null;
             if(!owner){if(installed&&uninstall)remove.Set();else if(!startup)wake.Set();if(instanceEvidence!=null)File.WriteAllText(instanceEvidence,new JavaScriptSerializer().Serialize(new{owner=false,installed=installed,wokeExisting=!startup&&!uninstall}));return;}
             Form form;
-            if(!installed)form=new InstallerWindow(root,Array.IndexOf(args,"--install")>=0);
+            if(!installed)form=new InstallerWindow(root,Array.IndexOf(args,"--install")>=0,args);
             else if(uninstall)form=new UninstallWindow(root);
             else {
                 try { form=InstalledWindow(root,args); }
@@ -126,37 +128,77 @@ class DependencyWindow : Form {
     }
 }
 class InstallerWindow : Form {
-    readonly string root;readonly bool unattended;readonly Label status=new Label();readonly Button install=new Button();
-    public InstallerWindow(string destination,bool silent) {
-        root=destination;unattended=silent;Text="安装 Codex 手机桥接";Icon=ConnectorBootstrap.BrandIcon();ClientSize=new Size(550,300);MinimumSize=new Size(510,320);StartPosition=FormStartPosition.CenterScreen;BackColor=Color.White;Font=new Font("Microsoft YaHei UI",10);AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.Dpi;
+    readonly string root;readonly bool unattended;readonly string[] arguments;readonly Label status=new Label();readonly Button install=new Button();
+    static bool ExistingInstallation(string path) {
+        try {
+            string markerPath=Path.Combine(path,"installed.json"),executable=Path.Combine(path,"CodexMobileConnector.exe");
+            if(!File.Exists(markerPath)||!File.Exists(executable))return false;
+            var marker=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(markerPath));
+            if(!marker.ContainsKey("root")||!marker.ContainsKey("version")||Convert.ToInt32(marker["version"])!=1||!string.Equals(Path.GetFullPath(Convert.ToString(marker["root"])),path,StringComparison.OrdinalIgnoreCase))return false;
+            if(AssemblyName.GetAssemblyName(executable).Name!="CodexMobileConnector-Setup")return false;
+            var version=new Version(FileVersionInfo.GetVersionInfo(executable).ProductVersion);
+            return version.Major>=0;
+        } catch {return false;}
+    }
+    public InstallerWindow(string destination,bool silent,string[] args) {
+        root=destination;unattended=silent;arguments=args;bool upgrade=ExistingInstallation(root)||File.Exists(root+".upgrade-journal.json");Text=(upgrade?"升级":"安装")+" Codex 手机桥接";Icon=ConnectorBootstrap.BrandIcon();ClientSize=new Size(550,300);MinimumSize=new Size(510,320);StartPosition=FormStartPosition.CenterScreen;BackColor=Color.White;Font=new Font("Microsoft YaHei UI",10);AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.Dpi;
         var body=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,Padding=new Padding(30),AutoScroll=true};Controls.Add(body);
         body.Controls.Add(new Label{Text="Codex 手机桥接",AutoSize=true,Font=new Font(Font.FontFamily,18,FontStyle.Bold),Margin=new Padding(0,0,0,18)});
         body.Controls.Add(new Label{Text="仅为当前 Windows 用户安装",AutoSize=true,ForeColor=Color.DimGray,Margin=new Padding(0,0,0,10)});
         body.Controls.Add(new Label{Text=root,AutoSize=true,MaximumSize=new Size(480,0),ForeColor=Color.DimGray,Margin=new Padding(0,0,0,20)});
         status.AutoSize=true;status.MaximumSize=new Size(480,0);status.Margin=new Padding(0,0,0,16);body.Controls.Add(status);
-        install.Text="安装";install.AutoSize=true;install.Padding=new Padding(20,7,20,7);install.BackColor=Color.FromArgb(20,100,71);install.ForeColor=Color.White;install.FlatStyle=FlatStyle.Flat;install.FlatAppearance.BorderSize=0;body.Controls.Add(install);
+        install.Text=upgrade?"升级":"安装";install.AutoSize=true;install.Padding=new Padding(20,7,20,7);install.BackColor=Color.FromArgb(20,100,71);install.ForeColor=Color.White;install.FlatStyle=FlatStyle.Flat;install.FlatAppearance.BorderSize=0;body.Controls.Add(install);
+        int evidence=Array.IndexOf(args,"--qa-upgrade-evidence");if(evidence>=0&&evidence+1<args.Length&&!ConnectorBootstrap.IsDefaultRoot(root))Shown+=(s,e)=>File.WriteAllText(args[evidence+1],new JavaScriptSerializer().Serialize(new{button=install.Text,title=Text}));
         install.Click+=async(s,e)=>await Install();if(unattended)Shown+=async(s,e)=>await Install();
     }
     public async Task Install() {
-        install.Enabled=false;status.Text="正在安装应用和运行环境…";
+        install.Enabled=false;status.Text=install.Text=="升级"?"正在升级应用…":"正在安装应用和运行环境…";
         try {
             await Task.Run(()=>{
-                if(Directory.Exists(root))foreach(var item in Directory.GetFileSystemEntries(root))if(Path.GetFileName(item)!=".local")throw new Exception("已存在安装，请打开现有程序，或保留数据卸载后重新安装。");
-                Directory.CreateDirectory(root);
+                if(File.Exists(root+".upgrade-journal.json")) {
+                    string recoveryStage=Path.Combine(Path.GetTempPath(),"codex-upgrade-"+Guid.NewGuid().ToString("N"));
+                    try {Directory.CreateDirectory(recoveryStage);ExtractPayload(recoveryStage);File.Copy(Application.ExecutablePath,Path.Combine(recoveryStage,"CodexMobileConnector.exe"));RunUpgradeHelper(recoveryStage,true);}
+                    finally {try{Directory.Delete(recoveryStage,true);}catch{}}
+                    if(File.Exists(Path.Combine(root,"CodexMobileConnector.exe"))&&string.Equals(FileVersionInfo.GetVersionInfo(Path.Combine(root,"CodexMobileConnector.exe")).ProductVersion,ConnectorBootstrap.Version,StringComparison.OrdinalIgnoreCase)) {
+                        if(ConnectorBootstrap.IsDefaultRoot(root)){ConnectorBootstrap.EnsureShortcut(root);Register();}
+                        return;
+                    }
+                }
+                bool upgrade=Directory.Exists(root)&&Directory.GetFileSystemEntries(root).Any(item=>Path.GetFileName(item)!=".local");
+                if(upgrade) {
+                    if(!ExistingInstallation(root))throw new Exception("安装目录归属无法验证；不会覆盖现有文件。");
+                    string stage=Path.Combine(Path.GetTempPath(),"codex-upgrade-"+Guid.NewGuid().ToString("N"));
+                    try {
+                        Directory.CreateDirectory(stage);ExtractPayload(stage);File.Copy(Application.ExecutablePath,Path.Combine(stage,"CodexMobileConnector.exe"));
+                        RunUpgradeHelper(stage,false);
+                    } finally {try{Directory.Delete(stage,true);}catch{}}
+                } else {
+                    Directory.CreateDirectory(root);ExtractPayload(root);File.Copy(Application.ExecutablePath,Path.Combine(root,"CodexMobileConnector.exe"),true);
+                    File.WriteAllText(Path.Combine(root,"installed.json"),new JavaScriptSerializer().Serialize(new{root=root,version=1}));
+                }
+                if(ConnectorBootstrap.IsDefaultRoot(root)){ConnectorBootstrap.EnsureShortcut(root);Register();}
+            });
+            if(!unattended)Process.Start(new ProcessStartInfo(Path.Combine(root,"CodexMobileConnector.exe"),"--install-root \""+root+"\""){UseShellExecute=true});Close();
+        } catch(Exception error) {status.Text=(install.Text=="升级"?"升级":"安装")+"失败："+error.Message;install.Enabled=true;if(unattended){File.WriteAllText(root+".install-error.txt",error.Message);Environment.ExitCode=1;Close();}}
+    }
+    void RunUpgradeHelper(string stage,bool recover) {
+        string flags=recover?" -Recover":(Array.IndexOf(arguments,"--qa-upgrade-fail")>=0&&!ConnectorBootstrap.IsDefaultRoot(root)?" -QaFailAfterCopy":"")+(Array.IndexOf(arguments,"--qa-upgrade-abort")>=0&&!ConnectorBootstrap.IsDefaultRoot(root)?" -QaAbortAfterMove":"")+(Array.IndexOf(arguments,"--qa-upgrade-abort-committed")>=0&&!ConnectorBootstrap.IsDefaultRoot(root)?" -QaAbortCommitted":"");
+        var info=new ProcessStartInfo("powershell.exe","-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \""+Path.Combine(stage,"deploy","upgrade-connector.ps1")+"\" -Root \""+root+"\" -Stage \""+stage+"\" -Version \""+ConnectorBootstrap.Version+"\""+flags){UseShellExecute=false,CreateNoWindow=true,RedirectStandardError=true,RedirectStandardOutput=true};
+        using(var process=Process.Start(info)){
+            var output=process.StandardOutput.ReadToEndAsync();var error=process.StandardError.ReadToEndAsync();
+            if(!process.WaitForExit(120000)){process.Kill();process.WaitForExit();throw new Exception("升级超时；再次运行安装包将恢复上次升级状态。");}
+            Task.WaitAll(output,error);if(process.ExitCode!=0)throw new Exception((error.Result+" "+output.Result).Trim());
+        }
+    }
+    static void ExtractPayload(string destination) {
                 using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("payload.zip")) {
                     if(stream==null)throw new Exception("安装包内容缺失。");
                     using(var archive=new ZipArchive(stream,ZipArchiveMode.Read))foreach(var item in archive.Entries) {
-                        var target=Path.GetFullPath(Path.Combine(root,item.FullName));if(!target.StartsWith(Path.GetFullPath(root)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new Exception("安装包路径无效。");
+                        var target=Path.GetFullPath(Path.Combine(destination,item.FullName));if(!target.StartsWith(Path.GetFullPath(destination)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new Exception("安装包路径无效。");
                         if(item.FullName.EndsWith("/")||item.FullName.EndsWith("\\")){Directory.CreateDirectory(target);continue;}
                         Directory.CreateDirectory(Path.GetDirectoryName(target));item.ExtractToFile(target,true);
                     }
                 }
-                File.Copy(Application.ExecutablePath,Path.Combine(root,"CodexMobileConnector.exe"),true);
-                if(ConnectorBootstrap.IsDefaultRoot(root)){ConnectorBootstrap.EnsureShortcut(root);Register();}
-                File.WriteAllText(Path.Combine(root,"installed.json"),new JavaScriptSerializer().Serialize(new{root=root,version=1}));
-            });
-            if(!unattended)Process.Start(new ProcessStartInfo(Path.Combine(root,"CodexMobileConnector.exe"),"--install-root \""+root+"\""){UseShellExecute=true});Close();
-        } catch(Exception error) {status.Text="安装失败："+error.Message;install.Enabled=true;if(unattended){File.WriteAllText(root+".install-error.txt",error.Message);Environment.ExitCode=1;Close();}}
     }
     void Register() {using(var key=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexMobileConnector")){key.SetValue("DisplayName","Codex 手机桥接");key.SetValue("DisplayVersion",ConnectorBootstrap.Version);key.SetValue("InstallLocation",root);key.SetValue("UninstallString","\""+Path.Combine(root,"CodexMobileConnector.exe")+"\" --uninstall");key.SetValue("NoModify",1);key.SetValue("NoRepair",1);}}
 }
