@@ -25,11 +25,16 @@ foreach ($property in $properties.PSObject.Properties) {
     if (($property.Name -ceq ('CodexMobileConnector-' + $identity) -and [string]$property.Value -ceq $legacyCommand) -or ($property.Name -ceq ('CodexMobileBridge-' + $identity) -and [string]$property.Value -ceq $bridgeCommand)) { Remove-ItemProperty -LiteralPath $run -Name $property.Name }
 }
 $scheduler = New-Object -ComObject 'Schedule.Service'; $scheduler.Connect(); $folder = $scheduler.GetFolder('\')
+function CurrentUserTask($principal) {
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    if ($principal -ceq $sid) { return $true }
+    try { return (New-Object Security.Principal.NTAccount($principal)).Translate([Security.Principal.SecurityIdentifier]).Value -ceq $sid }
+    catch { return $false }
+}
 foreach ($task in $folder.GetTasks(0)) {
     $taskArguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $Root 'scripts/connector-login.ps1') + '"'
     $taskExecutable = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
-    $user = [Security.Principal.WindowsIdentity]::GetCurrent()
-    if ($task.Name -ceq ('CodexMobileConnector-' + $identity) -and $task.Definition.Actions.Count -eq 1 -and $task.Definition.Actions.Item(1).Path -ceq $taskExecutable -and $task.Definition.Actions.Item(1).Arguments -ceq $taskArguments -and $task.Definition.Principal.UserId -in @($user.User.Value,$user.Name)) { $folder.DeleteTask($task.Name,0) }
+    if ($task.Name -ceq ('CodexMobileConnector-' + $identity) -and $task.Definition.Actions.Count -eq 1 -and $task.Definition.Actions.Item(1).Path -ceq $taskExecutable -and $task.Definition.Actions.Item(1).Arguments -ceq $taskArguments -and (CurrentUserTask $task.Definition.Principal.UserId)) { $folder.DeleteTask($task.Name,0) }
 }
 function Owned-Processes($entries, $includeGui) {
     @(foreach ($process in Get-CimInstance Win32_Process) {

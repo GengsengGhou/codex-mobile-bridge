@@ -61,8 +61,13 @@ if($current -and $current -cne $command){throw '登录启动项已被其他程�
 $ownedLegacy=((Value $legacyName) -ceq $legacy); $ownedGui=((Value 'CodexMobileCompanion') -ceq $oldGui)
 $service=New-Object -ComObject 'Schedule.Service'; $service.Connect(); $folder=$service.GetFolder('\\'); $task=$null
 try{$task=$folder.GetTask($legacyName)}catch{if($_.Exception.HResult -ne -2147024894){throw}}
+function CurrentUserTask($principal) {
+  $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  if($principal -ceq $sid){return $true}
+  try{return (New-Object Security.Principal.NTAccount($principal)).Translate([Security.Principal.SecurityIdentifier]).Value -ceq $sid}catch{return $false}
+}
 $ownedTask=$false
-if($task){$actions=$task.Definition.Actions; $ownedTask=($actions.Count -eq 1 -and $actions.Item(1).Path -ceq ${literal(resolve(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'))} -and $actions.Item(1).Arguments -ceq ${literal(taskArgs)} -and $task.Definition.Principal.UserId -in @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,[Security.Principal.WindowsIdentity]::GetCurrent().Name))}
+if($task){$actions=$task.Definition.Actions; $ownedTask=($actions.Count -eq 1 -and $actions.Item(1).Path -ceq ${literal(resolve(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'))} -and $actions.Item(1).Arguments -ceq ${literal(taskArgs)} -and (CurrentUserTask $task.Definition.Principal.UserId))}
 $enabled=($current -ceq $command -or $ownedLegacy -or $ownedGui -or ($ownedTask -and $task.Enabled))
 ${enable === undefined ? '' : `if(-not(Test-Path -LiteralPath $key)){New-Item -Path $key|Out-Null}
 if($ownedLegacy){Remove-ItemProperty -LiteralPath $key -Name $legacyName}

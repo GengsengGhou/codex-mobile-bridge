@@ -3,9 +3,19 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { createConnectorControl, readConnectorControl, connectorMayRun, createCompanionRegistration, stopOwnedConnectorProcesses } from '../scripts/connector-control.mjs';
 import { guiCommand } from '../scripts/connector-gui.mjs';
+import { registerConnectorLogonTask } from '../scripts/connector-login.mjs';
+
+const executeFile = promisify(execFile);
+const literal = value => `'${String(value).replaceAll("'", "''")}'`;
+async function powershell(script) {
+  const { stdout } = await executeFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(`$ErrorActionPreference='Stop'\n${script}`, 'utf16le').toString('base64')], { windowsHide: true, timeout: 15000 });
+  return stdout.trim();
+}
 
 async function fixture(t, options={}) {
   const root=await mkdtemp(join(tmpdir(),'connector-control-')); t.after(()=>rm(root,{recursive:true,force:true}));
@@ -118,6 +128,26 @@ test('startup migration and stop commands require exact installation ownership',
   const root='C:/fixture/connector';const registration=createCompanionRegistration({root,execute,registryKey:'HKCU:\\fixture-only'});await registration.read();await registration.set(false);await stopOwnedConnectorProcesses({root,nodePath:'C:/fixture/node.exe',execute});
   assert.match(scripts[1],/CommandLine|\$ownedLegacy/);assert.match(scripts[1],/Principal.UserId/);assert.match(scripts[1],/--tray/);
   assert.match(scripts[2],/ExecutablePath -ceq \$node/);assert.match(scripts[2],/connector-login\.mjs/);assert.match(scripts[2],/start-connector\.mjs/);assert.doesNotMatch(scripts[2],/scripts[\\/]start\.mjs|windows-supervisor/);
+});
+test('normalized Windows task principal is removed by migration and uninstall', { skip: process.platform !== 'win32', timeout: 45000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'connector-task-owner-'));
+  const task = await registerConnectorLogonTask({ root });
+  const taskName = task.name;
+  const taskArguments = `-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${join(root, 'scripts', 'connector-login.ps1')}"`;
+  const taskPresent = async () => (await powershell(`$service=New-Object -ComObject 'Schedule.Service'; $service.Connect(); $found=$false; foreach($entry in $service.GetFolder('\\').GetTasks(0)){if($entry.Name -ceq ${literal(taskName)}){$found=$true}}; if($found){'present'}else{'absent'}`)) === 'present';
+  try {
+    const registration = createCompanionRegistration({ root });
+    assert.equal((await registration.read()).enabled, true);
+    assert.equal((await registration.set(false)).enabled, false);
+    assert.equal(await taskPresent(), false);
+    await registerConnectorLogonTask({ root });
+    await writeFile(join(root, 'installed.json'), JSON.stringify({ root, version: 1 }));
+    await powershell(`& ${literal(fileURLToPath(new URL('../deploy/uninstall-connector.ps1', import.meta.url)))} -Root ${literal(root)}`);
+    assert.equal(await taskPresent(), false);
+  } finally {
+    await powershell(`$service=New-Object -ComObject 'Schedule.Service'; $service.Connect(); $folder=$service.GetFolder('\\'); foreach($entry in $folder.GetTasks(0)){if($entry.Name -ceq ${literal(taskName)} -and $entry.Definition.Actions.Count -eq 1 -and $entry.Definition.Actions.Item(1).Arguments -ceq ${literal(taskArguments)}){$folder.DeleteTask(${literal(taskName)},0)}}`);
+    await rm(root, { recursive: true, force: true });
+  }
 });
 test('failed startup preference change cannot save or display a successful choice',async t=>{
   const root=await mkdtemp(join(tmpdir(),'connector-registration-failure-'));t.after(()=>rm(root,{recursive:true,force:true}));await mkdir(join(root,'.local'),{recursive:true});await writeFile(join(root,'.local/hub-connector.json'),'{}');
