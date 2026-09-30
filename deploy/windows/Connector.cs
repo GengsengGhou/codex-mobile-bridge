@@ -15,13 +15,14 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-[assembly: AssemblyVersion("0.1.5.0")]
-[assembly: AssemblyFileVersion("0.1.5.0")]
-[assembly: AssemblyInformationalVersion("0.1.5")]
+[assembly: AssemblyVersion("0.1.6.0")]
+[assembly: AssemblyFileVersion("0.1.6.0")]
+[assembly: AssemblyInformationalVersion("0.1.6")]
 
 // Keep setup and dependency recovery independent of WebView2 type loading.
 static class ConnectorBootstrap {
     static string qaUninstallDecision,qaUninstallEvidence;
+    [DllImport("shell32.dll",CharSet=CharSet.Unicode)] static extern void SHChangeNotify(uint eventId,uint flags,string path,IntPtr item);
     [DllImport("user32.dll")]static extern bool SetProcessDpiAwarenessContext(IntPtr context);
     [DllImport("shcore.dll")]static extern int SetProcessDpiAwareness(int awareness);
     [DllImport("user32.dll")]static extern bool SetProcessDPIAware();
@@ -34,6 +35,15 @@ static class ConnectorBootstrap {
     public static readonly string Version = ((AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(Assembly.GetExecutingAssembly(), typeof(AssemblyInformationalVersionAttribute))).InformationalVersion;
     public static bool IsDefaultRoot(string path) { return string.Equals(Path.GetFullPath(path),Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"CodexMobileConnector"),StringComparison.OrdinalIgnoreCase); }
     public static Icon BrandIcon() { using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("icons.connector.ico")) return stream==null?Icon.ExtractAssociatedIcon(Application.ExecutablePath):new Icon(stream); }
+    public static void EnsureShortcut(string root) {
+        if(!IsDefaultRoot(root))return;
+        string executable=Path.Combine(root,"CodexMobileConnector.exe"),shortcut=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),"Codex Mobile Connector.lnk");
+        Directory.CreateDirectory(Path.GetDirectoryName(shortcut));
+        dynamic shell=Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));dynamic link=shell.CreateShortcut(shortcut);
+        if(File.Exists(shortcut)&&string.Equals((string)link.TargetPath,executable,StringComparison.OrdinalIgnoreCase)&&string.Equals((string)link.WorkingDirectory,root,StringComparison.OrdinalIgnoreCase)&&string.Equals(((string)link.IconLocation).Trim(),executable+",0",StringComparison.OrdinalIgnoreCase))return;
+        link.TargetPath=executable;link.WorkingDirectory=root;link.Description="Codex 手机桥接与电脑配对";link.IconLocation=executable+",0";link.Save();
+        SHChangeNotify(0x8000,0x0005,shortcut,IntPtr.Zero);
+    }
     public static string ValidatedHub(string value) {
         Uri uri;
         if(string.IsNullOrWhiteSpace(value)||value.Length>2048||!Uri.TryCreate(value.Trim(),UriKind.Absolute,out uri)||uri.Scheme!="https"||uri.AbsolutePath!="/"||uri.Query!=""||uri.Fragment!=""||uri.UserInfo!=""||uri.HostNameType==UriHostNameType.Unknown) throw new Exception("请输入 HTTPS 服务器地址，不包含路径、账号或参数。");
@@ -60,6 +70,7 @@ static class ConnectorBootstrap {
         if(!IsDefaultRoot(root)){qaUninstallDecision=Argument(args,"--qa-uninstall-decision");qaUninstallEvidence=Argument(args,"--qa-uninstall-evidence");}
         if(args.Length==1&&args[0]=="--tray")root=Path.GetDirectoryName(Application.ExecutablePath);
         bool installed=string.Equals(Path.GetDirectoryName(Application.ExecutablePath),root,StringComparison.OrdinalIgnoreCase), startup=Array.IndexOf(args,"--tray")>=0, uninstall=Array.IndexOf(args,"--uninstall")>=0;
+        if(installed&&IsDefaultRoot(root))try{EnsureShortcut(root);}catch{}
         string identity;
         using(var sha=SHA256.Create())identity=BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(root.ToLowerInvariant()+"|"+WindowsIdentity.GetCurrent().User.Value))).Replace("-","");
         if(!installed)identity+="-setup";
@@ -141,12 +152,11 @@ class InstallerWindow : Form {
                     }
                 }
                 File.Copy(Application.ExecutablePath,Path.Combine(root,"CodexMobileConnector.exe"),true);
-                if(ConnectorBootstrap.IsDefaultRoot(root)){Shortcut();Register();}
+                if(ConnectorBootstrap.IsDefaultRoot(root)){ConnectorBootstrap.EnsureShortcut(root);Register();}
                 File.WriteAllText(Path.Combine(root,"installed.json"),new JavaScriptSerializer().Serialize(new{root=root,version=1}));
             });
             if(!unattended)Process.Start(new ProcessStartInfo(Path.Combine(root,"CodexMobileConnector.exe"),"--install-root \""+root+"\""){UseShellExecute=true});Close();
         } catch(Exception error) {status.Text="安装失败："+error.Message;install.Enabled=true;if(unattended){File.WriteAllText(root+".install-error.txt",error.Message);Environment.ExitCode=1;Close();}}
     }
     void Register() {using(var key=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexMobileConnector")){key.SetValue("DisplayName","Codex 手机桥接");key.SetValue("DisplayVersion",ConnectorBootstrap.Version);key.SetValue("InstallLocation",root);key.SetValue("UninstallString","\""+Path.Combine(root,"CodexMobileConnector.exe")+"\" --uninstall");key.SetValue("NoModify",1);key.SetValue("NoRepair",1);}}
-    void Shortcut() {dynamic shell=Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));dynamic link=shell.CreateShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),"Codex Mobile Connector.lnk"));link.TargetPath=Path.Combine(root,"CodexMobileConnector.exe");link.WorkingDirectory=root;link.Description="Codex 手机桥接与电脑配对";link.Save();}
 }

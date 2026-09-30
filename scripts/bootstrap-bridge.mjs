@@ -79,7 +79,7 @@ async function promptThread(choices) {
   finally { reader.close(); }
 }
 
-export async function selectOrdinaryLocalThread(choices, bridgeFactory = options => new DesktopBridge(options)) {
+export async function selectOrdinaryLocalThread(choices, bridgeFactory = options => new DesktopBridge({ ...options, request: createDesktopRequest() })) {
   for (const choice of choices) {
     try {
       const candidate = bridgeFactory({ callerThreadId: choice.id });
@@ -111,7 +111,7 @@ export async function ensureLocalBridge({ root = defaultRoot, callerThreadId, po
   if (!selected) {
     const choices = await candidates({ codexHome });
     if (!choices.length) throw new Error('未找到本机会话，请先在 Codex 中建立或打开一个普通本机会话，再运行安装。');
-    selected = await selectThread(choices);
+    selected = await selectThread(choices, options => bridgeFactory({ ...options, request }));
     if (!choices.some(choice => choice.id === selected)) throw new Error('请选择列表中的现有本机会话。');
   }
   if (!UUID.test(selected || '')) throw new Error('未选择有效的本机会话。');
@@ -120,6 +120,7 @@ export async function ensureLocalBridge({ root = defaultRoot, callerThreadId, po
   const thread = data?.thread;
   if (!thread || thread.id !== selected || thread.kind !== 'codex' || thread.archived || thread.hostId && thread.hostId !== 'local' || thread.parentThreadId || thread.isSubagent || thread.isSubAgent || thread.agentRole === 'subagent') throw new Error('所选会话不是可用的普通本机会话；请在 Codex 中选择未归档的普通本机会话后重试。');
   const chosenPort = await choosePort(preferred);
+  if (port !== undefined && chosenPort !== port) throw new Error('指定的桥接端口已被其他程序占用。');
   const env = saved ? { BRIDGE_PORT: String(chosenPort), ...(callerThreadId ? { CODEX_THREAD_ID: selected } : {}) } : { CODEX_THREAD_ID: selected, BRIDGE_ENABLE_SEND: '1', BRIDGE_SEND_SCOPE: 'all-local', BRIDGE_PORT: String(chosenPort) };
   const config = await loadConfig({ env, configPath });
   const launch = await start({ root, platform: 'win32', loadConfig: async () => config, output: quiet });

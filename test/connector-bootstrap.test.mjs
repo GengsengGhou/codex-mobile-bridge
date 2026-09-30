@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import net from 'node:net';
 import http from 'node:http';
-import { ensureLocalBridge, localThreadCandidates, chooseFreePort, probeLocalBridge } from '../scripts/bootstrap-bridge.mjs';
+import { ensureLocalBridge, localThreadCandidates, chooseFreePort, probeLocalBridge, selectOrdinaryLocalThread } from '../scripts/bootstrap-bridge.mjs';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const other = '22222222-2222-4222-8222-222222222222';
@@ -35,6 +35,28 @@ test('fresh setup verifies selected existing local conversation before persistin
   const config = JSON.parse(await readFile(resolve(root, '.local/runtime.json'), 'utf8'));
   assert.deepEqual(config, { callerThreadId: id, enableSend: true, allowedSendThreadId: id, sendScope: 'all-local', port: 4339 });
   assert.doesNotMatch(JSON.stringify(config), /PIPE|TOKEN|password|provider|CODEX_HOME/);
+});
+
+test('automatic first pairing uses the discovered desktop request while selecting a local conversation', async t => {
+  const desktopRequest = async () => {};
+  const seen = [];
+  const { options } = await fixture(t, {
+    callerThreadId: undefined,
+    request: desktopRequest,
+    candidates: async () => [{ id, title: 'existing' }],
+    selectThread: selectOrdinaryLocalThread,
+    bridgeFactory: args => {
+      assert.equal(args.request, desktopRequest);
+      seen.push(args.callerThreadId);
+      return {
+        capabilities: async () => ['list_threads', 'read_thread'],
+        call: async () => ({ thread: { id, kind: 'codex', hostId: 'local', archived: false } }),
+      };
+    },
+  });
+  const ready = await ensureLocalBridge(options);
+  assert.equal(ready.connected, true);
+  assert.deepEqual(seen, [undefined, id]);
 });
 
 test('missing desktop and unsupported selected threads block persistence and launch', async t => {
@@ -79,6 +101,13 @@ test('unknown port occupant is preserved and a free port is chosen', async t => 
   await new Promise(resolveReady => occupant.listen(0, '127.0.0.1', resolveReady)); t.after(() => occupant.close());
   const occupied = occupant.address().port, selected = await chooseFreePort(occupied);
   assert.notEqual(selected, occupied); assert.ok(selected >= 1024); assert.equal(occupant.listening, true);
+});
+
+test('a reserved connector port cannot be silently changed during bootstrap', async t => {
+  const { root, options, starts } = await fixture(t, { port: 64817, choosePort: async () => 64818 });
+  await assert.rejects(ensureLocalBridge(options), /端口已被其他程序占用/);
+  assert.equal(starts(), 0);
+  await assert.rejects(readFile(resolve(root, '.local/runtime.json')), { code: 'ENOENT' });
 });
 
 test('structured session index and sidebar fallback supply bounded, sanitized choices', async t => {
