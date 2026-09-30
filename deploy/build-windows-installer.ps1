@@ -59,7 +59,7 @@ try {
     $payload = Join-Path $stage 'payload.zip'
     [IO.Compression.ZipFile]::CreateFromDirectory($app,$payload)
     New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
-    $output = Join-Path $OutputDirectory 'CodexMobileConnector-Setup.exe'
+    $output = Join-Path $stage 'CodexMobileConnector.exe'
     $resources = @("/resource:$payload,payload.zip")
     foreach ($icon in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'windows/icons') -Filter '*.png' -File) {
         $resources += "/resource:$($icon.FullName),icons.$($icon.BaseName).png"
@@ -68,6 +68,9 @@ try {
     $resources += "/resource:$appIcon,icons.connector.ico"
     & $compiler /nologo /codepage:65001 /target:winexe /platform:x64 /optimize+ /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll /reference:Microsoft.CSharp.dll "/reference:$core" "/reference:$forms" "/win32manifest:$(Join-Path $PSScriptRoot 'windows/Connector.manifest')" "/win32icon:$appIcon" $resources "/out:$output" (Join-Path $PSScriptRoot 'windows/Connector.cs') (Join-Path $PSScriptRoot 'windows/WebViewConnector.cs')
     if ($LASTEXITCODE -ne 0) { throw 'Windows installer compilation failed.' }
+    $releaseOutput = Join-Path $OutputDirectory 'CodexMobileConnector-Setup.exe'
+    Copy-Item -LiteralPath $output -Destination $releaseOutput -Force
+    $output = $releaseOutput
     $sha = File-Sha256 $output
     Set-Content -LiteralPath ($output+'.sha256') -Value ($sha+'  '+[IO.Path]::GetFileName($output)) -Encoding ascii
     Write-Output "Windows installer built: $output"

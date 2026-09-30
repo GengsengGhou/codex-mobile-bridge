@@ -43,7 +43,7 @@ if ($Recover) {
     $savedExe = if (Test-Path -LiteralPath (Join-Path $backup 'CodexMobileConnector.exe')) { Join-Path $backup 'CodexMobileConnector.exe' } else { Join-Path $Root 'CodexMobileConnector.exe' }
     if (-not (Test-Path -LiteralPath $savedMarker) -or -not (Test-Path -LiteralPath $savedExe)) { throw 'Interrupted upgrade ownership cannot be verified.' }
     $saved = Get-Content -LiteralPath $savedMarker -Raw | ConvertFrom-Json
-    if ($saved.version -ne 1 -or [IO.Path]::GetFullPath($saved.root).TrimEnd('\') -ine $Root -or [Reflection.AssemblyName]::GetAssemblyName($savedExe).Name -cne 'CodexMobileConnector-Setup') { throw 'Interrupted upgrade ownership cannot be verified.' }
+    if ($saved.version -ne 1 -or [IO.Path]::GetFullPath($saved.root).TrimEnd('\') -ine $Root -or [Reflection.AssemblyName]::GetAssemblyName($savedExe).Name -cnotin @('CodexMobileConnector-Setup','CodexMobileConnector')) { throw 'Interrupted upgrade ownership cannot be verified.' }
     $nodePath = Join-Path $Root 'runtime/node.exe'; $guiPath = Join-Path $Root 'CodexMobileConnector.exe'
     for ($attempt=0; $attempt -lt 20; $attempt++) {
         $running = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -ieq $guiPath -or ($_.ExecutablePath -ieq $nodePath -and $_.CommandLine -match ([regex]::Escape($Root) + '[\\/](?:scripts|src)[\\/]')) })
@@ -86,7 +86,7 @@ if ($marker.version -ne 1 -or -not ($marker.root -is [string]) -or [IO.Path]::Ge
 $oldVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($oldExe).ProductVersion
 try { $oldAssembly = [Reflection.AssemblyName]::GetAssemblyName($oldExe) }
 catch { throw 'Installed executable is not a valid connector assembly.' }
-if ($oldAssembly.Name -cne 'CodexMobileConnector-Setup') { throw 'Installed executable is not a connector assembly.' }
+if ($oldAssembly.Name -cnotin @('CodexMobileConnector-Setup','CodexMobileConnector')) { throw 'Installed executable is not a connector assembly.' }
 try { $current = [version]$oldVersion; $incoming = [version]$Version }
 catch { throw 'Installed or incoming application version is invalid.' }
 if ($current -ge $incoming) { throw "Installed version $oldVersion is not older than $Version." }

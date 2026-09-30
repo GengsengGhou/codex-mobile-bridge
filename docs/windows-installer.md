@@ -14,8 +14,15 @@ The release build downloads Node.js 22 from the official distribution and verifi
 its published SHA-256 before embedding it. No manual Node installation is needed.
 The EXE is unsigned; Windows may show publisher reputation information.
 
-Installation uses `%LOCALAPPDATA%\CodexMobileConnector` and a current-user Start menu
-shortcut. A successful first pairing enables current-user login recovery unless the user
+Installation uses `%LOCALAPPDATA%\CodexMobileConnector` and current-user Start menu
+and desktop shortcuts named `Codex 手机桥接`. Search Start for `Codex` or `手机桥接`.
+Setup and upgrades create both shortcuts; ordinary app launches repair only the Start menu
+entry, so deleting the desktop shortcut is respected until the next install or upgrade.
+Owned legacy `Codex Mobile Connector` shortcuts are migrated, and uninstall removes only
+shortcuts targeting this installation with its working directory and no arguments.
+The executable has an application filename and localized product metadata; shortcuts and
+the running process share the stable AppUserModelID `CodexMobileBridge.Connector`.
+A successful first pairing enables current-user login recovery unless the user
 previously chose to keep it off. Existing saved preferences or verifiable owned startup
 entries preserve the automatic choice; an old v0.1.0 uninstall removes startup
 entries, so check and select login recovery again after reinstalling.
@@ -130,6 +137,11 @@ confirmation does not claim native clicks. `DrawToBitmap` is used only for nativ
 recovery dialogs; the main interface uses WebView2 captures. The filled tray icon
 can be regenerated with `deploy/windows/generate-icons.mjs --brand-only` and a
 maintainer-only resvg installation. Its ICO includes 16/20/24/32/48/64/256px images.
+
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File deploy/verify-windows-shortcuts.ps1`
+checks the built EXE metadata and real COM shortcut lifecycle in temporary folders: identity,
+owned migration, install/upgrade creation, launch deletion preference, conflict preservation
+and owned uninstall cleanup. It does not modify live shortcuts or prove Windows search indexing.
 
 QA overrides do not add login entries or Start menu shortcuts. Isolated debug and
 capture runs suppress tray icons, except explicit lifecycle/tray acceptance.

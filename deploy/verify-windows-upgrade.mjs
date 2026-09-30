@@ -11,6 +11,7 @@ import { WebSocketServer } from 'ws';
 if (process.platform !== 'win32') throw new Error('Windows upgrade verification requires Windows.');
 const project = resolve(new URL('..', import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'));
 const setup = resolve(process.argv[2] || join(project, 'dist/CodexMobileConnector-Setup.exe'));
+const releaseVersion = JSON.parse(await readFile(join(project, 'package.json'), 'utf8')).version;
 const oldSetups = process.argv.slice(3).map(path => resolve(path));
 if (oldSetups.length === 0) throw new Error('Pass at least one authentic older Setup.exe as an argument.');
 const digest = async file => createHash('sha256').update(await readFile(file)).digest('hex');
@@ -57,7 +58,7 @@ for (const oldSetup of oldSetups) {
     assert.deepEqual(JSON.parse(await readFile(join(target, 'installed.json'), 'utf8')), { root: target, version: 1 });
     await assert.rejects(access(target + '.upgrade-journal.json'));
     await assert.rejects(access(target + '.upgrade-backup'));
-    cases.push({ fromSetupSha256: oldHash, upgradeUi: 'passed', pausedUpgrade: 'passed', preservedLocal: 'passed', installedVersion: '0.1.8' });
+    cases.push({ fromSetupSha256: oldHash, upgradeUi: 'passed', pausedUpgrade: 'passed', preservedLocal: 'passed', installedVersion: releaseVersion });
   } finally {
     const uninstall = join(target, 'deploy/uninstall-connector.ps1');
     try { await access(uninstall); run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', uninstall, '-Root', target], 30000); } catch {}

@@ -120,7 +120,7 @@ npm run probe
 
 部署自己的 HTTPS 入口（例如 `https://codex.example.com`）后，账号登录只能进入自己配对的电脑，注册需要管理员邀请。电脑主动连接 VPS，不需公网 IP 或开放路由器端口。可使用 Caddy 和专用 systemd 服务，也提供 Docker Compose 配置。
 
-Windows 用户双击 `dist/CodexMobileConnector-Setup.exe`，无需管理员权限或手动安装 Node.js。桌面填写自己的 HTTPS 服务器地址，打开网页登录或使用管理员邀请码注册，再从网页复制一次性配对码，回到桌面绑定这台电脑；也保留整段配对信息 JSON 的快捷粘贴。桌面界面使用本地 HTML/CSS/JS 和 WebView2，账号密码与邀请码只在系统浏览器网页输入。安装器不预设个人域名；发布构建内置校验过官方 SHA256 的 Node.js 和 ws。可先配对再打开 Codex，程序会等待并只读选择可用的现有普通本机会话，不创建或发送任务。设备凭据保存到私有 ACL 保护的 `.local/hub-connector.json`。窗口提供状态、连接与断开、重试、打开网页与 Codex，以及自动连接和服务器设置；更换服务器需明确确认，验证失败保留旧凭据。卸载默认保留 `.local` 数据；已有安装会拒绝覆盖，保留数据卸载后可重装。旧 ZIP 与 `deploy/install-connector.cmd` 仍可用于终端安装，需打开 Codex 并在交互终端选择启动会话。图形安装与校验见 [docs/windows-installer.md](docs/windows-installer.md)。
+Windows 用户双击 `dist/CodexMobileConnector-Setup.exe`，无需管理员权限或手动安装 Node.js。桌面填写自己的 HTTPS 服务器地址，打开网页登录或使用管理员邀请码注册，再从网页复制一次性配对码，回到桌面绑定这台电脑；也保留整段配对信息 JSON 的快捷粘贴。桌面界面使用本地 HTML/CSS/JS 和 WebView2，账号密码与邀请码只在系统浏览器网页输入。安装器不预设个人域名；发布构建内置校验过官方 SHA256 的 Node.js 和 ws。可先配对再打开 Codex，程序会等待并只读选择可用的现有普通本机会话，不创建或发送任务。设备凭据保存到私有 ACL 保护的 `.local/hub-connector.json`。窗口提供状态、连接与断开、重试、打开网页与 Codex，以及自动连接和服务器设置；更换服务器需明确确认，验证失败保留旧凭据。安装或升级会在开始菜单和当前用户桌面创建“Codex 手机桥接”快捷方式；开始菜单搜索“Codex”或“手机桥接”可打开。删除桌面快捷方式后，普通启动不会重新创建。卸载默认保留 `.local` 数据；运行更高版本安装器可原位升级并保留配对和设置，相同或更旧版本会拒绝覆盖。旧 ZIP 与 `deploy/install-connector.cmd` 仍可用于终端安装，需打开 Codex 并在交互终端选择启动会话。图形安装与校验见 [docs/windows-installer.md](docs/windows-installer.md)。
 
 首次成功配对默认开启当前 Windows 用户的登录后自动连接（配对前明确关闭时保留关闭），并启动 WMI 独立后台监测等待 Codex。窗口右上角 X 只隐藏到托盘，可从托盘恢复窗口；主动“退出”会停止本安装拥有的监测和连接器，手机入口随之离线，不停止独立桥接、Codex 或其正在运行的任务。下次登录会按自动启动设置恢复，除非此前已执行跨登录持久断开；普通打开窗口只查看状态，需明确执行“连接”才会恢复。
 

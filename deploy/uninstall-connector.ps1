@@ -62,10 +62,25 @@ function Stop-Owned($entries, $includeGui) {
 Stop-Owned @('scripts/connector-login.mjs','scripts/start.mjs','scripts/supervisor.mjs') $false
 Stop-Owned @('scripts/start-connector.mjs','src/server.mjs') $true
 if (@(Owned-Processes @('scripts/connector-login.mjs','scripts/start-connector.mjs','scripts/start.mjs','scripts/supervisor.mjs','src/server.mjs') $true).Count -ne 0) { throw 'Installation processes are still running.' }
+function Remove-OwnedShortcuts([string]$InstallationRoot, [string[]]$Directories) {
+    $executable = Join-Path $InstallationRoot 'CodexMobileConnector.exe'
+    $shell = New-Object -ComObject WScript.Shell
+    try {
+        foreach ($directory in $Directories) {
+            foreach ($name in @(('Codex '+[char]0x624B+[char]0x673A+[char]0x6865+[char]0x63A5+'.lnk'), 'Codex Mobile Connector.lnk')) {
+                $shortcut = Join-Path $directory $name
+                if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) { continue }
+                $link = $shell.CreateShortcut($shortcut)
+                try {
+                    if ($link.TargetPath -ieq $executable -and $link.WorkingDirectory -ieq $InstallationRoot -and [string]::IsNullOrWhiteSpace($link.Arguments)) { Remove-Item -LiteralPath $shortcut }
+                } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($link) }
+            }
+        }
+    } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) }
+}
 $default = Join-Path $env:LOCALAPPDATA 'CodexMobileConnector'
 if ($Root -ieq $default) {
-    $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Codex Mobile Connector.lnk'
-    if (Test-Path -LiteralPath $shortcut) { Remove-Item -LiteralPath $shortcut }
+    Remove-OwnedShortcuts $Root @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('DesktopDirectory'))
     Remove-Item -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexMobileConnector' -ErrorAction SilentlyContinue
 }
 Start-Sleep -Seconds 2
