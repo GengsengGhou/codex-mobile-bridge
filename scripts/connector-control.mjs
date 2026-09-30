@@ -129,10 +129,15 @@ try{try{$held=$mutex.WaitOne(5000)}catch [Threading.AbandonedMutexException]{$he
     return mutate(async () => {
       let value = await readConnectorControl(root);
       let changed = false;
-      if (!value.autoStartSelected && await paired()) {
-        const autoStart = (await startup.read()).enabled;
-        value = { ...value, autoStart, autoStartSelected: true };
-        changed = true;
+      if (await paired()) {
+        const registered = await startup.read();
+        if (!value.autoStartSelected) {
+          value = { ...value, autoStart: registered.enabled, autoStartSelected: true };
+          changed = true;
+        } else if (!value.startupPending && registered.enabled !== value.autoStart) {
+          const applied = await startup.set(value.autoStart);
+          if (applied.enabled !== value.autoStart) throw new Error('无法恢复 Windows 登录启动设置，请在设置中重试。');
+        }
       }
       return !changed && value.revision !== 'absent' ? value : save({ ...value, version: 2, revision: value.revision === 'absent' ? randomUUID() : value.revision });
     });

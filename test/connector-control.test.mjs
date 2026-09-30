@@ -43,6 +43,24 @@ test('session exit cannot downgrade a persistent disconnect; manual connect clea
   f.setLogin('second'); assert.equal((await f.control.resume('startup')).paused,true);
   assert.equal((await f.control.resume('manual')).paused,false);
 });
+test('reopening a paired installation restores the selected Windows login preference',async t=>{
+  let registered=false, writes=0;
+  const registration={read:async()=>({enabled:registered}),set:async value=>{registered=value;writes++;return {enabled:registered};}};
+  const f=await fixture(t,{paired:true,registration});
+  await f.control.initialize();
+  await f.control.configure(true);
+  assert.equal(registered,true);
+  registered=false;
+  await f.control.initialize();
+  assert.equal(registered,true);
+  assert.equal(writes,2);
+  await f.control.configure(false);
+  registered=true;
+  await f.control.initialize();
+  assert.equal(registered,false);
+  assert.equal(writes,4);
+  assert.equal((await f.control.read()).autoStart,false);
+});
 test('successful first pairing selects login startup unless the user chose a preference before pairing',async t=>{
   const f=await fixture(t); const initial=await f.control.initialize();
   await mkdir(join(f.root,'.local'),{recursive:true}); await writeFile(join(f.root,'.local/hub-connector.json'),'{}');
