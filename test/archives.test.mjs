@@ -78,6 +78,7 @@ test('archive listing is in the native call allowlist and unarchive retains exac
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 function mount(t, api) {
   const dom = new JSDOM('<div class="drawer-foot"></div>');
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; };
   let refreshed = 0;

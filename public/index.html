@@ -1,10 +1,8 @@
-<!doctype html>
-<html lang="zh-CN">
-  <head>
+<!DOCTYPE html><html lang="zh-CN"><head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#f8f8f7">
-    <title>Codex 手机桥接</title>
+    <title>Codex Mobile Bridge</title>
     <link rel="stylesheet" href="./style.css">
     <link rel="stylesheet" href="./thread-context.css">
     <link rel="stylesheet" href="./agent-viewer.css">
@@ -14,166 +12,169 @@
   <body>
     <div class="app-shell">
       <header class="topbar">
-        <button class="icon-button menu-button" id="menuButton" type="button" aria-label="打开任务列表" aria-expanded="false">
+        <button class="icon-button menu-button" id="menuButton" type="button" aria-label="打开任务列表" aria-expanded="false" data-i18n-aria-label="打开任务列表">
           <span class="menu-glyph" aria-hidden="true"></span>
         </button>
         <div class="brand-block">
-          <div class="brand-line"><span class="brand-mark" aria-hidden="true">C</span><strong>Codex</strong><span class="environment-tag">实验 · 仅本机</span></div>
+          <div class="brand-line"><span class="brand-mark" aria-hidden="true">C</span><strong>Codex Mobile Bridge</strong><span class="environment-tag" data-i18n="实验 · 仅本机" data-i18n-node="0">实验 · 仅本机</span></div>
         </div>
-        <div class="top-actions">
+        <div class="top-actions"><select id="languageSelect" class="language-select" data-language-selector="" aria-label="界面语言" data-i18n-aria-label="界面语言"><option value="zh-CN">中文</option><option value="en">EN</option></select>
           <div class="connection" id="connection" data-state="loading" role="status" aria-live="polite">
-            <span class="connection-dot" aria-hidden="true"></span><span id="connectionText">正在连接</span>
+            <span class="connection-dot" aria-hidden="true"></span><span id="connectionText" data-i18n="正在连接" data-i18n-node="0">正在连接</span>
           </div>
-          <button class="icon-button refresh-button" id="refreshButton" type="button" aria-label="刷新任务和消息" title="刷新">
+          <button class="icon-button refresh-button" id="refreshButton" type="button" aria-label="刷新任务和消息" title="刷新" data-i18n-aria-label="刷新任务和消息" data-i18n-title="刷新">
             <span class="refresh-glyph" aria-hidden="true">↻</span>
           </button>
         </div>
       </header>
 
       <main class="main-layout">
-        <div class="drawer-scrim" id="drawerScrim" hidden></div>
-        <aside class="task-drawer" id="taskDrawer" aria-label="任务列表" aria-hidden="true">
-          <div class="drawer-heading"><div><span class="eyebrow">Codex</span><h2>会话</h2></div><button class="new-conversation-button" id="newThreadButton" type="button"><span aria-hidden="true">＋</span> 新建会话</button><button class="icon-button close-drawer" id="closeDrawer" type="button" aria-label="关闭任务列表">×</button></div>
-          <div class="create-capability-state" id="createCapabilityState" role="status" hidden></div>
-          <div class="drawer-tools"><span id="taskCount">任务</span><div class="drawer-actions"><button class="text-button" id="sortToggle" type="button" aria-pressed="false" title="排序项目和会话">排序</button><button class="text-button" id="resetOrder" type="button" title="跟随桌面顺序">跟随桌面</button><button class="text-button" id="refreshTasks" type="button" aria-label="刷新会话列表" title="刷新">刷新</button></div></div>
-          <label class="sr-only" for="taskSearch">搜索任务</label>
-          <div class="task-search-wrap"><span class="search-mark" aria-hidden="true"></span><input class="task-search" id="taskSearch" type="search" placeholder="搜索会话" autocomplete="off"></div>
-          <div class="order-state" id="orderState" role="status" aria-live="polite" hidden></div>
-          <div class="task-list" id="taskList" aria-live="polite"><p class="muted empty-list">正在读取任务…</p></div>
-          <div class="drawer-foot">任务状态来自最近一次快照</div>
+        <div class="drawer-scrim" id="drawerScrim" hidden=""></div>
+        <aside class="task-drawer" id="taskDrawer" aria-label="任务列表" aria-hidden="true" data-i18n-aria-label="任务列表">
+          <div class="drawer-heading"><div><span class="eyebrow">Codex</span><h2 data-i18n="会话" data-i18n-node="0">会话</h2></div><button class="new-conversation-button" id="newThreadButton" type="button" data-i18n="新建会话" data-i18n-node="1"><span aria-hidden="true">＋</span> 新建会话</button><button class="icon-button close-drawer" id="closeDrawer" type="button" aria-label="关闭任务列表" data-i18n-aria-label="关闭任务列表">×</button></div>
+          <div class="create-capability-state" id="createCapabilityState" role="status" hidden=""></div>
+          <div class="drawer-tools"><span id="taskCount" data-i18n="任务" data-i18n-node="0">任务</span><div class="drawer-actions"><button class="text-button" id="sortToggle" type="button" aria-pressed="false" title="排序项目和会话" data-i18n="排序" data-i18n-node="0" data-i18n-title="排序项目和会话">排序</button><button class="text-button" id="resetOrder" type="button" title="跟随桌面顺序" data-i18n="跟随桌面" data-i18n-node="0" data-i18n-title="跟随桌面顺序">跟随桌面</button><button class="text-button" id="refreshTasks" type="button" aria-label="刷新会话列表" title="刷新" data-i18n="刷新" data-i18n-node="0" data-i18n-aria-label="刷新会话列表" data-i18n-title="刷新">刷新</button></div></div>
+          <label class="sr-only" for="taskSearch" data-i18n="搜索任务" data-i18n-node="0">搜索任务</label>
+          <div class="task-search-wrap"><span class="search-mark" aria-hidden="true"></span><input class="task-search" id="taskSearch" type="search" placeholder="搜索会话" autocomplete="off" data-i18n-placeholder="搜索会话"></div>
+          <div class="order-state" id="orderState" role="status" aria-live="polite" hidden=""></div>
+          <div class="task-list" id="taskList" aria-live="polite"><p class="muted empty-list" data-i18n="正在读取任务…" data-i18n-node="0">正在读取任务…</p></div>
+          <div class="drawer-foot" data-i18n="任务状态来自最近一次快照" data-i18n-node="0">任务状态来自最近一次快照<select class="language-select drawer-language" data-language-selector="" aria-label="界面语言" data-i18n-aria-label="界面语言"><option value="zh-CN">中文</option><option value="en">EN</option></select></div>
         </aside>
 
-        <section class="conversation" aria-label="对话">
+        <section class="conversation" aria-label="对话" data-i18n-aria-label="对话">
           <div class="conversation-header">
-            <div class="title-wrap"><h1 id="threadTitle">选择一个会话</h1><div class="conversation-subtitle" id="threadSubtitle">本机 Codex</div></div>
-            <span class="status-pill" id="threadStatus" hidden></span>
-            <button class="files-button" id="filesButton" type="button" aria-label="文件" title="文件" disabled><span aria-hidden="true">▤</span><span class="files-label">文件</span></button>
-            <button class="font-control" id="fontControl" type="button" aria-label="调整字体大小" aria-haspopup="dialog" aria-controls="fontDialog"><span>字号</span><span class="font-size-value" id="fontSizeValue">20</span></button>
-            <button class="icon-button context-toggle" id="contextToggle" type="button" title="会话上下文" aria-label="打开会话上下文" aria-controls="threadContext" aria-expanded="false" disabled><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/></svg></button>
+            <div class="title-wrap"><h1 id="threadTitle" data-i18n="选择一个会话" data-i18n-node="0">选择一个会话</h1><div class="conversation-subtitle" id="threadSubtitle" data-i18n="本机 Codex" data-i18n-node="0">本机 Codex</div></div>
+            <span class="status-pill" id="threadStatus" hidden=""></span>
+            <button class="files-button" id="filesButton" type="button" aria-label="文件" title="文件" disabled="" data-i18n-aria-label="文件" data-i18n-title="文件"><span aria-hidden="true">▤</span><span class="files-label" data-i18n="文件" data-i18n-node="0">文件</span></button>
+            <button class="font-control" id="fontControl" type="button" aria-label="调整字体大小" aria-haspopup="dialog" aria-controls="fontDialog" data-i18n-aria-label="调整字体大小"><span data-i18n="字号" data-i18n-node="0">字号</span><span class="font-size-value" id="fontSizeValue">20</span></button>
+            <button class="icon-button context-toggle" id="contextToggle" type="button" title="会话上下文" aria-label="打开会话上下文" aria-controls="threadContext" aria-expanded="false" disabled="" data-i18n-title="会话上下文" data-i18n-aria-label="打开会话上下文"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M15 3v18"></path></svg></button>
           </div>
-          <details class="thread-details" id="threadDetails" hidden>
-            <summary>任务详情</summary>
-            <div class="detail-content"><span class="detail-label">会话 ID</span><code id="threadId">—</code><span class="detail-label">项目</span><code id="threadProject">—</code><span class="detail-label">工作目录</span><code id="threadCwd">—</code><span class="detail-label">同步</span><span>每 3 秒读取快照</span></div>
-            <button class="text-button history-questions-reopen" id="showHistoricalQuestions" type="button" hidden>查看历史提问</button>
-            <section class="historical-questions" id="historicalQuestions" hidden aria-labelledby="historicalQuestionsTitle"><div class="history-questions-heading"><h2 id="historicalQuestionsTitle">历史提问</h2><button class="icon-button" id="closeHistoricalQuestions" type="button" aria-label="关闭历史提问" title="关闭历史提问">×</button></div><div id="historicalQuestionsContent"></div></section>
+          <details class="thread-details" id="threadDetails" hidden="">
+            <summary data-i18n="任务详情" data-i18n-node="0">任务详情</summary>
+            <div class="detail-content"><span class="detail-label" data-i18n="会话 ID" data-i18n-node="0">会话 ID</span><code id="threadId">—</code><span class="detail-label" data-i18n="项目" data-i18n-node="0">项目</span><code id="threadProject">—</code><span class="detail-label" data-i18n="工作目录" data-i18n-node="0">工作目录</span><code id="threadCwd">—</code><span class="detail-label" data-i18n="同步" data-i18n-node="0">同步</span><span data-i18n="每 3 秒读取快照" data-i18n-node="0">每 3 秒读取快照</span></div>
+            <button class="text-button history-questions-reopen" id="showHistoricalQuestions" type="button" hidden="" data-i18n="查看历史提问" data-i18n-node="0">查看历史提问</button>
+            <section class="historical-questions" id="historicalQuestions" hidden="" aria-labelledby="historicalQuestionsTitle"><div class="history-questions-heading"><h2 id="historicalQuestionsTitle" data-i18n="历史提问" data-i18n-node="0">历史提问</h2><button class="icon-button" id="closeHistoricalQuestions" type="button" aria-label="关闭历史提问" title="关闭历史提问" data-i18n-aria-label="关闭历史提问" data-i18n-title="关闭历史提问">×</button></div><div id="historicalQuestionsContent"></div></section>
           </details>
 
-          <div class="notice" id="notice" role="status" aria-live="polite" hidden></div>
-          <div class="creation-result" id="creationResult" role="status" hidden><span id="creationResultText"></span><button class="text-button" id="enterCreatedThread" type="button">进入已创建会话</button></div>
-          <div class="thread-load-state" id="threadLoadState" role="status" aria-live="polite" hidden><span id="threadLoadText"></span><button class="text-button" id="retryThreadButton" type="button" hidden>重试</button></div>
-          <div class="control-state" id="controlState" hidden>
-            <div class="control-state-heading"><button id="controlToggle" type="button" aria-controls="pendingRequests" aria-expanded="false"><span id="controlSummary" role="status" aria-live="polite"></span><span class="control-disclosure" aria-hidden="true">⌄</span></button><button class="text-button" id="refreshControl" type="button" title="刷新待处理交互">刷新状态</button><button class="icon-button" id="closePendingRequests" type="button" title="收起待处理交互" aria-label="收起待处理交互" hidden>×</button></div>
-            <div class="pending-requests" id="pendingRequests" hidden></div>
+          <div class="notice" id="notice" role="status" aria-live="polite" hidden=""></div>
+          <div class="creation-result" id="creationResult" role="status" hidden=""><span id="creationResultText"></span><button class="text-button" id="enterCreatedThread" type="button" data-i18n="进入已创建会话" data-i18n-node="0">进入已创建会话</button></div>
+          <div class="thread-load-state" id="threadLoadState" role="status" aria-live="polite" hidden=""><span id="threadLoadText"></span><button class="text-button" id="retryThreadButton" type="button" hidden="" data-i18n="重试" data-i18n-node="0">重试</button></div>
+          <div class="control-state" id="controlState" hidden="">
+            <div class="control-state-heading"><button id="controlToggle" type="button" aria-controls="pendingRequests" aria-expanded="false"><span id="controlSummary" role="status" aria-live="polite"></span><span class="control-disclosure" aria-hidden="true">⌄</span></button><button class="text-button" id="refreshControl" type="button" title="刷新待处理交互" data-i18n="刷新状态" data-i18n-node="0" data-i18n-title="刷新待处理交互">刷新状态</button><button class="icon-button" id="closePendingRequests" type="button" title="收起待处理交互" aria-label="收起待处理交互" hidden="" data-i18n-title="收起待处理交互" data-i18n-aria-label="收起待处理交互">×</button></div>
+            <div class="pending-requests" id="pendingRequests" hidden=""></div>
           </div>
-          <button class="new-messages-button" id="newMessagesButton" type="button" hidden>有新消息 · 跳到最新</button>
+          <button class="new-messages-button" id="newMessagesButton" type="button" hidden="" data-i18n="有新消息 · 跳到最新" data-i18n-node="0">有新消息 · 跳到最新</button>
           <div class="transcript" id="transcript" aria-live="polite" aria-relevant="additions text">
-            <div class="older-row" id="olderRow" hidden><button class="older-button" id="olderButton" type="button" hidden>↑　较早的消息</button><span class="history-state" id="historyState" role="status"></span></div>
-            <div class="welcome-state" id="welcomeState"><span class="welcome-mark" aria-hidden="true">C</span><p>从任务列表中选择一个对话</p></div>
+            <div class="older-row" id="olderRow" hidden=""><button class="older-button" id="olderButton" type="button" hidden="" data-i18n="↑　较早的消息" data-i18n-node="0">↑　较早的消息</button><span class="history-state" id="historyState" role="status"></span></div>
+            <div class="welcome-state" id="welcomeState"><span class="welcome-mark" aria-hidden="true">C</span><p data-i18n="从任务列表中选择一个对话" data-i18n-node="0">从任务列表中选择一个对话</p></div>
           </div>
           <form class="composer" id="composer">
-            <input id="attachmentPicker" type="file" multiple hidden>
+            <input id="attachmentPicker" type="file" multiple="" hidden="">
             <ul id="attachmentList" class="attachment-list"></ul>
-            <div id="attachmentError" class="attachment-error" role="status" hidden></div>
-            <label class="sr-only" for="promptInput">发送消息</label>
-            <span class="sr-only" id="attachmentHelp">先上传到当前会话目录，发送后供 Codex 读取</span>
+            <div id="attachmentError" class="attachment-error" role="status" hidden=""></div>
+            <label class="sr-only" for="promptInput" data-i18n="发送消息" data-i18n-node="0">发送消息</label>
+            <span class="sr-only" id="attachmentHelp" data-i18n="先上传到当前会话目录，发送后供 Codex 读取" data-i18n-node="0">先上传到当前会话目录，发送后供 Codex 读取</span>
             <div class="composer-input-row">
-              <button id="attachButton" type="button" class="icon-button" aria-label="添加附件" aria-describedby="attachmentHelp" title="添加附件：先上传到当前会话目录，发送后供 Codex 读取" disabled>＋</button>
-              <textarea id="promptInput" rows="1" placeholder="发送消息…" maxlength="12000" disabled></textarea>
-              <button id="modelSettingsButton" type="button" class="model-settings-button" title="下一轮设置：模型、推理强度与权限" aria-label="下一轮设置：模型、推理强度与权限" aria-haspopup="dialog" aria-controls="modelSettingsDialog">
+              <button id="attachButton" type="button" class="icon-button" aria-label="添加附件" aria-describedby="attachmentHelp" title="添加附件：先上传到当前会话目录，发送后供 Codex 读取" disabled="" data-i18n-aria-label="添加附件" data-i18n-title="添加附件：先上传到当前会话目录，发送后供 Codex 读取">＋</button>
+              <textarea id="promptInput" rows="1" placeholder="发送消息…" maxlength="12000" disabled="" data-i18n-placeholder="发送消息…"></textarea>
+              <button id="modelSettingsButton" type="button" class="model-settings-button" title="下一轮设置：模型、推理强度与权限" aria-label="下一轮设置：模型、推理强度与权限" aria-haspopup="dialog" aria-controls="modelSettingsDialog" data-i18n-title="下一轮设置：模型、推理强度与权限" data-i18n-aria-label="下一轮设置：模型、推理强度与权限">
                 <!-- Lucide settings, ISC license. -->
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-                <span id="modelSettingsLabel" class="sr-only">沿用桌面</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                <span id="modelSettingsLabel" class="sr-only" data-i18n="沿用桌面" data-i18n-node="0">沿用桌面</span>
               </button>
-              <button class="stop-button composer-action" id="stopButton" type="button" aria-label="停止当前轮次" title="停止当前轮次" hidden><span class="stop-icon" aria-hidden="true"></span></button>
-              <button class="send-button composer-action" id="sendButton" type="submit" aria-label="发送消息" title="发送消息" disabled><span class="send-icon" aria-hidden="true">↑</span></button>
+              <button class="stop-button composer-action" id="stopButton" type="button" aria-label="停止当前轮次" title="停止当前轮次" hidden="" data-i18n-aria-label="停止当前轮次" data-i18n-title="停止当前轮次"><span class="stop-icon" aria-hidden="true"></span></button>
+              <button class="send-button composer-action" id="sendButton" type="submit" aria-label="发送消息" title="发送消息" disabled="" data-i18n-aria-label="发送消息" data-i18n-title="发送消息"><span class="send-icon" aria-hidden="true">↑</span></button>
             </div>
-            <span class="composer-hint" id="composerHint" role="status" aria-live="polite">选择任务后查看发送权限</span>
+            <span class="composer-hint" id="composerHint" role="status" aria-live="polite" data-i18n="选择任务后查看发送权限" data-i18n-node="0">选择任务后查看发送权限</span>
           </form>
         </section>
-        <div class="context-scrim" id="contextScrim" hidden></div>
-        <aside class="thread-context" id="threadContext" aria-label="会话上下文" hidden>
-          <div class="context-heading"><h2>会话上下文</h2><button class="icon-button" id="refreshContext" type="button" title="刷新上下文" aria-label="刷新会话上下文"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button><button class="icon-button" id="closeContext" type="button" title="关闭上下文" aria-label="关闭会话上下文"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg></button></div>
+        <div class="context-scrim" id="contextScrim" hidden=""></div>
+        <aside class="thread-context" id="threadContext" aria-label="会话上下文" hidden="" data-i18n-aria-label="会话上下文">
+          <div class="context-heading"><h2 data-i18n="会话上下文" data-i18n-node="0">会话上下文</h2><button class="icon-button" id="refreshContext" type="button" title="刷新上下文" aria-label="刷新会话上下文" data-i18n-title="刷新上下文" data-i18n-aria-label="刷新会话上下文"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg></button><button class="icon-button" id="closeContext" type="button" title="关闭上下文" aria-label="关闭会话上下文" data-i18n-title="关闭上下文" data-i18n-aria-label="关闭会话上下文"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"></path></svg></button><select class="language-select" data-language-selector="" aria-label="界面语言" data-i18n-aria-label="界面语言"><option value="zh-CN">中文</option><option value="en">EN</option></select></div>
           <p class="context-state" id="contextState" role="status" aria-live="polite"></p>
           <div class="context-content" id="contextContent"></div>
         </aside>
       </main>
     </div>
     <dialog class="files-panel" id="filesPanel" aria-labelledby="filesTitle">
-      <div class="files-heading"><button id="filesBack" type="button" aria-label="返回上一级" disabled>‹</button><div class="files-title-wrap"><h2 id="filesTitle">文件</h2><div id="filesPath" class="files-path"></div></div><button id="filesRefresh" type="button" aria-label="刷新文件列表">↻</button><button id="filesClose" type="button" aria-label="关闭文件面板">×</button></div>
+      <div class="files-heading"><button id="filesBack" type="button" aria-label="返回上一级" disabled="" data-i18n-aria-label="返回上一级">‹</button><div class="files-title-wrap"><h2 id="filesTitle" data-i18n="文件" data-i18n-node="0">文件</h2><div id="filesPath" class="files-path"></div></div><button id="filesRefresh" type="button" aria-label="刷新文件列表" data-i18n-aria-label="刷新文件列表">↻</button><button id="filesClose" type="button" aria-label="关闭文件面板" data-i18n-aria-label="关闭文件面板">×</button><select class="language-select" data-language-selector="" aria-label="界面语言" data-i18n-aria-label="界面语言"><option value="zh-CN">中文</option><option value="en">EN</option></select></div>
       <div id="filesContent" class="files-content">
         <p id="filesState" class="files-state" role="status" aria-live="polite"></p>
         <ul id="filesEntries" class="files-entries"></ul>
         <div id="filesPreview" class="files-preview"></div>
-        <div class="files-preview-actions"><button id="filesDownload" type="button" hidden>下载文件</button></div>
+        <div class="files-preview-actions"><button id="filesDownload" type="button" hidden="" data-i18n="下载文件" data-i18n-node="0">下载文件</button></div>
       </div>
     </dialog>
     <dialog class="agent-viewer" id="agentViewer" aria-labelledby="agentViewerTitle" aria-describedby="agentViewerStatus">
       <div class="agent-viewer-heading">
-        <div class="agent-viewer-title-wrap"><h2 id="agentViewerTitle">子智能体</h2><p id="agentViewerStatus" class="agent-viewer-status"></p></div>
+        <div class="agent-viewer-title-wrap"><h2 id="agentViewerTitle" data-i18n="子智能体" data-i18n-node="0">子智能体</h2><p id="agentViewerStatus" class="agent-viewer-status"></p></div>
         <div class="agent-viewer-actions">
-          <button class="icon-button" id="agentViewerRefresh" type="button" aria-label="刷新子智能体历史" title="刷新"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
-          <button class="icon-button" id="agentViewerClose" type="button" aria-label="关闭子智能体历史" title="关闭"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg></button>
-        </div>
+          <button class="icon-button" id="agentViewerRefresh" type="button" aria-label="刷新子智能体历史" title="刷新" data-i18n-aria-label="刷新子智能体历史" data-i18n-title="刷新"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg></button>
+          <button class="icon-button" id="agentViewerClose" type="button" aria-label="关闭子智能体历史" title="关闭" data-i18n-aria-label="关闭子智能体历史" data-i18n-title="关闭"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"></path></svg></button>
+        <select class="language-select" data-language-selector="" aria-label="界面语言" data-i18n-aria-label="界面语言"><option value="zh-CN">中文</option><option value="en">EN</option></select></div>
       </div>
-      <div class="agent-viewer-error" id="agentViewerError" role="status" aria-live="polite" hidden><span id="agentViewerErrorText"></span><button class="text-button" id="agentViewerRetry" type="button">重试</button></div>
+      <div class="agent-viewer-error" id="agentViewerError" role="status" aria-live="polite" hidden=""><span id="agentViewerErrorText"></span><button class="text-button" id="agentViewerRetry" type="button" data-i18n="重试" data-i18n-node="0">重试</button></div>
       <div class="agent-viewer-transcript" id="agentViewerTranscript" aria-live="polite" aria-relevant="additions text">
-        <div class="agent-viewer-older-row"><button class="older-button" id="agentViewerOlder" type="button" hidden>↑　较早的消息</button><span id="agentViewerHistoryState" class="history-state" role="status"></span></div>
-        <p class="agent-viewer-empty" id="agentViewerEmpty">正在读取历史…</p>
+        <div class="agent-viewer-older-row"><button class="older-button" id="agentViewerOlder" type="button" hidden="" data-i18n="↑　较早的消息" data-i18n-node="0">↑　较早的消息</button><span id="agentViewerHistoryState" class="history-state" role="status"></span></div>
+        <p class="agent-viewer-empty" id="agentViewerEmpty" data-i18n="正在读取历史…" data-i18n-node="0">正在读取历史…</p>
       </div>
     </dialog>
-    <dialog id="followupDraftDialog" class="font-dialog" aria-labelledby="followupDraftTitle">
-      <h2 id="followupDraftTitle">加入现有草稿</h2>
+    <dialog id="followupDraftDialog" class="font-dialog" aria-labelledby="followupDraftTitle"><select class="language-select" data-language-selector="" aria-label="界面语言" data-i18n-aria-label="界面语言"><option value="zh-CN">中文</option><option value="en">EN</option></select>
+      <h2 id="followupDraftTitle" data-i18n="加入现有草稿" data-i18n-node="0">加入现有草稿</h2>
       <p id="followupDraftPreview" class="followup-draft-preview"></p>
-      <div class="font-dialog-footer"><button id="followupDraftCancel" type="button">取消</button><button id="followupDraftAppend" type="button">追加到草稿</button></div>
+      <div class="font-dialog-footer"><button id="followupDraftCancel" type="button" data-i18n="取消" data-i18n-node="0">取消</button><button id="followupDraftAppend" type="button" data-i18n="追加到草稿" data-i18n-node="0">追加到草稿</button></div>
     </dialog>
-    <dialog id="modelSettingsDialog" class="font-dialog" aria-labelledby="modelSettingsTitle">
-      <h2 id="modelSettingsTitle">下一轮设置</h2>
-      <label class="new-thread-label" for="messageModel">模型</label><select id="messageModel" class="new-thread-control"></select>
-      <label class="new-thread-label" for="messageThinking">推理强度</label><select id="messageThinking" class="new-thread-control"></select>
-      <label class="new-thread-label" for="messagePermission">权限</label><select id="messagePermission" class="new-thread-control" aria-describedby="permissionState" title="下一轮权限" disabled><option value="">权限 · 沿用桌面</option></select>
-      <p id="permissionState" class="permission-state" role="status" hidden></p>
+    <dialog id="modelSettingsDialog" class="font-dialog" aria-labelledby="modelSettingsTitle"><select class="language-select" data-language-selector="" aria-label="界面语言" data-i18n-aria-label="界面语言"><option value="zh-CN">中文</option><option value="en">EN</option></select>
+      <h2 id="modelSettingsTitle" data-i18n="下一轮设置" data-i18n-node="0">下一轮设置</h2>
+      <label class="new-thread-label" for="messageModel" data-i18n="模型" data-i18n-node="0">模型</label><select id="messageModel" class="new-thread-control"></select>
+      <label class="new-thread-label" for="messageThinking" data-i18n="推理强度" data-i18n-node="0">推理强度</label><select id="messageThinking" class="new-thread-control"></select>
+      <label class="new-thread-label" for="messagePermission" data-i18n="权限" data-i18n-node="0">权限</label><select id="messagePermission" class="new-thread-control" aria-describedby="permissionState" title="下一轮权限" disabled="" data-i18n-title="下一轮权限"><option value="" data-i18n="权限 · 沿用桌面" data-i18n-node="0">权限 · 沿用桌面</option></select>
+      <p id="permissionState" class="permission-state" role="status" hidden=""></p>
       <p id="modelSettingsState" class="model-settings-state" role="status"></p>
-      <div class="font-dialog-footer"><button id="modelSettingsDone" type="button">完成</button></div>
+      <div class="font-dialog-footer"><button id="modelSettingsDone" type="button" data-i18n="完成" data-i18n-node="0">完成</button></div>
     </dialog>
     <dialog id="threadActionDialog" class="font-dialog" aria-labelledby="threadActionTitle" aria-describedby="threadActionHint">
-      <form id="threadActionForm">
-        <h2 id="threadActionTitle">管理会话</h2>
+      <form id="threadActionForm"><select class="language-select" data-language-selector="" aria-label="界面语言" data-i18n-aria-label="界面语言"><option value="zh-CN">中文</option><option value="en">EN</option></select>
+        <h2 id="threadActionTitle" data-i18n="管理会话" data-i18n-node="0">管理会话</h2>
         <p id="threadActionHint"></p>
-        <label id="threadNameLabel" for="threadNameInput">会话名称</label>
+        <label id="threadNameLabel" for="threadNameInput" data-i18n="会话名称" data-i18n-node="0">会话名称</label>
         <input id="threadNameInput" class="thread-name-input" type="text" maxlength="200" autocomplete="off">
-        <p id="threadActionError" class="thread-action-error" role="status" hidden></p>
-        <div class="font-dialog-footer"><button id="threadActionCancel" type="button">取消</button><button id="threadActionConfirm" type="submit">确认</button></div>
+        <p id="threadActionError" class="thread-action-error" role="status" hidden=""></p>
+        <div class="font-dialog-footer"><button id="threadActionCancel" type="button" data-i18n="取消" data-i18n-node="0">取消</button><button id="threadActionConfirm" type="submit" data-i18n="确认" data-i18n-node="0">确认</button></div>
       </form>
     </dialog>
     <dialog id="newThreadDialog" class="font-dialog new-thread-dialog" aria-labelledby="newThreadTitle">
       <form id="newThreadForm">
-        <div class="new-thread-heading"><h2 id="newThreadTitle">新建会话</h2><button id="newThreadClose" type="button" aria-label="关闭新建会话">×</button></div>
-        <label class="new-thread-label" for="newThreadProject">项目</label>
-        <select id="newThreadProject" class="new-thread-control" required>
-          <option value="">请选择项目或无项目</option>
-          <option value="__none__">无项目</option>
+        <div class="new-thread-heading"><h2 id="newThreadTitle" data-i18n="新建会话" data-i18n-node="0">新建会话</h2><button id="newThreadClose" type="button" aria-label="关闭新建会话" data-i18n-aria-label="关闭新建会话">×</button><select class="language-select" data-language-selector="" aria-label="界面语言" data-i18n-aria-label="界面语言"><option value="zh-CN">中文</option><option value="en">EN</option></select></div>
+        <label class="new-thread-label" for="newThreadProject" data-i18n="项目" data-i18n-node="0">项目</label>
+        <select id="newThreadProject" class="new-thread-control" required="">
+          <option value="" data-i18n="请选择项目或无项目" data-i18n-node="0">请选择项目或无项目</option>
+          <option value="__none__" data-i18n="无项目" data-i18n-node="0">无项目</option>
         </select>
-        <div class="project-selection-detail" id="projectSelectionDetail" hidden></div>
-        <div class="project-load-state" id="projectLoadState" role="status" hidden><span id="projectLoadText"></span><button id="retryProjects" class="text-button" type="button">重试</button></div>
-        <label class="new-thread-label" for="newThreadName">标题 <span>可选</span></label>
+        <div class="project-selection-detail" id="projectSelectionDetail" hidden=""></div>
+        <div class="project-load-state" id="projectLoadState" role="status" hidden=""><span id="projectLoadText"></span><button id="retryProjects" class="text-button" type="button" data-i18n="重试" data-i18n-node="0">重试</button></div>
+        <label class="new-thread-label" for="newThreadName" data-i18n="标题" data-i18n-node="0">标题 <span data-i18n="可选" data-i18n-node="0">可选</span></label>
         <input id="newThreadName" class="new-thread-control" type="text" maxlength="200" autocomplete="off">
-        <label class="new-thread-label" for="newThreadPrompt">首条消息</label>
-        <textarea id="newThreadPrompt" class="new-thread-control new-thread-prompt" rows="5" maxlength="12000" required placeholder="描述要完成的任务…"></textarea>
-        <div class="model-create-fields"><div><label class="new-thread-label" for="createModel">模型</label><select id="createModel" class="new-thread-control"></select></div><div><label class="new-thread-label" for="createThinking">推理强度</label><select id="createThinking" class="new-thread-control"></select></div></div>
-        <div class="create-recovery-state" id="createRecoveryState" role="status" aria-live="polite" hidden></div>
-        <div class="create-error" id="createError" role="status" hidden></div>
-        <div class="new-thread-footer"><button id="createCancel" type="button">取消</button><button id="createRetry" type="button" hidden>重试原请求</button><button id="checkCreateReceipt" type="button" hidden>核对状态</button><button id="createSubmit" type="submit">创建会话</button><button id="enterCreatedFromDialog" type="button" hidden>进入已创建会话</button></div>
+        <label class="new-thread-label" for="newThreadPrompt" data-i18n="首条消息" data-i18n-node="0">首条消息</label>
+        <textarea id="newThreadPrompt" class="new-thread-control new-thread-prompt" rows="5" maxlength="12000" required="" placeholder="描述要完成的任务…" data-i18n-placeholder="描述要完成的任务…"></textarea>
+        <div class="model-create-fields"><div><label class="new-thread-label" for="createModel" data-i18n="模型" data-i18n-node="0">模型</label><select id="createModel" class="new-thread-control"></select></div><div><label class="new-thread-label" for="createThinking" data-i18n="推理强度" data-i18n-node="0">推理强度</label><select id="createThinking" class="new-thread-control"></select></div></div>
+        <div class="create-recovery-state" id="createRecoveryState" role="status" aria-live="polite" hidden=""></div>
+        <div class="create-error" id="createError" role="status" hidden=""></div>
+        <div class="new-thread-footer"><button id="createCancel" type="button" data-i18n="取消" data-i18n-node="0">取消</button><button id="createRetry" type="button" hidden="" data-i18n="重试原请求" data-i18n-node="0">重试原请求</button><button id="checkCreateReceipt" type="button" hidden="" data-i18n="核对状态" data-i18n-node="0">核对状态</button><button id="createSubmit" type="submit" data-i18n="创建会话" data-i18n-node="0">创建会话</button><button id="enterCreatedFromDialog" type="button" hidden="" data-i18n="进入已创建会话" data-i18n-node="0">进入已创建会话</button></div>
       </form>
     </dialog>
     <dialog id="fontDialog" class="font-dialog" aria-labelledby="fontDialogTitle" aria-describedby="fontHelp">
-      <div class="font-dialog-heading"><h2 id="fontDialogTitle">字体大小</h2><button id="fontClose" type="button" aria-label="关闭字号设置">×</button></div>
-      <p id="fontHelp">正文、代码、表格和输入框同步调整，自动保存在本浏览器。</p>
-      <div class="font-stepper"><button id="fontDecrease" type="button" aria-label="缩小字体">A−</button><output id="fontReadout" for="fontRange" aria-live="polite">20 px</output><button id="fontIncrease" type="button" aria-label="放大字体">A＋</button></div>
-      <label class="sr-only" for="fontRange">字号，10 到 48 像素</label><input id="fontRange" type="range" min="10" max="48" step="1" value="20">
+      <div class="font-dialog-heading"><h2 id="fontDialogTitle" data-i18n="字体大小" data-i18n-node="0">字体大小</h2><button id="fontClose" type="button" aria-label="关闭字号设置" data-i18n-aria-label="关闭字号设置">×</button><select class="language-select" data-language-selector="" aria-label="界面语言" data-i18n-aria-label="界面语言"><option value="zh-CN">中文</option><option value="en">EN</option></select></div>
+      <p id="fontHelp" data-i18n="正文、代码、表格和输入框同步调整，自动保存在本浏览器。" data-i18n-node="0">正文、代码、表格和输入框同步调整，自动保存在本浏览器。</p>
+      <div class="font-stepper"><button id="fontDecrease" type="button" aria-label="缩小字体" data-i18n-aria-label="缩小字体">A−</button><output id="fontReadout" for="fontRange" aria-live="polite">20 px</output><button id="fontIncrease" type="button" aria-label="放大字体" data-i18n-aria-label="放大字体">A＋</button></div>
+      <label class="sr-only" for="fontRange" data-i18n="字号，10 到 48 像素" data-i18n-node="0">字号，10 到 48 像素</label><input id="fontRange" type="range" min="10" max="48" step="1" value="20">
       <div class="font-range-labels"><span>10 px</span><span>48 px</span></div>
-      <div class="font-preview"><p>手机阅读，清楚舒适。</p><code>const message = "你好";</code></div>
-      <div class="font-dialog-footer"><button id="fontReset" type="button">恢复默认 · 20 px</button><button id="fontDone" type="button">完成</button></div>
+      <div class="font-preview"><p data-i18n="手机阅读，清楚舒适。" data-i18n-node="0">手机阅读，清楚舒适。</p><code>const message = "你好";</code></div>
+      <div class="font-dialog-footer"><button id="fontReset" type="button" data-i18n="恢复默认 · 20 px" data-i18n-node="0">恢复默认 · 20 px</button><button id="fontDone" type="button" data-i18n="完成" data-i18n-node="0">完成</button></div>
     </dialog>
-    <noscript><p class="noscript">此页面需要启用 JavaScript 才能连接本机 Codex。</p></noscript>
-  </body>
-</html>
+    <noscript><p class="noscript" data-i18n="此页面需要启用 JavaScript 才能连接本机 Codex。" data-i18n-node="0">此页面需要启用 JavaScript 才能连接本机 Codex。</p></noscript>
+
+
+
+
+</body></html>

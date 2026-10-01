@@ -10,6 +10,7 @@ import { ensureLocalBridge, localThreadCandidates, chooseFreePort, probeLocalBri
 const id = '11111111-1111-4111-8111-111111111111';
 const other = '22222222-2222-4222-8222-222222222222';
 const status = { connected: true, mode: 'desktop-pipe', canSend: true, callerThreadId: id };
+const currentBridgePage=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
 async function fixture(t, overrides = {}) {
   const root = await mkdtemp(resolve(tmpdir(), 'codex-bridge-bootstrap-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -120,10 +121,10 @@ test('structured session index and sidebar fallback supply bounded, sanitized ch
 });
 
 test('HTTP bridge probe requires actual connected desktop protocol, not merely a responding listener', async t => {
-  let reply = { ...status, connected: false };
+  let reply = { ...status, connected: false },rootPage=currentBridgePage,statusRequests=0;
   const server = http.createServer((req, res) => {
-    if (req.url === '/') { res.setHeader('Set-Cookie', `bridge_session=${'a'.repeat(64)}; Path=/`); res.end('<title>Codex 手机桥接</title>'); }
-    else { assert.equal(req.headers['x-bridge-client'], 'mobile-v1'); assert.equal(req.headers.cookie, `bridge_session=${'a'.repeat(64)}`); res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(reply)); }
+    if (req.url === '/') { res.setHeader('Set-Cookie', `bridge_session=${'a'.repeat(64)}; Path=/`); res.end(rootPage); }
+    else { statusRequests++;assert.equal(req.headers['x-bridge-client'], 'mobile-v1'); assert.equal(req.headers.cookie, `bridge_session=${'a'.repeat(64)}`); res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(reply)); }
   });
   await new Promise(resolveReady => server.listen(0, '127.0.0.1', resolveReady));
   t.after(async () => { server.closeAllConnections(); await new Promise(resolveClosed => server.close(resolveClosed)); });
@@ -131,4 +132,6 @@ test('HTTP bridge probe requires actual connected desktop protocol, not merely a
   assert.equal(await probeLocalBridge(port), null);
   reply = { ...status, mode: 'unknown-service' }; assert.equal(await probeLocalBridge(port), null);
   reply = status; assert.deepEqual(await probeLocalBridge(port), status);
+  rootPage='<title>Codex 手机桥接</title>';assert.deepEqual(await probeLocalBridge(port),status);
+  const before=statusRequests;rootPage='<title>Another local service</title>';assert.equal(await probeLocalBridge(port),null);assert.equal(statusRequests,before);
 });

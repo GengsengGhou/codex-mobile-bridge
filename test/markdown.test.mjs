@@ -68,6 +68,7 @@ test('local Markdown references become file actions with normalized paths and li
     { path: './out.png', line: '', image: true },
   ]);
   const dom = new JSDOM('<div id="root"></div>');
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */
   const root = dom.window.document.querySelector('#root');
   appendMarkdown(root, '[win](<C:\\work tree\\guide.md:12>) [site](https://example.com/a.md) [run](javascript:alert(1))', dom.window.document);
   assert.equal(root.querySelectorAll('button[data-local-file]').length, 1);
@@ -136,6 +137,7 @@ const artifactFollowup = ':codex-followup[精简为20分钟版]{prompt="将示�
 
 function renderArtifact(source, options = {}) {
   const dom = new JSDOM('<div id="root"></div>');
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */
   const root = dom.window.document.querySelector('#root');
   appendMarkdown(root, source, dom.window.document, options);
   return { dom, root };

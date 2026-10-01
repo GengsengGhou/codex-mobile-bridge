@@ -1,3 +1,4 @@
+import { createI18n } from "./i18n.js";
 import { appendMarkdown } from "./markdown.js";
 import { buildTurnBlocks, formatWorkSummary } from "./presentation.js";
 import { mergeTranscriptTurns, transcriptAnchor, restoreTranscriptAnchor } from "./conversation-state.js";
@@ -25,6 +26,7 @@ function detailText(value) {
 }
 
 function renderItem(item, document, turnId, openDisclosures) {
+  const i18n = createI18n({ window: document.defaultView, document }), t = i18n.t;
   const article = document.createElement("article");
   article.className = "message";
   if (item.type === "userMessage" || item.type === "agentMessage") {
@@ -47,7 +49,7 @@ function renderItem(item, document, turnId, openDisclosures) {
   article.className = "activity-item";
   const summary = document.createElement("div");
   summary.className = "activity-summary";
-  summary.textContent = typeof item.text === "string" ? item.text : "活动";
+  i18n.text(summary, () => typeof item.text === "string" ? item.text : t("活动"));
   article.append(summary);
   const detail = detailText(item.detail);
   if (detail) {
@@ -58,7 +60,7 @@ function renderItem(item, document, turnId, openDisclosures) {
     details.open = openDisclosures.get(disclosureKey) === true;
     details.addEventListener("toggle", () => openDisclosures.set(disclosureKey, details.open));
     const heading = document.createElement("summary");
-    heading.textContent = "查看详情";
+    i18n.text(heading, () => t("查看详情"));
     heading.dataset.viewerDisclosureKey = disclosureKey;
     const pre = document.createElement("pre");
     pre.className = "activity-detail";
@@ -70,6 +72,7 @@ function renderItem(item, document, turnId, openDisclosures) {
 }
 
 function renderTurn(turn, document, openDisclosures) {
+  const i18n = createI18n({ window: document.defaultView, document }), t = i18n.t;
   const section = document.createElement("section");
   section.className = "turn agent-viewer-turn";
   section.dataset.turnId = String(turn.id ?? "");
@@ -84,7 +87,7 @@ function renderTurn(turn, document, openDisclosures) {
       details.open = openDisclosures.get(disclosureKey) === true;
       details.addEventListener("toggle", () => openDisclosures.set(disclosureKey, details.open));
       const summary = document.createElement("summary");
-        summary.textContent = formatWorkSummary(turn, block);
+        i18n.text(summary, () => formatWorkSummary(turn, block, t));
       summary.dataset.viewerDisclosureKey = disclosureKey;
       const content = document.createElement("div");
       content.className = "work-process-content";
@@ -97,6 +100,7 @@ function renderTurn(turn, document, openDisclosures) {
 }
 
 export function createAgentViewer({ document, window, api }) {
+  const i18n = createI18n({ window, document }), t = i18n.t;
   if (!document?.getElementById || !window || typeof api !== "function") throw new TypeError("document, window and api are required");
   const dialog = document.getElementById("agentViewer");
   const title = document.getElementById("agentViewerTitle");
@@ -133,16 +137,16 @@ export function createAgentViewer({ document, window, api }) {
   const current = token => token === generation && isOpen();
 
   function updateHeader() {
-    title.textContent = currentName || "子智能体";
-    title.title = currentName || "子智能体";
-    status.textContent = `状态 · ${statusLabel(currentStatus)}`;
+    i18n.text(title, () => currentName || t("子智能体"));
+    i18n.attr(title, "title", () => currentName || t("子智能体"));
+    i18n.text(status, () => t`状态 · ${t(statusLabel(currentStatus))}`);
   }
 
   function updatePaging() {
     older.hidden = !hasMore || !activeId;
     older.disabled = loading || !hasMore;
-    older.textContent = loading ? "读取中…" : "↑　较早的消息";
-    historyState.textContent = loading ? "" : hasMore ? "" : turns.size ? "已到最早消息" : "";
+    i18n.text(older, () => loading ? t("读取中…") : t("↑　较早的消息"));
+    i18n.text(historyState, () => loading ? "" : hasMore ? "" : turns.size ? t("已到最早消息") : "");
   }
 
   function render({ scrollToEnd = false } = {}) {
@@ -174,7 +178,7 @@ export function createAgentViewer({ document, window, api }) {
 
   function setError(message = "") {
     error.hidden = !message;
-    errorText.textContent = message;
+    i18n.text(errorText, () => t(message));
     if (message) empty.hidden = true;
   }
 
@@ -186,12 +190,12 @@ export function createAgentViewer({ document, window, api }) {
     cursor = null;
     hasMore = false;
     failedOlderRead = false;
-    historyState.textContent = "";
+    i18n.text(historyState, () => "");
     setError("");
-    title.textContent = "子智能体";
-    title.title = "子智能体";
-    status.textContent = "状态 · 状态未知";
-    empty.textContent = "";
+    i18n.text(title, () => t("子智能体"));
+    i18n.attr(title, "title", () => t("子智能体"));
+    i18n.text(status, () => t("状态 · 状态未知"));
+    i18n.text(empty, () => "");
     empty.hidden = true;
     const olderRow = transcript.querySelector(".agent-viewer-older-row");
     transcript.replaceChildren(olderRow, empty);
@@ -256,7 +260,7 @@ export function createAgentViewer({ document, window, api }) {
     try {
       const data = await api(`/api/threads/${encodeURIComponent(id)}${query}`, { signal: requestController.signal });
       if (!current(token) || activeId !== id || requestController.signal.aborted) return;
-      if (data?.thread?.id !== id || !Array.isArray(data.turns)) throw new Error("返回的会话历史与请求不匹配");
+      if (data?.thread?.id !== id || !Array.isArray(data.turns)) throw new Error(t("返回的会话历史与请求不匹配"));
       const previousTurns = [...turns.values()];
       const previousCursor = cursor;
       const previousHasMore = hasMore;
@@ -274,12 +278,12 @@ export function createAgentViewer({ document, window, api }) {
       currentStatus = data.thread.status ?? currentStatus;
       updateHeader();
       render({ scrollToEnd: !olderPage && previousTurns.length === 0 });
-      if (!turns.size) empty.textContent = "暂无历史消息";
+      if (!turns.size) i18n.text(empty, () => t("暂无历史消息"));
       setError("");
     } catch (cause) {
       if (!current(token) || requestController.signal.aborted || cause?.name === "AbortError") return;
       failedOlderRead = olderPage;
-      setError(cause?.message || "读取子智能体历史失败");
+      setError(t(cause?.message) || t("读取子智能体历史失败"));
     } finally {
       if (current(token) && controller === requestController) {
         loading = false;
@@ -310,8 +314,8 @@ export function createAgentViewer({ document, window, api }) {
     cursor = null;
     hasMore = false;
     transcript.scrollTop = 0;
-    empty.textContent = "正在读取历史…";
-    historyState.textContent = "";
+    i18n.text(empty, () => t("正在读取历史…"));
+    i18n.text(historyState, () => "");
     setError("");
     updateHeader();
     render();

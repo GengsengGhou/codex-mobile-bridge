@@ -15,19 +15,21 @@ its published SHA-256 before embedding it. No manual Node installation is needed
 The EXE is unsigned; Windows may show publisher reputation information.
 
 Installation uses `%LOCALAPPDATA%\CodexMobileConnector` and current-user Start menu
-and desktop shortcuts named `Codex 手机桥接`. Search Start for `Codex` or `手机桥接`.
+and desktop shortcuts named `Codex Mobile Bridge`. Search Start for `Codex Mobile Bridge`.
 Setup and upgrades create both shortcuts; ordinary app launches repair only the Start menu
 entry, so deleting the desktop shortcut is respected until the next install or upgrade.
-Owned legacy `Codex Mobile Connector` shortcuts are migrated, and uninstall removes only
+Owned legacy `Codex Mobile Connector` and `Codex 手机桥接` shortcuts are migrated, and uninstall removes only
 shortcuts targeting this installation with its working directory and no arguments.
-The executable has an application filename and localized product metadata; shortcuts and
+The executable has an application filename and English product metadata; shortcuts and
 the running process share the stable AppUserModelID `CodexMobileBridge.Connector`.
 A successful first pairing enables current-user login recovery unless the user
 previously chose to keep it off. Existing saved preferences or verifiable owned startup
 entries preserve the automatic choice; an old v0.1.0 uninstall removes startup
 entries, so check and select login recovery again after reinstalling.
 It does not request administrator rights.
-The companion is localized in Chinese. Enter the server address (a plain hostname
+The installer and app support Chinese and English. Select the language before
+installation, or change it afterward in Settings. See [language settings](languages.md).
+Enter the server address (a plain hostname
 is normalized to HTTPS) and open login in the system browser. Log in or register
 with an invitation there, generate a one-time code, and enter it with this
 computer's name in the desktop window. Server, name and masked 43-character code

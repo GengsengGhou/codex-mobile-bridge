@@ -47,6 +47,20 @@ test('gateway denies unauthenticated app, API, files and local provisioning with
   assert.equal(f.requests.length, 0);
   const denied = await call(f.port, '/api/remote-access', { headers: { cookie: f.session } }); assert.equal(denied.status, 404); assert.equal(f.requests.length, 0);
 });
+
+test('login language modules are public without exposing the authenticated app', async t => {
+  const f = await fixture(t);
+  for (const path of ['/i18n.js', '/i18n-messages.js']) {
+    const response = await call(f.port, path);
+    assert.equal(response.status, 200);
+    assert.match(response.headers['content-type'], /^text\/javascript/);
+    assert.ok(response.body.length > 0);
+    assert.match(response.headers['content-security-policy'], /script-src 'self'/);
+  }
+  assert.equal((await call(f.port, '/app.js')).status, 302);
+  assert.equal((await call(f.port, '/api/threads')).status, 401);
+  assert.equal(f.requests.length, 0);
+});
 test('gateway enforces exact Host and Origin and ignores spoofed forwarding identity', async t => {
   const f = await fixture(t);
   for (const headers of [ { host: '127.0.0.1', 'x-forwarded-host': 'phone.example.test' }, { origin: 'https://evil.example' }, { 'sec-fetch-site': 'cross-site' } ]) {

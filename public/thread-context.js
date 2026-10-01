@@ -1,9 +1,11 @@
+import { createI18n } from "./i18n.js";
 const PERMISSIONS = { "full-access": "完全访问", "request-approval": "请求批准" };
 const SOURCES = { file: "文件", web: "网页", tool: "工具", "web-search": "网页搜索", app: "应用", resource: "资源" };
 const STATUSES = { running: "进行中", active: "进行中", inProgress: "进行中", pendingInit: "正在启动", idle: "空闲", completed: "已完成", errored: "错误", failed: "错误", interrupted: "已中断", closed: "已结束", shutdown: "已结束", notFound: "暂不可用", notLoaded: "尚未载入", unknown: "状态未知" };
 const string = value => typeof value === "string" ? value : "";
 
 export function createThreadContextPanel({ document, window, api, storage, onViewAgent = () => {}, onAgents = () => {}, onNotice = () => {} }) {
+  const i18n = createI18n({ window, document }), t = i18n.t;
   const node = id => document.getElementById(id);
   const ui = { toggle: node("contextToggle"), panel: node("threadContext"), scrim: node("contextScrim"), close: node("closeContext"), refresh: node("refreshContext"), state: node("contextState"), content: node("contextContent"), permission: node("messagePermission"), permissionState: node("permissionState") };
   let threadId = null, cwd = "", opened = false, connected = false, sending = false, sendMode = "message", status = null, context = null, loading = false, controller = null, generation = 0, failure = "", permissionFingerprint = "";
@@ -22,22 +24,22 @@ export function createThreadContextPanel({ document, window, api, storage, onVie
   const supports = value => choices().some(item => item.id === value) && context?.permissions?.supported !== false;
   function renderPermissions() {
     const selected = selectedPermission(), options = choices();
-    const fingerprint = JSON.stringify([threadId, selected, options.map(item => item.id), supports(selected), sendMode]);
+    const fingerprint = JSON.stringify([i18n.language, threadId, selected, options.map(item => item.id), supports(selected), sendMode]);
     if (fingerprint !== permissionFingerprint) {
-      ui.permission.replaceChildren(new window.Option(sendMode === "follow-up" ? "下轮权限 · 沿用桌面" : "权限 · 沿用桌面", ""), ...options.map(item => new window.Option(`${sendMode === "follow-up" ? "下轮 · " : ""}${PERMISSIONS[item.id]}`, item.id)));
-      if (selected && !supports(selected) && !options.some(item => item.id === selected)) ui.permission.append(new window.Option(`${PERMISSIONS[selected]}（不可用）`, selected));
+      ui.permission.replaceChildren(i18n.option(() => sendMode === "follow-up" ? t("下轮权限 · 沿用桌面") : t("权限 · 沿用桌面"), ""), ...options.map(item => i18n.option(() => `${sendMode === "follow-up" ? t("下轮 · ") : ""}${t(PERMISSIONS[item.id])}`, item.id)));
+      if (selected && !supports(selected) && !options.some(item => item.id === selected)) ui.permission.append(i18n.option(() => t`${t(PERMISSIONS[selected])}（不可用）`, selected));
       ui.permission.value = selected;
       permissionFingerprint = fingerprint;
     }
     ui.permission.disabled = !threadId || sending;
     ui.permission.dataset.unavailable = String(!!selected && !supports(selected));
     const current = context?.permissions?.current;
-    const currentLabel = PERMISSIONS[current] || (current === "custom" ? "自定义权限" : "未知");
-    ui.permission.title = `下一轮权限：${PERMISSIONS[selected] || "沿用桌面"}${connected && context ? `；当前权限：${currentLabel}` : ""}${sendMode === "follow-up" ? "；本轮补充沿用当前轮次权限" : !options.length ? "；当前桌面未提供权限切换" : ""}`;
-    ui.permissionState.textContent = selected && !supports(selected) && sendMode !== "follow-up" ? "所选权限不可用，请恢复沿用桌面。" : sendMode === "follow-up" && selected ? "本轮补充沿用当前权限" : "";
+    const currentLabel = t(PERMISSIONS[current]) || (current === "custom" ? t("自定义权限") : t("未知"));
+    i18n.attr(ui.permission, "title", () => t`下一轮权限：${t(PERMISSIONS[selected]) || t("沿用桌面")}${connected && context ? t`；当前权限：${currentLabel}` : ""}${sendMode === "follow-up" ? t("；本轮补充沿用当前轮次权限") : !options.length ? t("；当前桌面未提供权限切换") : ""}`);
+    i18n.text(ui.permissionState, () => selected && !supports(selected) && sendMode !== "follow-up" ? t("所选权限不可用，请恢复沿用桌面。") : sendMode === "follow-up" && selected ? t("本轮补充沿用当前权限") : "");
     ui.permissionState.hidden = !ui.permissionState.textContent || sendMode === "follow-up";
   }
-  function element(tag, className, text) { const value = document.createElement(tag); if (className) value.className = className; if (text != null) value.textContent = text; return value; }
+  function element(tag, className, text) { const value = document.createElement(tag); if (className) value.className = className; if (text != null) i18n.text(value, () => text); return value; }
   function section(title) { const value = element("section", "context-section"); value.append(element("h3", "", title)); ui.content.append(value); return value; }
   function disclosure(parent, title, key, className = "context-disclosure") {
     const value = element("details", className), summary = element("summary", "", title);
@@ -51,14 +53,14 @@ export function createThreadContextPanel({ document, window, api, storage, onVie
   function empty(parent, reason, fallback) { parent.append(element("p", "", string(reason) || fallback)); }
   function detail(parent, pairs) {
     const list = element("dl");
-    for (const [name, value, title] of pairs) { if (!value) continue; const content = element("dd", "", value); if (title) content.title = title; list.append(element("dt", "", name), content); }
+    for (const [name, value, title] of pairs) { if (!value) continue; const content = element("dd", "", value); if (title) i18n.attr(content, "title", () => title); list.append(element("dt", "", name), content); }
     parent.append(list);
   }
   function render() {
     const focusedKey = ui.content.contains(document.activeElement) ? document.activeElement.dataset.contextKey : "";
     ui.toggle.disabled = !threadId;
     ui.toggle.setAttribute("aria-expanded", String(opened));
-    ui.toggle.setAttribute("aria-label", opened ? "关闭会话上下文" : "打开会话上下文");
+    i18n.attr(ui.toggle, "aria-label", () => opened ? t("关闭会话上下文") : t("打开会话上下文"));
     ui.panel.hidden = !opened;
     const mobile = !window.matchMedia("(min-width: 760px)").matches;
     ui.scrim.hidden = !opened || !mobile;
@@ -66,20 +68,20 @@ export function createThreadContextPanel({ document, window, api, storage, onVie
     if (mobile && opened) ui.panel.setAttribute("aria-modal", "true"); else ui.panel.removeAttribute("aria-modal");
     for (const selector of [".conversation", ".task-drawer", ".topbar"]) document.querySelector(selector).inert = opened && mobile;
     ui.refresh.disabled = !connected || loading;
-    ui.state.textContent = !connected ? "连接中断；上下文暂不可用。" : loading ? "正在读取上下文…" : failure || (!context?.available && context ? string(context.reason) || "当前桌面无法提供上下文。" : "");
+    i18n.text(ui.state, () => !connected ? t("连接中断；上下文暂不可用。") : loading ? t("正在读取上下文…") : failure || (!context?.available && context ? string(context.reason) || t("当前桌面无法提供上下文。") : ""));
     ui.content.dataset.stale = String(!connected || !!failure);
     ui.content.replaceChildren();
     if (!context || !opened) { renderPermissions(); return; }
-    const permissions = section("当前权限");
+    const permissions = section(t("当前权限"));
     const mode = context.permissions?.current;
-    empty(permissions, connected ? PERMISSIONS[mode] || (mode === "custom" ? "自定义权限" : "当前权限未知") : "暂不可用", "当前权限未知");
-    const git = section("工作目录"), data = context.git;
+    empty(permissions, connected ? t(PERMISSIONS[mode]) || (mode === "custom" ? t("自定义权限") : t("当前权限未知")) : t("暂不可用"), t("当前权限未知"));
+    const git = section(t("工作目录")), data = context.git;
     const directory = string(context.cwd) || cwd;
-    if (directory) { const label = element("p", "context-directory", basename(directory)); label.title = directory; git.append(label); }
-    if (data?.available) detail(git, [["分支", string(data.branch) || (data.detached ? "分离 HEAD" : "未知")], ["工作区", data.dirty === true ? "有未提交更改" : data.dirty === false ? "干净" : "未知"]]);
-    else empty(git, data?.reason, "未提供 Git 信息");
-    if (directory || string(data?.commit)) detail(disclosure(git, "详细信息", "workspace"), [["完整目录", directory], ["提交", string(data?.commit)]]);
-    const agents = section("子智能体"), agentData = context.agents;
+    if (directory) { const label = element("p", "context-directory", basename(directory)); i18n.attr(label, "title", () => directory); git.append(label); }
+    if (data?.available) detail(git, [[t("分支"), string(data.branch) || (data.detached ? t("分离 HEAD") : t("未知"))], [t("工作区"), data.dirty === true ? t("有未提交更改") : data.dirty === false ? t("干净") : t("未知")]]);
+    else empty(git, data?.reason, t("未提供 Git 信息"));
+    if (directory || string(data?.commit)) detail(disclosure(git, t("详细信息"), "workspace"), [[t("完整目录"), directory], [t("提交"), string(data?.commit)]]);
+    const agents = section(t("子智能体")), agentData = context.agents;
     if (agentData?.available && Array.isArray(agentData.items) && agentData.items.length) {
       const activeList = element("ul", "context-items"), completedList = element("ul", "context-items");
       const byId = new Map(agentData.items.map(item => [item.threadId, item]));
@@ -94,23 +96,23 @@ export function createThreadContextPanel({ document, window, api, storage, onVie
         const depth = agentDepth(item);
         row.style.setProperty("--agent-depth", String(depth));
         const canRead = connected && item.canRead === true && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(string(item.threadId));
-        const title = element(canRead ? "button" : "span", "context-item-title", string(item.name) || "子智能体");
+        const title = element(canRead ? "button" : "span", "context-item-title", string(item.name) || t("子智能体"));
         title.dataset.contextKey = `agent:${string(item.threadId)}`;
-        if (canRead) { title.type = "button"; title.title = "查看子智能体"; title.addEventListener("click", () => onViewAgent(item)); }
-        row.append(title, element("span", "context-item-meta", STATUSES[item.status] || "状态未知"));
+        if (canRead) { title.type = "button"; i18n.attr(title, "title", () => t("查看子智能体")); title.addEventListener("click", () => onViewAgent(item)); }
+        row.append(title, element("span", "context-item-meta", t(STATUSES[item.status]) || t("状态未知")));
         const path = Array.isArray(item.path) ? item.path.filter(value => typeof value === "string").join(" / ") : string(item.path);
-        if (path) { title.title = `${string(item.name) || "子智能体"} · ${path}`; detail(disclosure(row, "详细信息", `agent:${string(item.threadId)}`), [["名称", string(item.name)], ["路径", path]]); }
-        else title.title = string(item.name) || title.title;
+        if (path) { i18n.attr(title, "title", () => `${string(item.name) || t("子智能体")} · ${path}`); detail(disclosure(row, t("详细信息"), `agent:${string(item.threadId)}`), [[t("名称"), string(item.name)], [t("路径"), path]]); }
+        else i18n.attr(title, "title", () => string(item.name) || title.title);
         (["completed", "closed", "shutdown"].includes(item.status) ? completedList : activeList).append(row);
       }
       if (activeList.childElementCount) agents.append(activeList);
-      else empty(agents, "", "暂无活动子智能体");
-      if (completedList.childElementCount) disclosure(agents, `已完成 · ${completedList.childElementCount}`, "completed-agents").append(completedList);
-      if (agentData.partial) empty(disclosure(agents, "信息范围", "agent-scope"), agentData.reason, "部分代理信息暂不可用");
-    } else empty(agents, agentData?.reason, agentData?.available ? "暂无代理" : "代理信息暂不可用");
+      else empty(agents, "", t("暂无活动子智能体"));
+      if (completedList.childElementCount) disclosure(agents, t`已完成 · ${completedList.childElementCount}`, "completed-agents").append(completedList);
+      if (agentData.partial) empty(disclosure(agents, t("信息范围"), "agent-scope"), agentData.reason, t("部分代理信息暂不可用"));
+    } else empty(agents, agentData?.reason, agentData?.available ? t("暂无代理") : t("代理信息暂不可用"));
     const sourceData = context.sources;
     const sourceCount = Array.isArray(sourceData?.items) ? sourceData.items.length : 0;
-    const sources = disclosure(ui.content, `来源 · ${sourceCount}`, "sources", "context-section context-disclosure");
+    const sources = disclosure(ui.content, t`来源 · ${sourceCount}`, "sources", "context-section context-disclosure");
     if (sourceData?.available && Array.isArray(sourceData.items) && sourceData.items.length) {
       const list = element("ul", "context-items");
       for (const item of sourceData.items) {
@@ -118,18 +120,18 @@ export function createThreadContextPanel({ document, window, api, storage, onVie
         let href = ""; try { const url = new URL(string(item.url)); if (["https:", "http:"].includes(url.protocol) && !url.username && !url.password) href = url.href; } catch { /* Untrusted URLs remain plain text. */ }
         const file = connected && item.type === "file" && string(item.path);
         const technical = item.type === "tool" || item.type === "resource" || item.type === "app";
-        const label = element(file ? "button" : href ? "a" : "span", "context-item-title", technical ? SOURCES[item.type] : string(item.label) || basename(item.path) || "未命名来源");
-        label.title = string(item.path) || string(item.label) || string(item.url);
+        const label = element(file ? "button" : href ? "a" : "span", "context-item-title", technical ? t(SOURCES[item.type]) : string(item.label) || basename(item.path) || t("未命名来源"));
+        i18n.attr(label, "title", () => string(item.path) || string(item.label) || string(item.url));
         label.dataset.contextKey = `source:${string(item.type)}:${string(item.path) || string(item.url) || string(item.label)}`;
         if (href) { label.href = href; label.target = "_blank"; label.rel = "noopener noreferrer"; }
-        if (file) { label.type = "button"; label.dataset.localFile = file; label.title = "查看来源文件"; label.addEventListener("click", () => setOpen(false)); }
-        row.append(label, element("span", "context-item-meta", `${SOURCES[item.type] || "来源"}${Number.isSafeInteger(item.count) && item.count > 1 ? ` · ${item.count}` : ""}`));
-        if (item.path || technical && item.label) detail(disclosure(row, "详细信息", `source:${label.dataset.contextKey}`), [["名称", technical ? string(item.label) : ""], ["路径", string(item.path)]]);
+        if (file) { label.type = "button"; label.dataset.localFile = file; i18n.attr(label, "title", () => t("查看来源文件")); label.addEventListener("click", () => setOpen(false)); }
+        row.append(label, element("span", "context-item-meta", `${t(SOURCES[item.type]) || t("来源")}${Number.isSafeInteger(item.count) && item.count > 1 ? ` · ${item.count}` : ""}`));
+        if (item.path || technical && item.label) detail(disclosure(row, t("详细信息"), `source:${label.dataset.contextKey}`), [[t("名称"), technical ? string(item.label) : ""], [t("路径"), string(item.path)]]);
         list.append(row);
       }
       sources.append(list);
-      if (sourceData.partial) empty(sources, sourceData.reason, "部分来源暂不可用");
-    } else empty(sources, sourceData?.reason, sourceData?.available ? "暂无来源" : "来源信息暂不可用");
+      if (sourceData.partial) empty(sources, sourceData.reason, t("部分来源暂不可用"));
+    } else empty(sources, sourceData?.reason, sourceData?.available ? t("暂无来源") : t("来源信息暂不可用"));
     renderPermissions();
     if (focusedKey) ([...ui.content.querySelectorAll("[data-context-key]")].find(item => item.dataset.contextKey === focusedKey) || ui.close).focus();
   }
@@ -140,12 +142,12 @@ export function createThreadContextPanel({ document, window, api, storage, onVie
     try {
       const result = await api(`/api/threads/${encodeURIComponent(id)}/context`, { signal: controller.signal });
       if (token !== generation || id !== threadId) return;
-      if (result.threadId !== id) throw new Error("上下文与当前会话不匹配");
+      if (result.threadId !== id) throw new Error(t("上下文与当前会话不匹配"));
       context = result;
       if (Array.isArray(result.agents?.items)) onAgents(result.agents.items);
     } catch (error) {
       if (token !== generation || id !== threadId || error.name === "AbortError") return;
-      failure = error.status === 404 ? "当前桥接版本未提供会话上下文。" : `无法读取上下文：${error.message}`;
+      failure = error.status === 404 ? t("当前桥接版本未提供会话上下文。") : t`无法读取上下文：${error.message}`;
       context = null;
     } finally { if (token === generation && id === threadId) { loading = false; render(); } }
   }
@@ -176,12 +178,13 @@ export function createThreadContextPanel({ document, window, api, storage, onVie
     if (!threadId) return;
     selections.set(threadId, value);
     try { storage.setItem(`codex-mobile-permission:${threadId}`, value); }
-    catch { onNotice("权限选择已更新，但浏览器无法保存。刷新后需重新选择。", "error"); }
+    catch { onNotice(t("权限选择已更新，但浏览器无法保存。刷新后需重新选择。"), "error"); }
     renderPermissions();
   });
   const media = window.matchMedia("(min-width: 760px)");
   media.addEventListener?.("change", render);
   render();
+  i18n.subscribe(() => { const scroll = ui.content.scrollTop; render(); ui.content.scrollTop = scroll; });
   return {
     setThread(id) { if (id === threadId) return; controller?.abort(); generation += 1; threadId = id; if (!id) opened = false; cwd = ""; context = null; loading = false; failure = ""; render(); if (opened) void refresh(); },
     setState(value) { status = value.status; connected = !!value.connected; sending = !!value.sending; sendMode = value.sendMode || "message"; const newCwd = value.thread?.id === threadId ? string(value.thread.cwd) : ""; const changedCwd = newCwd !== cwd; cwd = newCwd; renderPermissions(); if (opened && (!connected || changedCwd)) render(); },
@@ -189,7 +192,7 @@ export function createThreadContextPanel({ document, window, api, storage, onVie
     sendOverride() {
       const value = selectedPermission();
       if (sendMode === "follow-up" || !value) return {};
-      if (!supports(value)) { const error = new Error("所选权限在当前桌面不可用，请恢复沿用桌面或重新选择"); error.code = "PERMISSION_UNAVAILABLE"; throw error; }
+      if (!supports(value)) { const error = new Error(t("所选权限在当前桌面不可用，请恢复沿用桌面或重新选择")); error.code = "PERMISSION_UNAVAILABLE"; throw error; }
       return { permissionMode: value };
     }
   };

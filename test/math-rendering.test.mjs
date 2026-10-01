@@ -6,6 +6,7 @@ import { parseMarkdown, parseInline, appendMarkdown } from '../public/markdown.j
 
 function render(source) {
   const dom = new JSDOM('<main></main>');
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */
   const root = dom.window.document.querySelector('main');
   appendMarkdown(root, source, dom.window.document);
   return { root, close: () => dom.window.close() };

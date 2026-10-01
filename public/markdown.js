@@ -1,3 +1,4 @@
+import { createI18n } from "./i18n.js";
 import { splitLocalReference } from "./files.js";
 
 let katex = null;
@@ -294,7 +295,7 @@ export function parseMarkdown(markdown) {
     if (!line.trim()) { index += 1; continue; }
 
     if (isCreatedTask(line)) {
-      blocks.push({ type: "paragraph", children: [{ type: "text", text: "已创建新任务" }] });
+      blocks.push({ type: "paragraph", interfaceKey: "已创建新任务", children: [{ type: "text", text: "已创建新任务" }] });
       index += 1;
       continue;
     }
@@ -387,6 +388,7 @@ function appendMath(parent, node, doc, budget) {
 }
 
 function appendInline(parent, nodes, doc, budget) {
+  const i18n = createI18n({ window: doc.defaultView, document: doc }), t = i18n.t;
   for (const node of nodes) {
     if (node.type === "text") parent.append(doc.createTextNode(node.text));
     else if (node.type === "math") appendMath(parent, node, doc, budget);
@@ -412,7 +414,7 @@ function appendInline(parent, nodes, doc, budget) {
       button.type = "button";
       button.className = "markdown-followup";
       button.textContent = node.label;
-      button.setAttribute("aria-label", `使用建议：${node.label}`);
+      i18n.attr(button, "aria-label", () => t`使用建议：${node.label}`);
       button.disabled = !budget.allowFollowups;
       if (budget.allowFollowups) {
         button.dataset.codexFollowup = node.prompt;
@@ -425,9 +427,9 @@ function appendInline(parent, nodes, doc, budget) {
       button.className = "markdown-file-link";
       button.dataset.localFile = node.path;
       if (node.line) button.dataset.line = node.line.slice(1);
-      if (node.image) button.setAttribute("aria-label", `预览图片：${node.label.map(child => child.text || "").join("") || node.path}`);
+      if (node.image) i18n.attr(button, "aria-label", () => t`预览图片：${node.label.map(child => child.text || "").join("") || node.path}`);
       appendInline(button, node.label, doc, budget);
-      if (node.image && !button.textContent.trim()) button.textContent = "预览图片";
+      if (node.image && !button.textContent.trim()) i18n.text(button, () => t("预览图片"));
       if (node.line) {
         const suffix = doc.createElement("span");
         suffix.className = "markdown-file-line";
@@ -440,6 +442,7 @@ function appendInline(parent, nodes, doc, budget) {
 }
 
 function appendBlock(parent, block, doc, budget) {
+  const i18n = createI18n({ window: doc.defaultView, document: doc }), t = i18n.t;
   if (block.type === "heading") {
     const heading = doc.createElement(`h${block.level}`);
     appendInline(heading, block.children, doc, budget);
@@ -447,7 +450,8 @@ function appendBlock(parent, block, doc, budget) {
   } else if (block.type === "paragraph") {
     const paragraph = doc.createElement("p");
     paragraph.className = "markdown-paragraph";
-    appendInline(paragraph, block.children, doc, budget);
+    if (block.interfaceKey) i18n.text(paragraph, () => t(block.interfaceKey));
+    else appendInline(paragraph, block.children, doc, budget);
     parent.append(paragraph);
   } else if (block.type === "list") {
     const list = doc.createElement(block.ordered ? "ol" : "ul");
@@ -463,19 +467,19 @@ function appendBlock(parent, block, doc, budget) {
     const header = doc.createElement("div");
     header.className = "markdown-code-header";
     const language = doc.createElement("span");
-    language.textContent = block.language || "代码";
+    i18n.text(language, () => block.language || t("代码"));
     const copy = doc.createElement("button");
     copy.type = "button";
     copy.className = "copy-code-button";
-    copy.textContent = "复制";
-    copy.setAttribute("aria-label", "复制代码");
+    i18n.text(copy, () => t("复制"));
+    i18n.attr(copy, "aria-label", () => t("复制代码"));
     copy.addEventListener("click", async () => {
       try {
         await doc.defaultView.navigator.clipboard.writeText(block.text);
-        copy.textContent = "已复制";
-        setTimeout(() => { copy.textContent = "复制"; }, 1400);
+        i18n.text(copy, () => t("已复制"));
+        setTimeout(() => { i18n.text(copy, () => t("复制")); }, 1400);
       } catch {
-        copy.textContent = "复制失败";
+        i18n.text(copy, () => t("复制失败"));
       }
     });
     header.append(language, copy);

@@ -22,7 +22,7 @@ try {
   await wait(async()=>{const value=await read(ownerFile);return value.wakeCount===1&&value.visible;},'Second installer did not wake its single owner');
   owner.kill();await new Promise(resolve=>owner.once('exit',resolve));owner=null;
   evidence.setupSecondInstance={singleOwner:true,secondExits:true,existingOwnerShown:true};
-  const installed=spawnSync(setup,['--install-root',app,'--install'],{windowsHide:true,timeout:120000});assert.equal(installed.status,0);
+  const installed=spawnSync(setup,['--install-root',app,'--install','--language','zh-CN'],{windowsHide:true,timeout:120000});assert.equal(installed.status,0);
   await copyFile(join(source,'deploy/windows/native-qa-status.mjs'),join(app,'scripts/connector-gui.mjs'));await writeFile(join(app,'scripts/state.txt'),'paused\n');
   const exe=join(app,'CodexMobileConnector.exe'),mainFile=join(fixture,'app-owner.json'),otherFile=join(fixture,'app-second.json');
   window=spawn(exe,['--install-root',app,'--qa-instance-evidence',mainFile,'--qa-instance-hide','--qa-debug-port','9339'],{windowsHide:true,stdio:'ignore'});

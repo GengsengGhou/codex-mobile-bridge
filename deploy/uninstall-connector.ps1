@@ -67,7 +67,7 @@ function Remove-OwnedShortcuts([string]$InstallationRoot, [string[]]$Directories
     $shell = New-Object -ComObject WScript.Shell
     try {
         foreach ($directory in $Directories) {
-            foreach ($name in @(('Codex '+[char]0x624B+[char]0x673A+[char]0x6865+[char]0x63A5+'.lnk'), 'Codex Mobile Connector.lnk')) {
+            foreach ($name in @(('Codex '+[char]0x624B+[char]0x673A+[char]0x6865+[char]0x63A5+'.lnk'), 'Codex Mobile Connector.lnk', 'Codex Mobile Bridge.lnk')) {
                 $shortcut = Join-Path $directory $name
                 if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) { continue }
                 $link = $shell.CreateShortcut($shortcut)

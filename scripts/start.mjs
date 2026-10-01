@@ -6,14 +6,15 @@ import { loadRuntimeConfig } from '../src/runtime.mjs';
 import { launchWindowsBridge } from './windows-launch.mjs';
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const ROOT_MARKER = '<title>Codex 手机桥接</title>';
+const ROOT_MARKERS = ['<title>Codex Mobile Bridge</title>', '<title>Codex 手机桥接</title>'];
+export function isBridgeRoot(html) { return ROOT_MARKERS.some(marker => html.includes(marker)); }
 
 async function readBridgeRoot(baseUrl, fetchImpl) {
   const response = await fetchImpl(`${baseUrl}/`, { redirect: 'manual', signal: AbortSignal.timeout(3000) });
   if (!response.ok) return null;
   const cookie = response.headers.get('set-cookie')?.match(/(?:^|,\s*)bridge_session=([^;,\s]+)/)?.[1];
   const html = await response.text();
-  if (!cookie || !html.includes(ROOT_MARKER)) return null;
+  if (!cookie || !isBridgeRoot(html)) return null;
   return `bridge_session=${cookie}`;
 }
 

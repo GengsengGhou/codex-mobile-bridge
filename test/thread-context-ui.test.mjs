@@ -10,7 +10,8 @@ const options = { permissionOptions: { send: [{ id: "full-access" }, { id: "requ
 const tick = () => new Promise(resolve => setImmediate(resolve));
 async function mount(t, api, mobile = false, storageFactory) {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
-  const dom = new JSDOM(html, { url: "http://127.0.0.1" }); t.after(() => dom.window.close());
+  const dom = new JSDOM(html, { url: "http://127.0.0.1" });
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */ t.after(() => dom.window.close());
   const { window } = dom; window.matchMedia = () => ({ matches: !mobile, addEventListener() {} });
   const selected = [], notices = [], agents = [];
   const panel = createThreadContextPanel({ document: window.document, window, api, storage: storageFactory?.(window) || window.sessionStorage, onViewAgent: item => selected.push(item.threadId), onAgents: items => agents.push(items), onNotice: value => notices.push(value) });
@@ -116,7 +117,8 @@ test("clearing an archived selection aborts the drawer and a late context cannot
 });
 
 test("a permission saved for a device cannot appear in another device or account", async t => {
-  const shared = new JSDOM("", { url: "https://hub.test" }); t.after(() => shared.window.close());
+  const shared = new JSDOM("", { url: "https://hub.test" });
+  Object.defineProperty(shared.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */ t.after(() => shared.window.close());
   const store = (device, user) => createDeviceContext({ pathname: `/devices/${device}/`, context: { user: { id: user }, device: { id: device, online: true } }, window: shared.window }).sessionStorage;
   const first = await mount(t, async () => context(), false, () => store(A, "account-a")); first.change("request-approval");
   const second = await mount(t, async () => context(), false, () => store(B, "account-a"));

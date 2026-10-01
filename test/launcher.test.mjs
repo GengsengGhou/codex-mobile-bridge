@@ -5,6 +5,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { EventEmitter } from 'node:events';
+import { readFile } from 'node:fs/promises';
+const currentBridgePage=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
 
 function response({ status = 200, body = '', headers = {} } = {}) {
   return {
@@ -21,7 +23,7 @@ test('launcher recognizes the bridge only after authenticated status succeeds', 
   const fetchImpl = async (url, options = {}) => {
     requests.push([url, options]);
     if (url.endsWith('/')) return response({
-      body: '<title>Codex 手机桥接</title>',
+      body: currentBridgePage,
       headers: { 'set-cookie': 'bridge_session=session-token; HttpOnly; SameSite=Strict; Path=/' }
     });
     return response({
@@ -39,7 +41,7 @@ test('launcher rejects an unrelated page even when it returns a session cookie',
   let requests = 0;
   const fetchImpl = async () => {
     requests += 1;
-    return response({ body: '<title>Another local service</title>', headers: { 'set-cookie': 'other=value' } });
+    return response({ body: '<title>Another local service</title>', headers: { 'set-cookie': 'bridge_session=session-token; Path=/' } });
   };
 
   assert.equal(await verifyBridge('http://127.0.0.1:4317', fetchImpl), false);
@@ -48,7 +50,7 @@ test('launcher rejects an unrelated page even when it returns a session cookie',
 
 test('launcher rejects the bridge page when its authenticated API is not normal', async () => {
   const fetchImpl = async url => url.endsWith('/')
-    ? response({ body: '<title>Codex 手机桥接</title>', headers: { 'set-cookie': 'bridge_session=x; Path=/' } })
+    ? response({ body: currentBridgePage, headers: { 'set-cookie': 'bridge_session=x; Path=/' } })
     : response({ status: 401, body: {} });
 
   assert.equal(await verifyBridge('http://127.0.0.1:4317', fetchImpl), false);
@@ -56,6 +58,22 @@ test('launcher rejects the bridge page when its authenticated API is not normal'
 
 const config = { callerThreadId: 'caller', allowedSendThreadId: 'allowed', port: 4317, enableSend: true, sendScope: 'single' };
 const quiet = { log() {}, error() {} };
+test('legacy root branding still requires authenticated status during upgrades',async()=>{
+  const requests=[];
+  const fetchImpl=async(url,options)=>{requests.push({url,options});return url.endsWith('/')?response({body:'<title>Codex 手机桥接</title>',headers:{'set-cookie':'bridge_session=legacy-token; Path=/'}}):response({body:{connected:true,canSend:false,callerThreadId:'legacy-thread'}});};
+  assert.equal(await verifyBridge('http://127.0.0.1:4317',fetchImpl),true);assert.equal(requests.length,2);assert.equal(requests[1].options.headers.Cookie,'bridge_session=legacy-token');
+});
+test('newly launched server readiness recognizes the actual shipped English page',async()=>{
+  const root=mkdtempSync(resolve(tmpdir(),'bridge-readiness-test-'));let launched=false,authenticatedRequests=0;
+  try {
+    const result=await startBridge({root,platform:'win32',loadConfig:async()=>config,output:quiet,launchWindows:async()=>{launched=true;return {pid:123,mode:'fixture-broker'};},fetchImpl:async(url,options={})=>{
+      if(!launched)return response({status:404});
+      if(url.endsWith('/'))return response({body:currentBridgePage,headers:{'set-cookie':'bridge_session=ready-token; Path=/'}});
+      assert.equal(options.headers.Cookie,'bridge_session=ready-token');assert.equal(options.headers['X-Bridge-Client'],'mobile-v1');authenticatedRequests++;return response({body:{connected:true,canSend:false,callerThreadId:'thread-id'}});
+    }});
+    assert.equal(result.started,true);assert.equal(authenticatedRequests,1);
+  }finally{rmSync(root,{recursive:true,force:true});}
+});
 
 test('Windows launcher uses independent broker with explicit bridge settings', async () => {
   const root = mkdtempSync(resolve(tmpdir(), 'bridge-launch-test-'));

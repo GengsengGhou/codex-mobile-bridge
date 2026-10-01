@@ -2,16 +2,24 @@ param(
     [Parameter(Mandatory=$true)][string]$Root,
     [Parameter(Mandatory=$true)][string]$Stage,
     [Parameter(Mandatory=$true)][string]$Version,
+    [ValidateSet('en','zh-CN')][string]$Language,
     [switch]$QaFailAfterCopy,
     [switch]$QaAbortAfterMove,
     [switch]$QaAbortCommitted,
+    [switch]$QaFailAfterLanguage,
+    [switch]$QaAbortAfterLanguage,
     [switch]$Recover
 )
 $ErrorActionPreference = 'Stop'
+# Installed upgrade/recovery always resumes the saved runtime identity and permissions.
+# Developer CLI bootstrap remains free to use these overrides outside this helper.
+foreach ($name in @('CODEX_THREAD_ID','BRIDGE_ENABLE_SEND','BRIDGE_SEND_THREAD_ID','BRIDGE_SEND_SCOPE','BRIDGE_PORT')) {
+    [Environment]::SetEnvironmentVariable($name,$null,'Process')
+}
 $Root = [IO.Path]::GetFullPath($Root).TrimEnd('\')
 $Stage = [IO.Path]::GetFullPath($Stage).TrimEnd('\')
 $default = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'CodexMobileConnector')).TrimEnd('\')
-if (($QaFailAfterCopy -or $QaAbortAfterMove -or $QaAbortCommitted) -and $Root -ieq $default) { throw 'QA failure injection is forbidden for the default installation.' }
+if (($QaFailAfterCopy -or $QaAbortAfterMove -or $QaAbortCommitted -or $QaFailAfterLanguage -or $QaAbortAfterLanguage) -and $Root -ieq $default) { throw 'QA failure injection is forbidden for the default installation.' }
 if (-not (Test-Path -LiteralPath $Root -PathType Container) -or -not (Test-Path -LiteralPath $Stage -PathType Container)) { throw 'Installation or staged package is missing.' }
 if ((Get-Item -LiteralPath $Root -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Installation root cannot be a link.' }
 $localPath = Join-Path $Root '.local'
@@ -63,6 +71,11 @@ if ($Recover) {
     $controlPath = Join-Path $Root '.local/connector-control.json'
     if ($journal.hadControl) { [IO.File]::WriteAllBytes($controlPath,[Convert]::FromBase64String($journal.controlBase64)) }
     elseif (Test-Path -LiteralPath $controlPath) { Remove-Item -LiteralPath $controlPath -Force }
+    $languagePath = Join-Path $Root '.local/desktop-language.json'
+    if ($journal.PSObject.Properties['hadLanguage']) {
+        if ($journal.hadLanguage) { [IO.File]::WriteAllBytes($languagePath,[Convert]::FromBase64String($journal.languageBase64)) }
+        elseif (Test-Path -LiteralPath $languagePath) { Remove-Item -LiteralPath $languagePath -Force }
+    }
     if ($journal.wasBridge) { & (Join-Path $Root 'runtime/node.exe') (Join-Path $Root 'scripts/start.mjs') | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'Previous bridge could not be restarted.' } }
     if ($journal.wasActive) {
         $resumed = '{"action":"connect","reason":"manual"}' | & (Join-Path $Root 'runtime/node.exe') (Join-Path $Root 'scripts/connector-gui.mjs') | ConvertFrom-Json
@@ -96,6 +109,9 @@ if ([version]$newVersion -ne $incoming) { throw 'Staged application version does
 $controlPath = Join-Path $Root '.local/connector-control.json'
 $hadControl = Test-Path -LiteralPath $controlPath -PathType Leaf
 $controlBytes = if ($hadControl) { [IO.File]::ReadAllBytes($controlPath) } else { $null }
+$languagePath = Join-Path $Root '.local/desktop-language.json'
+$hadLanguage = Test-Path -LiteralPath $languagePath -PathType Leaf
+$languageBytes = if ($hadLanguage) { [IO.File]::ReadAllBytes($languagePath) } else { $null }
 $intent = if ($hadControl) { Get-Content -LiteralPath $controlPath -Raw | ConvertFrom-Json } else { $null }
 if ($intent -and ($intent.paused -isnot [bool] -or $intent.autoStart -isnot [bool])) { throw 'Saved connection intent is damaged; upgrade was stopped.' }
 $paired = Test-Path -LiteralPath (Join-Path $Root '.local/hub-connector.json') -PathType Leaf
@@ -132,7 +148,7 @@ $moved = New-Object System.Collections.Generic.List[string]
 $copied = New-Object System.Collections.Generic.List[string]
 $committed = $false
 $rolledBack = $false
-$journal = @{ version=1; root=$Root; backup=$backup; phase='inProgress'; originalNames=@(Get-ChildItem -LiteralPath $Root -Force | Where-Object Name -ne '.local' | ForEach-Object Name); stagedNames=@(Get-ChildItem -LiteralPath $Stage -Force | ForEach-Object Name)+@('installed.json'); hadControl=$hadControl; controlBase64=if($hadControl){[Convert]::ToBase64String($controlBytes)}else{$null}; wasActive=[bool]$wasActive; wasBridge=[bool]$wasBridge; wasGui=[bool]$wasGui }
+$journal = @{ version=1; root=$Root; backup=$backup; phase='inProgress'; originalNames=@(Get-ChildItem -LiteralPath $Root -Force | Where-Object Name -ne '.local' | ForEach-Object Name); stagedNames=@(Get-ChildItem -LiteralPath $Stage -Force | ForEach-Object Name)+@('installed.json'); hadControl=$hadControl; controlBase64=if($hadControl){[Convert]::ToBase64String($controlBytes)}else{$null}; hadLanguage=$hadLanguage; languageBase64=if($hadLanguage){[Convert]::ToBase64String($languageBytes)}else{$null}; wasActive=[bool]$wasActive; wasBridge=[bool]$wasBridge; wasGui=[bool]$wasGui }
 $journalTemp = $journalPath + '.tmp'
 [IO.File]::WriteAllText($journalTemp,($journal | ConvertTo-Json -Depth 5 -Compress),(New-Object Text.UTF8Encoding($false)))
 Move-Item -LiteralPath $journalTemp -Destination $journalPath -ErrorAction Stop
@@ -162,6 +178,19 @@ try {
     Copy-Item -LiteralPath (Join-Path $backup 'installed.json') -Destination $markerPath -ErrorAction Stop
     $copied.Add('installed.json')
     if ([version]([Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $Root 'CodexMobileConnector.exe')).ProductVersion) -ne $incoming) { throw 'Installed application version verification failed.' }
+    # Commit the harmless preference before relaunching the GUI; rollback retains its prior bytes.
+    if ($Language) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $Root '.local') | Out-Null
+        $languageTemp = $languagePath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+        $languagePrevious = $languageTemp + '.previous'
+        try {
+            [IO.File]::WriteAllText($languageTemp,(@{language=$Language}|ConvertTo-Json -Compress),(New-Object Text.UTF8Encoding($false)))
+            if (Test-Path -LiteralPath $languagePath) { [IO.File]::Replace($languageTemp,$languagePath,$languagePrevious) }
+            else { [IO.File]::Move($languageTemp,$languagePath) }
+        } finally { foreach ($temporary in @($languageTemp,$languagePrevious)) { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force } } }
+    }
+    if ($QaFailAfterLanguage) { throw 'QA injected failure after language persistence.' }
+    if ($QaAbortAfterLanguage) { [Environment]::Exit(93) }
     if ($wasBridge) { & (Join-Path $Root 'runtime/node.exe') (Join-Path $Root 'scripts/start.mjs') | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'Previous bridge could not be restarted.' } }
     if ($wasActive) {
         $request = '{"action":"connect","reason":"manual"}' | & (Join-Path $Root 'runtime/node.exe') (Join-Path $Root 'scripts/connector-gui.mjs') | ConvertFrom-Json
@@ -185,6 +214,8 @@ try {
         foreach ($name in $moved) { Move-Item -LiteralPath (Join-Path $backup $name) -Destination $Root -ErrorAction Stop }
         if ($hadControl) { [IO.File]::WriteAllBytes($controlPath,$controlBytes) }
         elseif (Test-Path -LiteralPath $controlPath) { Remove-Item -LiteralPath $controlPath -Force }
+        if ($hadLanguage) { [IO.File]::WriteAllBytes($languagePath,$languageBytes) }
+        elseif (Test-Path -LiteralPath $languagePath) { Remove-Item -LiteralPath $languagePath -Force }
         if ($wasBridge -and @(Owned-Processes @('src/server.mjs') $false).Count -eq 0) { & $oldNode (Join-Path $Root 'scripts/start.mjs') | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'Previous bridge could not be restarted.' } }
         if ($wasActive -and @(Owned-Processes @('scripts/connector-login.mjs','scripts/start-connector.mjs') $false).Count -eq 0) {
             $resumed = '{"action":"connect","reason":"manual"}' | & $oldNode $oldGui | ConvertFrom-Json

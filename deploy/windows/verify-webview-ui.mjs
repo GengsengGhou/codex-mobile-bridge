@@ -25,7 +25,7 @@ const values=()=>evaluate(`Object.fromEntries(['server','deviceName','pairingCod
 async function screenshot(name){const path=join(output,name+'.png');const capture=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await writeFile(path,Buffer.from(capture.data,'base64'));evidence.screenshots.push(path);}
 async function state(name){await writeFile(join(fixture,'scripts/state.txt'),name+'\n');await evaluate(`document.getElementById('refreshStatus').click()`);}
 try {
-  const installed=spawnSync(setup,['--install-root',fixture,'--install'],{windowsHide:true,timeout:120000});assert.equal(installed.status,0,installed.error?.message);
+  const installed=spawnSync(setup,['--install-root',fixture,'--install','--language','zh-CN'],{windowsHide:true,timeout:120000});assert.equal(installed.status,0,installed.error?.message);
   await copyFile(join(source,'deploy/windows/native-qa-status.mjs'),join(fixture,'scripts/connector-gui.mjs'));
   await writeFile(join(fixture,'scripts/state.txt'),'slow-initialize\n');
   const openRecord=join(fixture,'open-evidence.txt');

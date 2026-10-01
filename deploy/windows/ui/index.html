@@ -4,14 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>Codex 手机桥接</title>
+  <title>Codex Mobile Bridge</title>
   <link rel="stylesheet" href="connector.css">
+  <script src="desktop-locale.js" defer></script>
   <script src="connector.js" defer></script>
 </head>
 <body>
   <header class="topbar">
     <img src="../icons/smartphone.svg" alt="" width="26" height="26">
-    <div class="brand"><strong>Codex 手机桥接</strong><span>Mobile Connector</span></div>
+    <div class="brand"><strong>Codex Mobile Bridge</strong><span>Windows</span></div>
     <button id="settingsButton" class="icon-button" title="设置" aria-label="设置"><img src="../icons/settings.svg" alt=""></button>
   </header>
   <main>
@@ -45,6 +46,7 @@
     </section>
     <section id="settingsView" hidden>
       <div class="section-heading"><h1>设置</h1><button id="backSettings" class="icon-button" title="返回" aria-label="返回"><img src="../icons/arrow-left.svg" alt=""></button></div>
+      <div class="settings-section"><label for="language">语言</label><select id="language"><option value="zh-CN">中文</option><option value="en">English</option></select></div>
       <div class="settings-section"><h2>连接</h2><label class="toggle-row" for="autoStart"><span>Windows 登录后自动连接</span><input id="autoStart" type="checkbox" role="switch"></label><button id="changeServer" class="text-button"><img src="../icons/link.svg" alt="">更换服务器</button></div>
       <div class="settings-section"><div class="section-heading"><h2>诊断</h2><button id="copyDiagnostics" class="text-button"><img src="../icons/clipboard-paste.svg" alt="">复制</button></div><dl id="diagnostics" class="diagnostics"><div><dt>安装目录</dt><dd id="installDirectory"></dd></div><div><dt>WebView2</dt><dd id="webviewVersion"></dd></div><div><dt>连接状态</dt><dd id="diagnosticState"></dd></div></dl></div>
       <div class="settings-section settings-actions"><button id="openFolder" class="secondary"><img src="../icons/external-link.svg" alt="">打开安装目录</button><button id="uninstall" class="danger">卸载</button></div>

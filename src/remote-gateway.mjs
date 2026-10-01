@@ -71,7 +71,7 @@ export function createRemoteGateway({ publicOrigin, bridgeOrigin = 'http://127.0
       const token = cookies.length === 1 ? cookies[0].slice(COOKIE.length + 1) : null;
       const session = auth ? await auth.authenticate(token) : null;
       if (req.method === 'GET' && url.pathname === '/auth/status') { json(res, 200, { authenticated: !!session }); return; }
-      if (req.method === 'GET' && ['/login', '/login.js', '/login.css'].includes(url.pathname)) {
+      if (req.method === 'GET' && ['/login', '/login.js', '/login.css', '/i18n.js', '/i18n-messages.js'].includes(url.pathname)) {
         const file = url.pathname === '/login' ? 'login.html' : url.pathname.slice(1);
         const content = await readFile(new URL(file, publicRoot));
         res.setHeader('Content-Type', `${file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html'}; charset=utf-8`); res.end(content); return;

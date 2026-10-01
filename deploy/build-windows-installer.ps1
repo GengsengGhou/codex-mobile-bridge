@@ -66,7 +66,7 @@ try {
     }
     $appIcon = Join-Path $PSScriptRoot 'windows/icons/connector.ico'
     $resources += "/resource:$appIcon,icons.connector.ico"
-    & $compiler /nologo /codepage:65001 /target:winexe /platform:x64 /optimize+ /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll /reference:Microsoft.CSharp.dll "/reference:$core" "/reference:$forms" "/win32manifest:$(Join-Path $PSScriptRoot 'windows/Connector.manifest')" "/win32icon:$appIcon" $resources "/out:$output" (Join-Path $PSScriptRoot 'windows/Connector.cs') (Join-Path $PSScriptRoot 'windows/WebViewConnector.cs')
+    & $compiler /nologo /codepage:65001 /target:winexe /platform:x64 /optimize+ /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll /reference:Microsoft.CSharp.dll "/reference:$core" "/reference:$forms" "/win32manifest:$(Join-Path $PSScriptRoot 'windows/Connector.manifest')" "/win32icon:$appIcon" $resources "/out:$output" (Join-Path $PSScriptRoot 'windows/Connector.cs') (Join-Path $PSScriptRoot 'windows/WebViewConnector.cs') (Join-Path $PSScriptRoot 'windows/DesktopLocale.cs')
     if ($LASTEXITCODE -ne 0) { throw 'Windows installer compilation failed.' }
     $releaseOutput = Join-Path $OutputDirectory 'CodexMobileConnector-Setup.exe'
     Copy-Item -LiteralPath $output -Destination $releaseOutput -Force

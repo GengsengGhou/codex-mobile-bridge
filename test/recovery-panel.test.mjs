@@ -7,6 +7,7 @@ const state = (extra = {}) => ({ supported: true, autoStart: false, autoRestart:
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function setup(api) {
   const dom = new JSDOM('<html><head></head><body><div class="drawer-foot"></div></body></html>');
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */
   const doc = dom.window.document;
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; };

@@ -48,26 +48,26 @@ export function buildTurnBlocks(turn) {
   return blocks;
 }
 
-export function formatWorkSummary(turn, block) {
-  if (block !== undefined && (block?.type !== "work" || block.summaryEligible !== true)) return "工作过程";
+export function formatWorkSummary(turn, block, t = (value, ...parts) => Array.isArray(value) ? value.reduce((result, item, index) => result + item + (index < parts.length ? parts[index] : ""), "") : value) {
+  if (block !== undefined && (block?.type !== "work" || block.summaryEligible !== true)) return t("工作过程");
   const status = statusName(turn?.status);
-  if (ACTIVE_TURN_STATUSES.has(status)) return "工作过程 · 进行中";
+  if (ACTIVE_TURN_STATUSES.has(status)) return t("工作过程 · 进行中");
 
-  if (["failed", "error"].includes(status)) return "工作过程 · 失败";
-  if (["interrupted", "cancelled", "canceled"].includes(status)) return "工作过程 · 已中断";
+  if (["failed", "error"].includes(status)) return t("工作过程 · 失败");
+  if (["interrupted", "cancelled", "canceled"].includes(status)) return t("工作过程 · 已中断");
   let duration = turn?.durationMs == null ? NaN : Number(turn.durationMs);
   if (!Number.isFinite(duration) || duration < 0) {
     const started = timestampMs(turn?.startedAt);
     const completed = timestampMs(turn?.completedAt);
     duration = started && completed >= started ? completed - started : NaN;
   }
-  if (!Number.isFinite(duration) || duration < 0) return "工作过程 · 已完成";
+  if (!Number.isFinite(duration) || duration < 0) return t("工作过程 · 已完成");
 
   const seconds = Math.floor(duration / 1000);
-  if (seconds < 60) return `工作过程 · 用时 ${seconds} 秒`;
+  if (seconds < 60) return t`工作过程 · 用时 ${seconds} 秒`;
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
-  return remainder ? `工作过程 · 用时 ${minutes} 分 ${remainder} 秒` : `工作过程 · 用时 ${minutes} 分`;
+  return remainder ? t`工作过程 · 用时 ${minutes} 分 ${remainder} 秒` : t`工作过程 · 用时 ${minutes} 分`;
 }
 
 function basename(path) {

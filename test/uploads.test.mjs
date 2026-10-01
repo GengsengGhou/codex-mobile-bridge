@@ -10,7 +10,18 @@ import { UploadStore, UPLOAD_LIMIT } from '../src/uploads.mjs';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const pause = () => new Promise(resolve => setTimeout(resolve, 40));
+async function waitForUploadState(f, uploadId, expected) {
+  const deadline = Date.now() + 3000;
+  let lastState;
+  do {
+    const response = await f.get(uploadId);
+    assert.equal(response.status, 200);
+    lastState = (await response.json()).state;
+    if (lastState === expected) return;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  } while (Date.now() < deadline);
+  assert.equal(lastState, expected, `upload state did not reach ${expected}`);
+}
 async function fixture(t, options = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'bridge-upload-')), cwd = path.join(root, 'workspace'); await mkdir(cwd);
   let thread = { id, kind: 'codex', hostId: 'local', status: 'idle', cwd }, server, base, headers;
@@ -100,11 +111,12 @@ test('hash and actual byte counts are bounded; normal failures leave no partials
 });
 test('interrupted and parallel uploads preserve identity and report uploading', async t => {
   const f = await fixture(t), uploadId = randomUUID(), bytes = Buffer.from('complete');
-  const slow = f.raw(uploadId, f.meta(bytes)); slow.request.write(bytes.subarray(0, 1)); await pause();
-  assert.equal((await (await f.get(uploadId)).json()).state, 'uploading');
+  const slow = f.raw(uploadId, f.meta(bytes)); slow.request.write(bytes.subarray(0, 1));
+  await waitForUploadState(f, uploadId, 'uploading');
   const duplicate = await f.post(uploadId, bytes);
   assert.equal(duplicate.status, 409); assert.equal((await duplicate.json()).code, 'UPLOAD_BUSY');
-  const ignored = slow.done.catch(() => {}); slow.request.destroy(); await ignored; await pause();
+  const ignored = slow.done.catch(() => {}); slow.request.destroy(); await ignored;
+  await waitForUploadState(f, uploadId, 'unknown');
   assert.deepEqual(await readdir(path.join(f.cwd, 'mobile-uploads', uploadId)), []);
   assert.equal((await f.post(uploadId, bytes)).status, 200);
 });

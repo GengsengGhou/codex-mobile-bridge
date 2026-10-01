@@ -37,11 +37,13 @@ for (const oldSetup of oldSetups) {
   const exe = join(target, 'CodexMobileConnector.exe');
   const local = join(target, '.local');
   try {
-    assert.equal(run(oldSetup, ['--install-root', target, '--install']).status, 0, 'Older package cold install failed');
+    assert.equal(run(oldSetup, ['--install-root', target, '--install','--language','zh-CN']).status, 0, 'Older package cold install failed');
+    await mkdir(local, { recursive: true });
+    await writeFile(join(local,'desktop-language.json'),JSON.stringify({language:'en'}));
     const uiEvidence = join(fixture, 'upgrade-ui.json');
     const window = spawn(setup, ['--install-root', target, '--qa-upgrade-evidence', uiEvidence], { windowsHide: true, stdio: 'ignore' });
     try { await wait(async () => { try { await access(uiEvidence); return true; } catch { return false; } }, 'Upgrade UI did not render');
-      assert.equal(JSON.parse(await readFile(uiEvidence, 'utf8')).button, '升级');
+      assert.equal(JSON.parse(await readFile(uiEvidence, 'utf8')).button, 'Upgrade');
     } finally { window.kill(); await new Promise(r => window.exitCode === null ? window.once('exit', r) : r()); }
     await mkdir(local, { recursive: true });
     const marker = join(local, 'preserved-fixture.txt');
@@ -54,11 +56,13 @@ for (const oldSetup of oldSetups) {
     assert.equal(setupResult.status, 0, setupResult.error?.message || await readFile(target + '.install-error.txt', 'utf8').catch(() => 'upgrade failed'));
     assert.equal(await digest(exe), await digest(setup));
     assert.equal(await readFile(marker, 'utf8'), originalData);
+    assert.deepEqual(JSON.parse(await readFile(join(local,'desktop-language.json'),'utf8')),{language:'en'});
+
     assert.deepEqual(JSON.parse(await readFile(control, 'utf8')), paused);
     assert.deepEqual(JSON.parse(await readFile(join(target, 'installed.json'), 'utf8')), { root: target, version: 1 });
     await assert.rejects(access(target + '.upgrade-journal.json'));
     await assert.rejects(access(target + '.upgrade-backup'));
-    cases.push({ fromSetupSha256: oldHash, upgradeUi: 'passed', pausedUpgrade: 'passed', preservedLocal: 'passed', installedVersion: releaseVersion });
+    cases.push({ fromSetupSha256: oldHash, upgradeUi: 'passed', pausedUpgrade: 'passed', preservedLocal: 'passed', preservedLanguage:'en', installedVersion: releaseVersion });
   } finally {
     const uninstall = join(target, 'deploy/uninstall-connector.ps1');
     try { await access(uninstall); run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', uninstall, '-Root', target], 30000); } catch {}
@@ -68,7 +72,7 @@ for (const oldSetup of oldSetups) {
   const rollbackFixture = await mkdtemp(join(tmpdir(), 'codex-upgrade-rollback-'));
   const rollbackRoot = join(rollbackFixture, 'app');
   try {
-    assert.equal(run(oldSetup, ['--install-root', rollbackRoot, '--install']).status, 0);
+    assert.equal(run(oldSetup, ['--install-root', rollbackRoot, '--install','--language','zh-CN']).status, 0);
     const previousExe = join(rollbackRoot, 'CodexMobileConnector.exe');
     const previousHash = await digest(previousExe);
     const data = join(rollbackRoot, '.local/preserved-fixture.txt');
@@ -89,9 +93,10 @@ for (const oldSetup of oldSetups) {
 const interrupted = await mkdtemp(join(tmpdir(), 'codex-upgrade-interrupted-'));
 const interruptedRoot = join(interrupted, 'app');
 try {
-  assert.equal(run(oldSetups[0], ['--install-root', interruptedRoot, '--install']).status, 0);
+  assert.equal(run(oldSetups[0], ['--install-root', interruptedRoot, '--install','--language','zh-CN']).status, 0);
   await mkdir(join(interruptedRoot, '.local'), { recursive: true });
   await writeFile(join(interruptedRoot, '.local/sentinel.txt'), 'survives-interruption');
+  await writeFile(join(interruptedRoot,'.local/desktop-language.json'),JSON.stringify({language:'en'}));
   const aborted = run(setup, ['--install-root', interruptedRoot, '--install', '--qa-upgrade-abort']);
   assert.equal(aborted.status, 1, 'QA interruption unexpectedly completed');
   await access(interruptedRoot + '.upgrade-journal.json');
@@ -102,6 +107,8 @@ try {
   assert.equal(await readFile(join(interruptedRoot, '.local/sentinel.txt'), 'utf8'), 'survives-interruption');
   await assert.rejects(access(interruptedRoot + '.upgrade-journal.json'));
   await assert.rejects(access(interruptedRoot + '.upgrade-backup'));
+  assert.deepEqual(JSON.parse(await readFile(join(interruptedRoot,'.local/desktop-language.json'),'utf8')),{language:'en'});
+  cases[0].interruptedLanguagePreserved='en';
   cases[0].interruptedTransactionRecovered = 'passed';
 } finally {
   const uninstall = join(interruptedRoot, 'deploy/uninstall-connector.ps1');
@@ -112,7 +119,8 @@ try {
 const committed = await mkdtemp(join(tmpdir(), 'codex-upgrade-committed-'));
 const committedRoot = join(committed, 'app');
 try {
-  assert.equal(run(oldSetups[0], ['--install-root', committedRoot, '--install']).status, 0);
+  assert.equal(run(oldSetups[0], ['--install-root', committedRoot, '--install','--language','zh-CN']).status, 0);
+  await mkdir(join(committedRoot,'.local'),{recursive:true});await writeFile(join(committedRoot,'.local/desktop-language.json'),JSON.stringify({language:'en'}));
   const aborted = run(setup, ['--install-root', committedRoot, '--install', '--qa-upgrade-abort-committed']);
   assert.equal(aborted.status, 1);
   assert.equal(await digest(join(committedRoot, 'CodexMobileConnector.exe')), await digest(setup));
@@ -121,6 +129,8 @@ try {
   assert.equal(run(setup, ['--install-root', committedRoot, '--install']).status, 0, 'Committed recovery should finish without a second upgrade');
   await assert.rejects(access(committedRoot + '.upgrade-journal.json'));
   await assert.rejects(access(committedRoot + '.upgrade-backup'));
+  assert.deepEqual(JSON.parse(await readFile(join(committedRoot,'.local/desktop-language.json'),'utf8')),{language:'en'});
+  cases[0].committedLanguagePreserved='en';
   cases[0].committedInterruptionRecovered = 'passed';
 } finally {
   const uninstall = join(committedRoot, 'deploy/uninstall-connector.ps1');
@@ -132,13 +142,13 @@ const linked = await mkdtemp(join(tmpdir(), 'codex-upgrade-linked-'));
 const linkedRoot = join(linked, 'app');
 const linkedExternal = join(linked, 'external');
 try {
-  assert.equal(run(oldSetups[0], ['--install-root', linkedRoot, '--install']).status, 0);
+  assert.equal(run(oldSetups[0], ['--install-root', linkedRoot, '--install','--language','zh-CN']).status, 0);
   await mkdir(linkedExternal);
   await writeFile(join(linkedExternal, 'sentinel.txt'), 'outside-installation');
   const junction = join(linkedRoot, '.local');
   const create = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `New-Item -ItemType Junction -Path ${psLiteral(junction)} -Target ${psLiteral(linkedExternal)} | Out-Null`], 10000);
   assert.equal(create.status, 0, create.stderr);
-  assert.equal(run(setup, ['--install-root', linkedRoot, '--install']).status, 1);
+  assert.equal(run(setup, ['--install-root', linkedRoot, '--install','--language','zh-CN']).status, 1);
   assert.equal(await readFile(join(linkedExternal, 'sentinel.txt'), 'utf8'), 'outside-installation');
   run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Remove-Item -LiteralPath ${psLiteral(junction)} -Force`], 10000);
   cases[0].linkedLocalRejected = 'passed';
@@ -156,7 +166,7 @@ let bridge, hub, sockets, connector, watcher;
 let wssConnections = 0;
 let activePassed = false;
 try {
-  assert.equal(run(oldSetups[0], ['--install-root', activeRoot, '--install']).status, 0);
+  assert.equal(run(oldSetups[0], ['--install-root', activeRoot, '--install','--language','zh-CN']).status, 0);
   const node = join(activeRoot, 'runtime/node.exe');
   const local = join(activeRoot, '.local');
   await mkdir(local, { recursive: true });
@@ -195,7 +205,7 @@ try {
   await wait(() => wssConnections >= 2, 'Restored old connector could not reconnect using fixture CA');
   assert.equal(JSON.parse(await readFile(join(local, 'connector-control.json'), 'utf8')).autoStart, false);
   assert.equal(JSON.parse(await readFile(join(local, 'connector-control.json'), 'utf8')).paused, false);
-  const upgraded = run(setup, ['--install-root', activeRoot, '--install'], 120000, env);
+  const upgraded = run(setup, ['--install-root', activeRoot, '--install','--language','zh-CN'], 120000, env);
   assert.equal(upgraded.status, 0, await readFile(activeRoot + '.install-error.txt', 'utf8').catch(() => upgraded.stderr));
   assert.equal(await digest(join(activeRoot, 'CodexMobileConnector.exe')), await digest(setup));
   await wait(() => owned(activeRoot, 'scripts/connector-login.mjs') > 0, 'Upgrade did not restore manually connected watcher');
@@ -234,21 +244,21 @@ const stranger = await mkdtemp(join(tmpdir(), 'codex-upgrade-stranger-'));
 try {
   const sentinel = join(stranger, 'unrelated.txt');
   await writeFile(sentinel, 'do-not-overwrite');
-  assert.equal(run(setup, ['--install-root', stranger, '--install']).status, 1);
+  assert.equal(run(setup, ['--install-root', stranger, '--install','--language','zh-CN']).status, 1);
   assert.equal(await readFile(sentinel, 'utf8'), 'do-not-overwrite');
   await writeFile(join(stranger, 'installed.json'), JSON.stringify({ root: stranger, version: 1 }));
-  assert.equal(run(setup, ['--install-root', stranger, '--install']).status, 1);
+  assert.equal(run(setup, ['--install-root', stranger, '--install','--language','zh-CN']).status, 1);
   assert.equal(await readFile(sentinel, 'utf8'), 'do-not-overwrite');
 } finally { await rm(stranger, { recursive: true, force: true }); }
 
 const damaged = await mkdtemp(join(tmpdir(), 'codex-upgrade-damaged-'));
 const damagedRoot = join(damaged, 'app');
 try {
-  assert.equal(run(oldSetups[0], ['--install-root', damagedRoot, '--install']).status, 0);
+  assert.equal(run(oldSetups[0], ['--install-root', damagedRoot, '--install','--language','zh-CN']).status, 0);
   const installedExe = join(damagedRoot, 'CodexMobileConnector.exe');
   const before = await digest(installedExe);
   await writeFile(join(damagedRoot, 'installed.json'), JSON.stringify({ root: join(damaged, 'somewhere-else'), version: 1 }));
-  assert.equal(run(setup, ['--install-root', damagedRoot, '--install']).status, 1);
+  assert.equal(run(setup, ['--install-root', damagedRoot, '--install','--language','zh-CN']).status, 1);
   assert.equal(await digest(installedExe), before);
 } finally { await rm(damaged, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); }
 

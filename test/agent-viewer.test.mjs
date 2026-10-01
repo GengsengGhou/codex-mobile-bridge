@@ -11,6 +11,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 async function mount(t, api) {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   const dom = new JSDOM(html, { url: "http://127.0.0.1" });
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */
   t.after(() => dom.window.close());
   const { window } = dom;
   let returnFocus = null;

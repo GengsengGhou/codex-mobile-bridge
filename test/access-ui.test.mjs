@@ -13,6 +13,7 @@ test("remote expiry signals login and never refreshes or retries mutations", asy
 });
 test("revoke needs confirmation and lost response reconciles status without replay", async () => {
   const dom = new JSDOM('<aside id="taskDrawer"><div class="drawer-foot"></div></aside>', { url: "https://example.test" });
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */
   const calls = [];
   const panel = createAccessPanel({ document: dom.window.document, window: dom.window, api: async () => ({ mode: "remote" }), fetchImpl: async (path) => { calls.push(path); if (path === "/auth/status") return { ok: true, json: async () => ({ authenticated: false }) }; throw new Error(); } });
   await panel.ready;
@@ -22,7 +23,8 @@ test("revoke needs confirmation and lost response reconciles status without repl
   assert.equal(dom.window.document.querySelector(".access-notice").hidden, false);
 });
 test("local setup probes only when opened and never starts automatically", async () => {
-  const dom = new JSDOM('<aside id="taskDrawer"></aside>', { url: "http://localhost" }); const calls = [];
+  const dom = new JSDOM('<aside id="taskDrawer"></aside>', { url: "http://localhost" });
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */ const calls = [];
   const panel = createAccessPanel({ document: dom.window.document, window: dom.window, api: async (path, options) => { calls.push([path, options]); return path === "/api/access" ? { mode: "local" } : { state: "stopped", supported: true }; } });
   await panel.ready; assert.equal(calls.length, 1);
   dom.window.document.getElementById("remoteAccessSettings").click(); await tick();
@@ -31,6 +33,7 @@ test("local setup probes only when opened and never starts automatically", async
 
 test("login invalidation callback covers expiry events and successful logout", async t => {
   const dom = new JSDOM('<aside id="taskDrawer"><div class="drawer-foot"></div></aside>', { url: "https://example.test" });
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */
   t.after(() => dom.window.close());
   let invalidations = 0;
   const calls = [];
@@ -47,6 +50,7 @@ test("login invalidation callback covers expiry events and successful logout", a
 
 function localSetup(api) {
   const dom = new JSDOM('<aside id="taskDrawer"></aside>', { url: "http://localhost" });
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */
   const panel = createAccessPanel({ document: dom.window.document, window: dom.window, api: (path, options) => path === "/api/access" ? Promise.resolve({ mode: "local" }) : api(options) });
   return { dom, panel, click: id => dom.window.document.getElementById(id).click() };
 }

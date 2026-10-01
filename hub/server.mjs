@@ -96,6 +96,7 @@ export function createHubServer({ store = new HubStore(), publicOrigin, allowIns
       const url = new URL(req.url, origin);
       if (req.method === 'GET' && url.pathname === '/healthz') { json(res, 200, { ok: true }); return; }
       if (req.method === 'GET' && ['/', '/hub.js', '/hub.css'].includes(url.pathname)) { await serveAsset(req, res, url.pathname === '/' ? 'index.html' : url.pathname.slice(1), hubPublic); return; }
+      if (req.method === 'GET' && ['/hub-boot.js', '/i18n.js', '/i18n-messages.js'].includes(url.pathname)) { await serveAsset(req, res, url.pathname.slice(1), url.pathname === '/hub-boot.js' ? hubPublic : sharedPublic); return; }
       const mutation = !['GET', 'HEAD'].includes(req.method);
       if (mutation && (req.headers.origin !== origin || req.headers['x-bridge-client'] !== 'mobile-v1')) throw new HubError('拒绝跨站请求。', 'FORBIDDEN', 403);
       if (url.pathname.startsWith('/api/') && req.headers['x-bridge-client'] !== 'mobile-v1') throw new HubError('请求来源无效。', 'FORBIDDEN', 403);

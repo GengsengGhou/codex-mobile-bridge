@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline/promises';
 import { DesktopBridge } from '../src/desktop.mjs';
 import { createDesktopRequest } from '../src/discovery.mjs';
 import { loadRuntimeConfig } from '../src/runtime.mjs';
-import { startBridge } from './start.mjs';
+import { startBridge, isBridgeRoot } from './start.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -51,7 +51,7 @@ export async function probeLocalBridge(port, fetchImpl = fetch) {
     const root = await fetchImpl(`${origin}/`, { redirect: 'manual', signal: AbortSignal.timeout(2000) });
     if (!root.ok) return null;
     const cookie = root.headers.get('set-cookie')?.match(/(?:^|,\s*)bridge_session=([a-f0-9]{64})(?:;|$)/)?.[1];
-    if (!cookie || !(await root.text()).includes('<title>Codex 手机桥接</title>')) return null;
+    if (!cookie || !isBridgeRoot(await root.text())) return null;
     const response = await fetchImpl(`${origin}/api/status`, { headers: { cookie: `bridge_session=${cookie}`, 'x-bridge-client': 'mobile-v1' }, signal: AbortSignal.timeout(16000) });
     if (!response.ok) return null;
     const status = await response.json();

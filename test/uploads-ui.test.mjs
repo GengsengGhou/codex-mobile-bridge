@@ -11,6 +11,7 @@ const file = (name = 'note.txt', text = 'hello') => ({ name, size: Buffer.byteLe
 async function settle(check) { for (let i = 0; i < 100; i++) { if (check()) return; await new Promise(resolve => setTimeout(resolve, 5)); } assert.fail('upload did not settle'); }
 function setup(t, route, session = {}, getThread = () => ({ cwd: 'E:/project' })) {
   const dom = new JSDOM('<input id="attachmentPicker" type="file"><button id="attachButton"></button><ul id="attachmentList"></ul><div id="attachmentError"></div>', { url: 'http://localhost' });
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */
   t.after(() => dom.window.close());
   Object.defineProperty(dom.window, 'crypto', { value: webcrypto });
   for (const [key, value] of Object.entries(session)) dom.window.sessionStorage.setItem(key, value);

@@ -55,9 +55,10 @@ function pollingClock(window) {
   };
 }
 
-async function mount(t, route = () => undefined, { session = {}, expectedRows = 3, urlThread = A, automaticClock = false } = {}) {
+async function mount(t, route = () => undefined, { session = {}, expectedRows = 3, urlThread = A, automaticClock = false, language = 'zh-CN' } = {}) {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const dom = new JSDOM(html, { url: `http://127.0.0.1:4317/?thread=${urlThread}`, runScripts: 'outside-only', pretendToBeVisual: true });
+  Object.defineProperty(dom.window.navigator, 'language', { value: language, configurable: true }); // Existing Chinese-copy fixtures default to zh-CN.
   t.after(() => dom.window.close());
   const { window } = dom, requests = [], errors = [], intervals = [];
   Object.defineProperty(window.crypto, 'subtle', { value: webcrypto.subtle });
@@ -119,7 +120,7 @@ test('model settings stay scoped to each chat and omit overrides for default and
     if (call.path === `/api/threads/${A}`) return response(snapshot(A, 'Alpha reply', active ? 'active' : 'idle'));
     if (call.path.endsWith('/messages')) return response({ accepted: true });
   });
-  const change = (id, value) => { const node = ui.doc.getElementById(id); node.value = value; node.dispatchEvent(new ui.window.Event('change')); };
+  const change = (id, value) => { const node = ui.doc.getElementById(id); node.value = value; node.dispatchEvent(new ui.window.Event('change', { bubbles: true })); };
   ui.doc.getElementById('modelSettingsButton').click();
   assert.equal(ui.doc.getElementById('messageModel').value, '');
   change('messageModel', 'gpt-6-luna'); change('messageThinking', 'high');
@@ -1511,7 +1512,7 @@ test('viewing and refreshing a child preserves main URL, selection, draft, scrol
   const before = { url: ui.window.location.href, selected: ui.window.localStorage.getItem('codex-mobile-selected-thread'), draft: input.value, scroll: ui.doc.getElementById('transcript').scrollTop, sidebar: ui.doc.getElementById('taskList').innerHTML, pending: ui.doc.getElementById('pendingRequests').innerHTML, main: ui.doc.getElementById('transcript').innerHTML };
   ui.doc.querySelector('[data-context-key="agent:' + CHILD + '"]').click();
   await until(() => ui.doc.getElementById('agentViewerTranscript').textContent.includes('Child reply 1'), 'child viewer loaded');
-  assert.equal(ui.doc.querySelectorAll('#agentViewer form, #agentViewer textarea, #agentViewer input, #agentViewer select').length, 0);
+  assert.equal(ui.doc.querySelectorAll('#agentViewer form, #agentViewer textarea, #agentViewer input, #agentViewer select:not([data-language-selector])').length, 0);
   ui.doc.getElementById('agentViewerOlder').click();
   await until(() => ui.doc.getElementById('agentViewerTranscript').textContent.includes('Older child reply'), 'child older page');
   ui.doc.getElementById('agentViewerRefresh').click();
@@ -1616,4 +1617,33 @@ test('pending candidate classification blocks composer dispatch while the curren
   late.resolve(response(snapshot(B))); await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Alpha'); assert.equal(input.value, 'edited during read');
   assert.equal(ui.requests.some(call => call.method === 'POST'), false); assert.deepEqual(ui.errors, []);
+});
+
+
+test('switching web language immediately retains drafts, conversation, scroll, settings and open dialogs', async t => {
+  const options = [{ id: 'gpt-6-luna', efforts: ['low', 'high'] }];
+  const ui = await mount(t, call => {
+    if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', callerThreadId: A, defaultThreadId: A, modelOptions: { send: options, create: options } });
+  }, { language: 'en-US' });
+  const change = (id, value) => { const node = ui.doc.getElementById(id); node.value = value; node.dispatchEvent(new ui.window.Event('change', { bubbles: true })); };
+  assert.equal(ui.doc.documentElement.lang, 'en');
+  assert.equal(ui.doc.getElementById('promptInput').placeholder, 'Send a message…');
+  const prompt = ui.doc.getElementById('promptInput'); prompt.value = '用户草稿：已完成'; prompt.dispatchEvent(new ui.window.Event('input'));
+  const transcript = ui.doc.getElementById('transcript'), original = transcript.querySelector('.turn'); transcript.scrollTop = 123;
+  ui.doc.getElementById('modelSettingsButton').click(); change('messageModel', 'gpt-6-luna'); change('messageThinking', 'high');
+  const beforeRequests = ui.requests.length, beforeStorage = ui.window.sessionStorage.getItem(`codex-mobile-draft:${A}`);
+  for (const language of ['zh-CN', 'en', 'zh-CN']) {
+    change('languageSelect', language);
+    assert.equal(ui.doc.getElementById('modelSettingsDialog').open, true);
+    assert.equal(prompt.value, '用户草稿：已完成');
+    assert.equal(ui.doc.getElementById('messageModel').value, 'gpt-6-luna');
+    assert.equal(ui.doc.getElementById('messageThinking').value, 'high');
+    assert.equal(transcript.querySelector('.turn'), original); assert.equal(transcript.scrollTop, 123);
+    assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Alpha');
+    assert.equal(ui.window.sessionStorage.getItem(`codex-mobile-draft:${A}`), beforeStorage);
+    assert.equal(ui.requests.length, beforeRequests, 'language switches must not make business requests');
+  }
+  assert.equal(ui.doc.getElementById('modelSettingsTitle').textContent, '下一轮设置');
+  assert.equal(ui.window.localStorage.getItem('codex-mobile-language'), 'zh-CN');
+  assert.deepEqual(ui.errors, []);
 });

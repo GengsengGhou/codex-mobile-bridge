@@ -6,6 +6,7 @@ import { initializeLogin } from "../public/login.js";
 test("login denial and unknown network result clear secret without retry or persistence", async () => {
   for (const outcome of [401, 429, "network"]) {
     const dom = new JSDOM('<form id="loginForm"><input id="password"><button id="loginButton"></button><p id="loginError"></p></form>', { url: "https://example.test/login" });
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */
     let calls = 0;
     initializeLogin({ document: dom.window.document, fetchImpl: async (path, options) => { calls++; assert.equal(path, "/auth/login"); assert.equal(JSON.parse(options.body).password, "secret"); if (outcome === "network") throw new Error("secret"); return { ok: false, status: outcome }; } });
     dom.window.document.getElementById("password").value = "secret";

@@ -10,6 +10,7 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), { status
 const listing = (path, parentPath, entries = [], truncated = false) => ({ path, parentPath, entries, truncated });
 function mount(t, handler) {
   const dom = new JSDOM(html, { url: 'http://127.0.0.1:4317/', pretendToBeVisual: true });
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */
   const { window } = dom;
   window.HTMLDialogElement.prototype.show = function () { this.open = true; };
   window.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new window.Event('close')); };

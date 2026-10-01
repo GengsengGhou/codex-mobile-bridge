@@ -1,3 +1,4 @@
+import { createI18n } from "./i18n.js";
 const TEXT_LIMIT = 1024 * 1024;
 const IMAGE_LIMIT = 20 * 1024 * 1024;
 const PDF_LIMIT = 30 * 1024 * 1024;
@@ -17,6 +18,7 @@ export function splitLocalReference(reference) {
 }
 
 export function createFilesPanel({ document: doc = globalThis.document, window: win = globalThis.window, fetchImpl = fetch, getThread = () => ({ id: "", cwd: "" }) } = {}) {
+  const i18n = createI18n({ window: win, document: doc }), t = i18n.t;
   const document = doc;
   const URLApi = win.URL;
   const panel = document.getElementById("filesPanel");
@@ -66,7 +68,7 @@ export function createFilesPanel({ document: doc = globalThis.document, window: 
     state.cwd = cwd;
     state.path = "";
     state.metadata = null;
-    stateLabel.textContent = "";
+    i18n.text(stateLabel, () => "");
     entries.replaceChildren();
     downloadButton.hidden = true;
     if (panel.open) panel.close();
@@ -89,13 +91,13 @@ export function createFilesPanel({ document: doc = globalThis.document, window: 
       try { body = await response.clone().json(); } catch { /* Non-JSON local authorization failures can refresh. */ }
       if (body.code === "LOGIN_REQUIRED") {
         win.dispatchEvent(new win.Event("bridge-login-required"));
-        const error = new Error("请重新登录后继续"); error.code = "LOGIN_REQUIRED"; error.status = 401; throw error;
+        const error = new Error(t("请重新登录后继续")); error.code = "LOGIN_REQUIRED"; error.status = 401; throw error;
       }
       const refresh = await fetchImpl("/", options);
       if (refresh.ok) response = await fetchImpl(path, options);
     }
     if (!response.ok) {
-      let message = `请求失败（${response.status}）`;
+      let message = t`请求失败（${response.status}）`;
       try { const body = await response.json(); if (typeof body.error === "string") message = body.error; } catch { /* Keep the status message. */ }
       const error = new Error(message);
       error.status = response.status;
@@ -106,7 +108,7 @@ export function createFilesPanel({ document: doc = globalThis.document, window: 
 
   function showError(error) {
     if (error?.name === "AbortError") return;
-    stateLabel.textContent = error?.status === 403 ? "此文件不允许访问。" : error?.status === 404 ? "文件或目录不存在。" : error?.message || "无法读取文件。";
+    i18n.text(stateLabel, () => error?.status === 403 ? t("此文件不允许访问。") : error?.status === 404 ? t("文件或目录不存在。") : t(error?.message) || t("无法读取文件。"));
     stateLabel.dataset.kind = "error";
   }
 
@@ -132,17 +134,17 @@ export function createFilesPanel({ document: doc = globalThis.document, window: 
     revokeObjectUrl();
     entries.replaceChildren();
     content.hidden = false;
-    pathLabel.textContent = path || state.cwd || "工作目录";
-    title.textContent = "文件";
+    i18n.text(pathLabel, () => path || state.cwd || t("工作目录"));
+    i18n.text(title, () => t("文件"));
     stateLabel.dataset.kind = "loading";
-    stateLabel.textContent = "正在读取…";
+    i18n.text(stateLabel, () => t("正在读取…"));
     try {
       const result = await request(endpoint("files", path), { signal: controller.signal });
       if (!active(token, threadId)) return;
       state.path = result.path || "";
-      pathLabel.textContent = state.path || state.cwd || "工作目录";
+      i18n.text(pathLabel, () => state.path || state.cwd || t("工作目录"));
       backButton.disabled = result.parentPath == null;
-      stateLabel.textContent = result.truncated ? "目录较大，仅显示部分文件。" : result.entries.length ? "" : "此目录为空。";
+      i18n.text(stateLabel, () => result.truncated ? t("目录较大，仅显示部分文件。") : result.entries.length ? "" : t("此目录为空。"));
       stateLabel.dataset.kind = "";
       for (const entry of result.entries) {
         const row = document.createElement("li");
@@ -156,7 +158,7 @@ export function createFilesPanel({ document: doc = globalThis.document, window: 
         name.textContent = entry.name;
         const detail = document.createElement("span");
         detail.className = "file-entry-detail";
-        detail.textContent = entry.type === "directory" ? "文件夹" : formatSize(entry.size);
+        i18n.text(detail, () => entry.type === "directory" ? t("文件夹") : formatSize(entry.size));
         button.append(name, detail);
         row.append(button);
         entries.append(row);
@@ -169,7 +171,7 @@ export function createFilesPanel({ document: doc = globalThis.document, window: 
 
   function formatSize(size) {
     const bytes = Number(size);
-    if (!Number.isFinite(bytes) || bytes < 0) return "文件";
+    if (!Number.isFinite(bytes) || bytes < 0) return t("文件");
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -183,7 +185,7 @@ export function createFilesPanel({ document: doc = globalThis.document, window: 
   }
 
   function showBlob(blob, metadata, token) {
-    if (blob.size > limitFor(metadata.previewKind)) throw new Error("文件超过预览大小限制，请下载后查看。");
+    if (blob.size > limitFor(metadata.previewKind)) throw new Error(t("文件超过预览大小限制，请下载后查看。"));
     state.objectUrl = URLApi.createObjectURL(blob);
     if (metadata.previewKind === "image") {
       const image = document.createElement("img");
@@ -191,18 +193,18 @@ export function createFilesPanel({ document: doc = globalThis.document, window: 
       image.alt = metadata.name;
       image.src = state.objectUrl;
       image.addEventListener("error", () => {
-        if (token === state.token) stateLabel.textContent = "图片无法预览，请下载文件后查看。";
+        if (token === state.token) i18n.text(stateLabel, () => t("图片无法预览，请下载文件后查看。"));
       }, { once: true });
       preview.append(image);
     } else if (metadata.previewKind === "pdf") {
       const frame = document.createElement("iframe");
       frame.className = "file-pdf-preview";
-      frame.title = `${metadata.name} 预览`;
+      i18n.attr(frame, "title", () => t`${metadata.name} 预览`);
       frame.setAttribute("sandbox", "");
       frame.src = state.objectUrl;
       preview.append(frame);
     }
-    stateLabel.textContent = metadata.previewKind === "pdf" ? "若 PDF 未显示，请使用“下载文件”。" : "";
+    i18n.text(stateLabel, () => metadata.previewKind === "pdf" ? t("若 PDF 未显示，请使用“下载文件”。") : "");
     stateLabel.dataset.kind = "";
     if (token !== state.token) revokeObjectUrl();
   }
@@ -215,12 +217,12 @@ export function createFilesPanel({ document: doc = globalThis.document, window: 
     const threadId = state.threadId;
     state.path = path;
     entries.replaceChildren();
-    title.textContent = "文件预览";
-    pathLabel.textContent = path;
+    i18n.text(title, () => t("文件预览"));
+    i18n.text(pathLabel, () => path);
     backButton.disabled = false;
     content.hidden = false;
     stateLabel.dataset.kind = "loading";
-    stateLabel.textContent = "正在读取文件信息…";
+    i18n.text(stateLabel, () => t("正在读取文件信息…"));
     downloadButton.hidden = true;
     state.metadata = null;
     try {
@@ -229,31 +231,31 @@ export function createFilesPanel({ document: doc = globalThis.document, window: 
       state.metadata = metadata;
       state.path = metadata.path || path;
       backButton.disabled = false;
-      title.textContent = metadata.name || "文件预览";
-      pathLabel.textContent = metadata.path || path;
+      i18n.text(title, () => metadata.name || t("文件预览"));
+      i18n.text(pathLabel, () => metadata.path || path);
       downloadButton.hidden = false;
       if (!metadata.previewKind) {
-        stateLabel.textContent = "此格式无法预览。可下载文件后打开。";
+        i18n.text(stateLabel, () => t("此格式无法预览。可下载文件后打开。"));
         stateLabel.dataset.kind = "";
         return;
       }
       const limit = limitFor(metadata.previewKind);
       if (Number(metadata.size) > limit) {
-        stateLabel.textContent = "文件超过预览大小限制。可下载后查看。";
+        i18n.text(stateLabel, () => t("文件超过预览大小限制。可下载后查看。"));
         stateLabel.dataset.kind = "";
         return;
       }
-      stateLabel.textContent = "正在载入预览…";
+      i18n.text(stateLabel, () => t("正在载入预览…"));
       const blob = await request(endpoint("file", path, "preview"), { signal: controller.signal, bytes: true });
       if (!active(token, threadId)) return;
       if (metadata.previewKind === "text") {
-        if (blob.size > TEXT_LIMIT) throw new Error("文本文件超过 1 MiB 预览限制，请下载后查看。");
+        if (blob.size > TEXT_LIMIT) throw new Error(t("文本文件超过 1 MiB 预览限制，请下载后查看。"));
         const pre = document.createElement("pre");
         pre.className = "file-text-preview";
         pre.textContent = await blob.text();
         if (!active(token, threadId)) return;
         preview.replaceChildren(pre);
-        stateLabel.textContent = "";
+        i18n.text(stateLabel, () => "");
         stateLabel.dataset.kind = "";
       } else showBlob(blob, metadata, token);
     } catch (error) {
@@ -266,14 +268,14 @@ export function createFilesPanel({ document: doc = globalThis.document, window: 
     const { controller, token } = beginRequest({ preservePreview: true });
     const threadId = state.threadId;
     stateLabel.dataset.kind = "loading";
-    stateLabel.textContent = "正在准备下载…";
+    i18n.text(stateLabel, () => t("正在准备下载…"));
     try {
       const metadata = state.metadata?.path === path ? state.metadata : await request(endpoint("file", path, "info"), { signal: controller.signal });
       if (!active(token, threadId)) return;
-      if (Number(metadata.size) > DOWNLOAD_LIMIT) throw new Error("文件超过 100 MiB 下载限制。");
+      if (Number(metadata.size) > DOWNLOAD_LIMIT) throw new Error(t("文件超过 100 MiB 下载限制。"));
       const blob = await request(endpoint("file", path, "download"), { signal: controller.signal, bytes: true });
       if (!active(token, threadId)) return;
-      if (blob.size > DOWNLOAD_LIMIT) throw new Error("文件超过 100 MiB 下载限制。");
+      if (blob.size > DOWNLOAD_LIMIT) throw new Error(t("文件超过 100 MiB 下载限制。"));
       const url = URLApi.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -284,7 +286,7 @@ export function createFilesPanel({ document: doc = globalThis.document, window: 
       anchor.remove();
       state.downloadUrls.add(url);
       win.setTimeout(() => { URLApi.revokeObjectURL(url); state.downloadUrls.delete(url); }, 60_000);
-      stateLabel.textContent = "下载已开始。";
+      i18n.text(stateLabel, () => t("下载已开始。"));
       stateLabel.dataset.kind = "";
     } catch (error) {
       if (active(token, threadId)) showError(error);
@@ -301,7 +303,7 @@ export function createFilesPanel({ document: doc = globalThis.document, window: 
   closeButton.addEventListener("click", () => panel.close());
   panel.addEventListener("close", () => {
     invalidate();
-    stateLabel.textContent = "";
+    i18n.text(stateLabel, () => "");
     stateLabel.dataset.kind = "";
   });
   panel.addEventListener("cancel", () => invalidate());
@@ -320,7 +322,7 @@ export function createFilesPanel({ document: doc = globalThis.document, window: 
     event.preventDefault();
     const thread = getThread();
     setThread(thread);
-    if (!state.threadId) { showError(new Error("请先选择一个会话。")); panel.show(); return; }
+    if (!state.threadId) { showError(new Error(t("请先选择一个会话。"))); panel.show(); return; }
     panel.show();
     void openFile(button.dataset.localFile);
   });

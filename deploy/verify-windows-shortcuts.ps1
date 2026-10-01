@@ -4,7 +4,8 @@ $fixture = Join-Path $env:TEMP ('codex-shortcut-qa-' + [guid]::NewGuid().ToStrin
 $root = Join-Path $fixture 'app'
 $programs = Join-Path $fixture 'Programs'
 $desktop = Join-Path $fixture 'Desktop'
-$name = 'Codex '+[char]0x624B+[char]0x673A+[char]0x6865+[char]0x63A5+'.lnk'
+$name = 'Codex Mobile Bridge.lnk'
+$chinese = 'Codex '+[char]0x624B+[char]0x673A+[char]0x6865+[char]0x63A5+'.lnk'
 $legacy = 'Codex Mobile Connector.lnk'
 $shell = New-Object -ComObject WScript.Shell
 function Assert($condition, [string]$message) { if (-not $condition) { throw $message } }
@@ -20,15 +21,17 @@ try {
     $assembly = [Reflection.Assembly]::LoadFile([IO.Path]::GetFullPath($SetupExecutable))
     Assert ($assembly.GetName().Name -eq 'CodexMobileConnector') 'Installed app still has an installer assembly identity.'
     $version=[Diagnostics.FileVersionInfo]::GetVersionInfo([IO.Path]::GetFullPath($SetupExecutable))
+    Assert ($version.ProductName -eq 'Codex Mobile Bridge' -and $version.FileDescription -eq 'Codex Mobile Bridge' -and $version.ProductVersion -eq '0.2.0') 'English branding or 0.2.0 metadata missing.'
     Assert ($version.OriginalFilename -eq 'CodexMobileConnector.exe' -and $version.ProductName -ne '' -and $version.FileDescription -ne '') 'Installed app metadata is missing or classified as Setup.'
     $method = $assembly.GetType('ConnectorBootstrap').GetMethod('RefreshShortcuts',[Reflection.BindingFlags]'Static,NonPublic')
     function Refresh([bool]$includeDesktop) { $method.Invoke($null,[object[]]@([string]$root,[string]$programs,[string]$desktop,[bool]$includeDesktop)) | Out-Null }
-    foreach ($directory in @($programs,$desktop)) { Shortcut (Join-Path $directory $legacy) $executable $root }
+    foreach ($directory in @($programs,$desktop)) { Shortcut (Join-Path $directory $legacy) $executable $root; Shortcut (Join-Path $directory $chinese) $executable $root }
     Refresh $true
     foreach ($directory in @($programs,$desktop)) {
         $path = Join-Path $directory $name
         Assert (Test-Path -LiteralPath $path) 'Install/upgrade shortcut missing.'
         Assert (-not (Test-Path -LiteralPath (Join-Path $directory $legacy))) 'Owned legacy shortcut was not migrated.'
+        Assert (-not (Test-Path -LiteralPath (Join-Path $directory $chinese))) 'Owned Chinese shortcut was not migrated.'
         $link=$shell.CreateShortcut($path)
         try { Assert ($link.TargetPath -ieq $executable -and $link.WorkingDirectory -ieq $root -and $link.Arguments -eq '' -and $link.IconLocation -ieq ($executable+',0')) 'Shortcut target, working directory, arguments or icon is wrong.' }
         finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($link) }
@@ -45,9 +48,13 @@ try {
     Assert (-not (Test-Path -LiteralPath (Join-Path $desktop $name))) 'Ordinary launch recreated a deleted desktop shortcut.'
     Shortcut (Join-Path $programs $legacy) $executable $root '--foreign'
     Shortcut (Join-Path $desktop $legacy) (Join-Path $fixture 'foreign.exe') $fixture
+    Shortcut (Join-Path $programs $chinese) $executable $root '--foreign'
+    Shortcut (Join-Path $desktop $chinese) (Join-Path $fixture 'foreign.exe') $fixture
     Refresh $true
     Assert (Test-Path -LiteralPath (Join-Path $programs $legacy)) 'Migration removed a foreign-argument link.'
     Assert (Test-Path -LiteralPath (Join-Path $desktop $legacy)) 'Migration removed a foreign-target link.'
+    Assert (Test-Path -LiteralPath (Join-Path $programs $chinese)) 'Migration removed a foreign Chinese argument link.'
+    Assert (Test-Path -LiteralPath (Join-Path $desktop $chinese)) 'Migration removed a foreign Chinese target link.'
     Remove-Item -LiteralPath $start
     Shortcut $start (Join-Path $fixture 'foreign.exe') $fixture
     $conflict = $false
@@ -64,9 +71,12 @@ try {
     Assert (-not (Test-Path -LiteralPath (Join-Path $desktop $name))) 'Uninstall left an owned Chinese desktop link.'
     Assert (Test-Path -LiteralPath (Join-Path $programs $legacy)) 'Uninstall removed a foreign-argument link.'
     Assert (Test-Path -LiteralPath (Join-Path $desktop $legacy)) 'Uninstall removed a foreign-target link.'
+    Assert (Test-Path -LiteralPath (Join-Path $programs $chinese)) 'Uninstall removed a foreign Chinese argument link.'
+    Assert (Test-Path -LiteralPath (Join-Path $desktop $chinese)) 'Uninstall removed a foreign Chinese target link.'
     foreach ($directory in @($programs,$desktop)) {
         Shortcut (Join-Path $directory $name) $executable $root
         Shortcut (Join-Path $directory $legacy) $executable $root
+        Shortcut (Join-Path $directory $chinese) $executable $root
     }
     Remove-OwnedShortcuts $root @($programs,$desktop)
     Assert (@(Get-ChildItem -LiteralPath $programs,$desktop -Filter '*.lnk').Count -eq 0) 'Uninstall left owned Chinese/English links.'

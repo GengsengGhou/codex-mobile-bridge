@@ -108,6 +108,7 @@ test("scoped requests stay on immutable device and expired/offline sessions cann
 });
 test("late upload receipt remains in original device queue and storage", async () => {
   const dom = new JSDOM('<input id="attachmentPicker"><button id="attachButton"></button><ul id="attachmentList"></ul><div id="attachmentError"></div>', { url: "https://hub.test" });
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */
   Object.defineProperty(dom.window, "crypto", { value: webcrypto }); let finish;
   const a = scope(dom.window, A, "account", (path, options) => new Promise(resolve => { finish = () => { const url = new URL(path, "https://hub.test"), uploadId = url.pathname.split("/").at(-1); resolve(json({ uploaded: true, uploadId, threadId: THREAD, name: "note.txt", size: 2, sha256: url.searchParams.get("sha256"), path: `mobile-uploads/${uploadId}/note.txt`, absolutePath: `E:/work/mobile-uploads/${uploadId}/note.txt` })); }; }));
   const b = scope(dom.window, B);
@@ -118,12 +119,14 @@ test("late upload receipt remains in original device queue and storage", async (
 });
 
 test("actual mobile app restores only selected device drafts and scopes files and recovery requests", async t => {
-  const shared = new JSDOM("", { url: "https://hub.test" }); t.after(() => shared.window.close());
+  const shared = new JSDOM("", { url: "https://hub.test" });
+  Object.defineProperty(shared.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */ t.after(() => shared.window.close());
   scope(shared.window, A).sessionStorage.setItem(`codex-mobile-draft:${THREAD}`, "device A draft");
   scope(shared.window, B).sessionStorage.setItem(`codex-mobile-draft:${THREAD}`, "device B draft");
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   for (const id of [A, B]) {
-    const dom = new JSDOM(html, { url: `https://hub.test/devices/${id}/`, runScripts: "outside-only", pretendToBeVisual: true }); t.after(() => dom.window.close());
+    const dom = new JSDOM(html, { url: `https://hub.test/devices/${id}/`, runScripts: "outside-only", pretendToBeVisual: true });
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */ t.after(() => dom.window.close());
     const { window } = dom, calls = [], intervals = [];
     for (const key of ["localStorage", "sessionStorage"]) Object.defineProperty(window, key, { value: shared.window[key] });
     window.matchMedia = () => ({ matches: false }); window.setInterval = callback => { intervals.push(callback); return intervals.length; };
@@ -160,6 +163,7 @@ test("actual mobile app restores only selected device drafts and scopes files an
 test('actual device page synchronizes offline controls and recovers from bodyless status roundtrips', async t => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const dom = new JSDOM(html, { url: `https://hub.test/devices/${A}/?thread=${THREAD}`, runScripts: 'outside-only', pretendToBeVisual: true });
+  Object.defineProperty(dom.window.navigator, 'language', { value: 'zh-CN', configurable: true }); /* Existing Chinese-copy fixture. */
   t.after(() => dom.window.close());
   const { window } = dom, doc = window.document, requests = [];
   window.matchMedia = () => ({ matches: false });

@@ -1,3 +1,4 @@
+import { createI18n } from "./i18n.js";
 import { appendMarkdown as renderMarkdown } from "./markdown.js";
 import { createFilesPanel } from "./files.js";
 import { createUploads } from "./uploads.js";
@@ -14,6 +15,7 @@ import { createThreadContextPanel } from "./thread-context.js";
 import { createAgentViewer } from "./agent-viewer.js";
 
 (async () => {
+  const i18n = createI18n({ window, document }), t = i18n.t;
   "use strict";
 
   let deviceScope;
@@ -22,8 +24,8 @@ import { createAgentViewer } from "./agent-viewer.js";
       ? await loadDeviceContext({ window, fetchImpl: (...args) => fetch(...args) })
       : createDeviceContext({ pathname: window.location.pathname, window, fetchImpl: (...args) => fetch(...args) });
   } catch (error) {
-    const notice = document.createElement("p"); notice.textContent = error.message;
-    const back = document.createElement("a"); back.href = "/"; back.textContent = "返回设备列表 / 登录";
+    const notice = document.createElement("p"); i18n.text(notice, () => error.message);
+    const back = document.createElement("a"); back.href = "/"; i18n.text(back, () => t("返回设备列表 / 登录"));
     document.body.replaceChildren(notice, back); return;
   }
   const sessionStorage = deviceScope.sessionStorage, localStorage = deviceScope.localStorage;
@@ -104,12 +106,12 @@ import { createAgentViewer } from "./agent-viewer.js";
     const model = mode === "create" ? modelUI.createModel : modelUI.model;
     const thinking = mode === "create" ? modelUI.createThinking : modelUI.thinking;
     const models = modelChoices(mode);
-    model.replaceChildren(new Option(mode === "create" ? "沿用桌面默认" : "沿用桌面设置", ""), ...models.map(value => new Option(value.id, value.id)));
-    if (selection.model && !models.some(value => value.id === selection.model)) model.append(new Option(`${selection.model}（不可用）`, selection.model));
+    model.replaceChildren(i18n.option(() => mode === "create" ? t("沿用桌面默认") : t("沿用桌面设置"), ""), ...models.map(value => i18n.option(() => value.id, value.id)));
+    if (selection.model && !models.some(value => value.id === selection.model)) model.append(i18n.option(() => t`${selection.model}（不可用）`, selection.model));
     model.value = selection.model || "";
     const efforts = models.find(value => value.id === selection.model)?.efforts || [];
-    thinking.replaceChildren(new Option("沿用桌面设置", ""), ...efforts.map(value => new Option(value, value)));
-    if (selection.thinking && !efforts.includes(selection.thinking)) thinking.append(new Option(`${selection.thinking}（不可用）`, selection.thinking));
+    thinking.replaceChildren(i18n.option(() => t("沿用桌面设置"), ""), ...efforts.map(value => i18n.option(() => value, value)));
+    if (selection.thinking && !efforts.includes(selection.thinking)) thinking.append(i18n.option(() => t`${selection.thinking}（不可用）`, selection.thinking));
     thinking.value = selection.thinking || "";
     thinking.disabled = !selection.model;
   }
@@ -120,7 +122,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     const value = model.value ? { model: model.value, ...(!changedModel && thinking.value ? { thinking: thinking.value } : {}) } : {};
     modelSettings.set(id, value);
     try { sessionStorage.setItem(`codex-mobile-model:${id}`, JSON.stringify(value)); }
-    catch { showNotice("本页设置已更新，但浏览器无法保存模型设置。刷新后需重新选择。", "error"); }
+    catch { showNotice(t("本页设置已更新，但浏览器无法保存模型设置。刷新后需重新选择。"), "error"); }
     populateModelControls(mode);
     if (mode === "create") saveCreateDraftFromForm();
     renderModelSettings();
@@ -128,11 +130,11 @@ import { createAgentViewer } from "./agent-viewer.js";
   function renderModelSettings() {
     const selection = readModelSettings(state.selectedId);
     modelUI.button.disabled = !state.selectedId || state.sending;
-    modelUI.label.textContent = selection.model ? `${selection.model}${selection.thinking ? ` · ${selection.thinking}` : ""}` : "沿用桌面";
+    i18n.text(modelUI.label, () => selection.model ? `${selection.model}${selection.thinking ? ` · ${selection.thinking}` : ""}` : t("沿用桌面"));
     modelUI.button.dataset.customized = String(!!(selection.model || selection.thinking || modelUI.permission.value));
-    modelUI.button.title = `下一轮设置：模型、推理强度与权限；${selection.model || "沿用桌面设置"}${selection.thinking ? ` · ${selection.thinking}` : ""}`;
-    modelUI.button.setAttribute("aria-label", modelUI.button.title);
-    modelUI.message.textContent = state.sendMode === "follow-up" ? "本轮补充沿用运行中的模型，所选设置用于下一轮。" : !modelChoices("send").length ? "桌面暂未提供可用模型目录；沿用桌面设置仍可发送。" : "";
+    i18n.attr(modelUI.button, "title", () => t`下一轮设置：模型、推理强度与权限；${selection.model || t("沿用桌面设置")}${selection.thinking ? ` · ${selection.thinking}` : ""}`);
+    i18n.attr(modelUI.button, "aria-label", () => modelUI.button.title);
+    i18n.text(modelUI.message, () => state.sendMode === "follow-up" ? t("本轮补充沿用运行中的模型，所选设置用于下一轮。") : !modelChoices("send").length ? t("桌面暂未提供可用模型目录；沿用桌面设置仍可发送。") : "");
   }
   const state = {
     threads: [], selectedId: null, thread: null, turns: new Map(), cursor: null, hasMore: false, agentIds: readKnownAgentIds(), ordinaryIds: new Set(),
@@ -178,12 +180,12 @@ import { createAgentViewer } from "./agent-viewer.js";
 
   function normalizeStatus(status) {
     const value = text(status, "unknown").toLowerCase().replace(/[ -]/g, "_");
-    if (["running", "in_progress", "inprogress", "active", "working", "pending"].includes(value)) return { label: "进行中", kind: "running" };
-    if (["completed", "complete", "done", "finished", "succeeded", "success"].includes(value)) return { label: "已完成", kind: "completed" };
-    if (["failed", "error", "errored", "systemerror", "system_error"].includes(value)) return { label: "系统错误", kind: "error" };
-    if (["interrupted", "cancelled", "canceled", "stopped"].includes(value)) return { label: "已中断", kind: "" };
-    if (["idle", "not_loaded", "notloaded"].includes(value)) return { label: value === "idle" ? "空闲" : "等待继续", kind: "" };
-    if (value === "unknown" || !value) return { label: "状态未知", kind: "" };
+    if (["running", "in_progress", "inprogress", "active", "working", "pending"].includes(value)) return { label: t("进行中"), kind: "running" };
+    if (["completed", "complete", "done", "finished", "succeeded", "success"].includes(value)) return { label: t("已完成"), kind: "completed" };
+    if (["failed", "error", "errored", "systemerror", "system_error"].includes(value)) return { label: t("系统错误"), kind: "error" };
+    if (["interrupted", "cancelled", "canceled", "stopped"].includes(value)) return { label: t("已中断"), kind: "" };
+    if (["idle", "not_loaded", "notloaded"].includes(value)) return { label: value === "idle" ? t("空闲") : t("等待继续"), kind: "" };
+    if (value === "unknown" || !value) return { label: t("状态未知"), kind: "" };
     return { label: text(status), kind: "" };
   }
 
@@ -261,8 +263,8 @@ import { createAgentViewer } from "./agent-viewer.js";
     const offline = deviceScope.id && deviceScope.context.device.online !== true;
     const snapshot = state.statusSnapshot;
     connected = connected && !offline && snapshot?.connected !== false;
-    const fault = offline ? { code: "DEVICE_OFFLINE", message: "设备连接中断" }
-      : snapshot?.connected === false ? snapshot.error || { code: "DESKTOP_UNAVAILABLE", message: "等待桌面 Codex 连接" }
+    const fault = offline ? { code: "DEVICE_OFFLINE", message: t("设备连接中断") }
+      : snapshot?.connected === false ? snapshot.error || { code: "DESKTOP_UNAVAILABLE", message: t("等待桌面 Codex 连接") }
         : state.connectionError;
     state.connectionFault = fault;
     if (status) { populateModelControls("create"); if (modelUI.dialog.open) populateModelControls("send"); }
@@ -273,10 +275,10 @@ import { createAgentViewer } from "./agent-viewer.js";
       void loadProjects();
     }
     ui.connection.dataset.state = connected ? "connected" : "disconnected";
-    ui.connectionText.textContent = connected ? (deviceScope.id ? "电脑已连接" : "已连接") : connectionLabel({ error: fault });
+    i18n.text(ui.connectionText, () => connected ? (deviceScope.id ? t("电脑已连接") : t("已连接")) : connectionLabel({ error: fault }));
     const limitations = Array.isArray(snapshot?.limitations) ? snapshot.limitations.filter((item) => typeof item === "string") : [];
     const issue = connectionIssue(fault);
-    ui.connection.title = snapshot ? [`连接模式：${text(snapshot.mode, "未知")}`, issue?.message, ...limitations].filter(Boolean).join("\n") : "暂时无法读取本机 Codex";
+    i18n.attr(ui.connection, "title", () => snapshot ? [t`连接模式：${text(snapshot.mode, t("未知"))}`, issue?.message, ...limitations].filter(Boolean).join("\n") : t("暂时无法读取本机 Codex"));
     updateControls();
   }
 
@@ -284,25 +286,25 @@ import { createAgentViewer } from "./agent-viewer.js";
     if (!error) return null;
     const code = text(error.code, "").toUpperCase();
     if (code === "DEVICE_OFFLINE") {
-      return { label: "设备离线", notice: "设备连接中断。页面会保留最近内容和草稿，并继续重试。", message: text(error.message) };
+      return { label: t("设备离线"), notice: t("设备连接中断。页面会保留最近内容和草稿，并继续重试。"), message: text(error.message) };
     }
     if (/_BUSY$/.test(code)) {
-      return { label: "请求繁忙", notice: "连接请求暂时繁忙。页面会保留最近内容和草稿，并稍后重试。", message: text(error.message) };
+      return { label: t("请求繁忙"), notice: t("连接请求暂时繁忙。页面会保留最近内容和草稿，并稍后重试。"), message: text(error.message) };
     }
     if (code === "RELAY_TIMEOUT" || code === "DEVICE_RECONNECTING") {
-      return { label: code === "RELAY_TIMEOUT" ? "响应超时" : "设备重连中", notice: "暂时无法取得电脑响应。页面会保留最近内容和草稿，并继续重试。", message: text(error.message) };
+      return { label: code === "RELAY_TIMEOUT" ? t("响应超时") : t("设备重连中"), notice: t("暂时无法取得电脑响应。页面会保留最近内容和草稿，并继续重试。"), message: text(error.message) };
     }
     if (/INCOMPAT|PROTOCOL|UNSUPPORTED|TOOL.*CALL/.test(code)) {
-      return { label: "版本不兼容", notice: "桥接与当前 Codex 接口不兼容，需要更新桥接适配。已有内容和草稿仍保留。", message: text(error.message) };
+      return { label: t("版本不兼容"), notice: t("桥接与当前 Codex 接口不兼容，需要更新桥接适配。已有内容和草稿仍保留。"), message: text(error.message) };
     }
     if (/DESKTOP|CODEX|UPSTREAM/.test(code)) {
-      return { label: "等待 Codex", notice: "桌面 Codex 暂时不可用。页面会保留最近内容并继续重试。", message: text(error.message) };
+      return { label: t("等待 Codex"), notice: t("桌面 Codex 暂时不可用。页面会保留最近内容并继续重试。"), message: text(error.message) };
     }
-    return { label: "桥接不可用", notice: "本机桥接服务暂时不可用。页面会保留最近内容并继续重试。", message: text(error.message) };
+    return { label: t("桥接不可用"), notice: t("本机桥接服务暂时不可用。页面会保留最近内容并继续重试。"), message: text(error.message) };
   }
 
   function connectionLabel(status) {
-    return connectionIssue(status?.error)?.label || "桥接不可用";
+    return connectionIssue(status?.error)?.label || t("桥接不可用");
   }
 
   function updateControls() {
@@ -322,23 +324,23 @@ import { createAgentViewer } from "./agent-viewer.js";
     ui.stop.hidden = !showStop;
     ui.send.hidden = showStop;
     ui.stop.disabled = state.stopping || state.sending || !state.connected || unknownPending || !!state.selectionController || !execution?.canStop || !execution.turnId;
-    const stopLabel = state.stopping ? "正在停止当前轮次" : "停止当前轮次";
-    ui.stop.setAttribute("aria-label", stopLabel);
-    ui.stop.title = showStop && !execution?.canStop ? execution?.reason || "正在确认当前运行轮次" : stopLabel;
-    const sendLabel = state.sending ? "正在发送消息" : state.sendMode === "follow-up" ? "补充到当前轮次" : "发送消息";
-    ui.send.setAttribute("aria-label", sendLabel);
-    ui.send.title = attachmentStatus.blocked ? "附件尚未就绪" : sendLabel;
+    const stopLabel = state.stopping ? t("正在停止当前轮次") : t("停止当前轮次");
+    i18n.attr(ui.stop, "aria-label", () => t(stopLabel));
+    i18n.attr(ui.stop, "title", () => showStop && !execution?.canStop ? execution?.reason || t("正在确认当前运行轮次") : t(stopLabel));
+    const sendLabel = state.sending ? t("正在发送消息") : state.sendMode === "follow-up" ? t("补充到当前轮次") : t("发送消息");
+    i18n.attr(ui.send, "aria-label", () => t(sendLabel));
+    i18n.attr(ui.send, "title", () => attachmentStatus.blocked ? t("附件尚未就绪") : t(sendLabel));
     ui.send.setAttribute("aria-busy", String(state.sending));
     ui.stop.setAttribute("aria-busy", String(state.stopping));
-    if (unknownPending) ui.composerHint.textContent = "正在核对送达状态；不会自动重发";
-    else if (state.selectionController) ui.composerHint.textContent = "正在读取所选会话，草稿已保留";
-    else if (!state.selectedId) ui.composerHint.textContent = "选择任务后查看发送权限";
-    else if (!state.connected) ui.composerHint.textContent = "连接中断，草稿会保留";
-    else if (!maySendSelected()) ui.composerHint.textContent = "此会话暂不允许发送";
-    else if (!state.canSend) ui.composerHint.textContent = state.sendDisabledReason || "此会话当前不允许发送";
-    else if (attachmentStatus.blocked) ui.composerHint.textContent = "附件尚未就绪，草稿已保留";
-    else if (showStop && ui.stop.disabled && !state.sending && !state.stopping) ui.composerHint.textContent = execution?.reason || "正在确认当前运行轮次";
-    else ui.composerHint.textContent = "";
+    if (unknownPending) i18n.text(ui.composerHint, () => t("正在核对送达状态；不会自动重发"));
+    else if (state.selectionController) i18n.text(ui.composerHint, () => t("正在读取所选会话，草稿已保留"));
+    else if (!state.selectedId) i18n.text(ui.composerHint, () => t("选择任务后查看发送权限"));
+    else if (!state.connected) i18n.text(ui.composerHint, () => t("连接中断，草稿会保留"));
+    else if (!maySendSelected()) i18n.text(ui.composerHint, () => t("此会话暂不允许发送"));
+    else if (!state.canSend) i18n.text(ui.composerHint, () => state.sendDisabledReason || t("此会话当前不允许发送"));
+    else if (attachmentStatus.blocked) i18n.text(ui.composerHint, () => t("附件尚未就绪，草稿已保留"));
+    else if (showStop && ui.stop.disabled && !state.sending && !state.stopping) i18n.text(ui.composerHint, () => execution?.reason || t("正在确认当前运行轮次"));
+    else i18n.text(ui.composerHint, () => "");
     ui.composerHint.classList.toggle("sr-only", !ui.composerHint.textContent);
     updateCreateControls();
   }
@@ -348,9 +350,9 @@ import { createAgentViewer } from "./agent-viewer.js";
   }
 
   function createCapabilityReason() {
-    if (!state.connected) return "新建会话需要连接到本机 Codex。";
-    if (state.statusSnapshot?.sendScope !== "all-local") return "新建会话仅在本机全部会话模式下开放。";
-    if (state.statusSnapshot?.canCreate !== true || state.projectsCanCreate === false) return "当前桥接配置未开放新建会话。";
+    if (!state.connected) return t("新建会话需要连接到本机 Codex。");
+    if (state.statusSnapshot?.sendScope !== "all-local") return t("新建会话仅在本机全部会话模式下开放。");
+    if (state.statusSnapshot?.canCreate !== true || state.projectsCanCreate === false) return t("当前桥接配置未开放新建会话。");
     return "";
   }
 
@@ -360,8 +362,8 @@ import { createAgentViewer } from "./agent-viewer.js";
     ui.newThreadButton.disabled = !canCreate && !hasRecovery;
     const reason = createCapabilityReason();
     ui.createCapabilityState.hidden = canCreate || hasRecovery;
-    ui.createCapabilityState.textContent = reason;
-    ui.newThreadButton.title = reason || "新建本机会话";
+    i18n.text(ui.createCapabilityState, () => t(reason));
+    i18n.attr(ui.newThreadButton, "title", () => reason || t("新建本机会话"));
     if (ui.createDialog.open) renderCreateRecoveryState();
     renderCreationResult();
   }
@@ -392,7 +394,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     if (pending && THREAD_UUID.test(pending.requestId || "") && pending.payload && typeof pending.payload.prompt === "string") {
       state.createAttempt = { requestId: pending.requestId, payload: pending.payload, draftRevision: Number.isSafeInteger(pending.draftRevision) ? pending.draftRevision : -1, state: "unknown" };
     } else if (rawPending) {
-      state.createRecoveryError = "创建恢复记录不完整。为避免重复创建，当前已锁定新建操作。";
+      state.createRecoveryError = t("创建恢复记录不完整。为避免重复创建，当前已锁定新建操作。");
       state.createAttempt = { requestId: "", payload: null, state: "unknown" };
     }
     const receipt = readStoredJson(NEW_THREAD_RECEIPT_KEY);
@@ -443,27 +445,27 @@ import { createAgentViewer } from "./agent-viewer.js";
     const project = state.projects.find(item => item.projectId === selected);
     if (project) {
       ui.projectDetail.hidden = false;
-      ui.projectDetail.textContent = `${project.label} · ${project.path}`;
+      i18n.text(ui.projectDetail, () => `${project.label} · ${project.path}`);
     } else if (selected && selected !== "__none__") {
       ui.projectDetail.hidden = false;
-      ui.projectDetail.textContent = "所选项目当前不可用，请重新选择或选无项目。";
+      i18n.text(ui.projectDetail, () => t("所选项目当前不可用，请重新选择或选无项目。"));
     } else ui.projectDetail.hidden = true;
   }
 
   function populateProjectSelect() {
     const choice = state.createDraft.projectChoice;
     ui.createProject.replaceChildren();
-    const placeholder = document.createElement("option"); placeholder.value = ""; placeholder.textContent = "请选择项目或无项目";
-    const none = document.createElement("option"); none.value = "__none__"; none.textContent = "无项目";
+    const placeholder = document.createElement("option"); placeholder.value = ""; i18n.text(placeholder, () => t("请选择项目或无项目"));
+    const none = document.createElement("option"); none.value = "__none__"; i18n.text(none, () => t("无项目"));
     ui.createProject.append(placeholder, none);
     for (const project of state.projects) {
       const option = document.createElement("option");
       option.value = project.projectId;
-      option.textContent = `${project.label} · ${project.path}`;
+      i18n.text(option, () => `${project.label} · ${project.path}`);
       ui.createProject.append(option);
     }
     if (choice && choice !== "__none__" && !state.projects.some(project => project.projectId === choice)) {
-      const unavailable = document.createElement("option"); unavailable.value = choice; unavailable.textContent = `已保存项目不可用 · ${choice}`; unavailable.disabled = true;
+      const unavailable = document.createElement("option"); unavailable.value = choice; i18n.text(unavailable, () => t`已保存项目不可用 · ${choice}`); unavailable.disabled = true;
       ui.createProject.append(unavailable);
     }
     ui.createProject.value = choice || "";
@@ -490,13 +492,13 @@ import { createAgentViewer } from "./agent-viewer.js";
       }
       populateProjectSelect();
       if (data.canCreate === false) {
-        state.projectsError = "当前桥接配置未开放新建会话。";
-        ui.projectLoadText.textContent = state.projectsError;
+        state.projectsError = t("当前桥接配置未开放新建会话。");
+        i18n.text(ui.projectLoadText, () => t(state.projectsError));
         ui.projectLoadState.hidden = false;
       }
     } catch (error) {
-      state.projectsError = `无法读取已保存项目：${error.message}`;
-      ui.projectLoadText.textContent = state.projectsError;
+      state.projectsError = t`无法读取已保存项目：${t(error.message)}`;
+      i18n.text(ui.projectLoadText, () => t(state.projectsError));
       ui.projectLoadState.hidden = false;
       populateProjectSelect();
     } finally {
@@ -508,13 +510,13 @@ import { createAgentViewer } from "./agent-viewer.js";
 
   function buildCreatePayload(draft) {
     const projectChoice = draft.projectChoice;
-    if (!projectChoice) throw new Error("请选择一个已保存项目，或明确选择无项目。");
-    if (projectChoice !== "__none__" && !state.projects.some(project => project.projectId === projectChoice)) throw new Error("所选项目不可用。请重新加载项目列表。");
+    if (!projectChoice) throw new Error(t("请选择一个已保存项目，或明确选择无项目。"));
+    if (projectChoice !== "__none__" && !state.projects.some(project => project.projectId === projectChoice)) throw new Error(t("所选项目不可用。请重新加载项目列表。"));
     const prompt = draft.prompt.trim();
-    if (!prompt) throw new Error("请填写首条消息。");
-    if (prompt.length > 12000) throw new Error("首条消息不能超过 12000 个字符。");
+    if (!prompt) throw new Error(t("请填写首条消息。"));
+    if (prompt.length > 12000) throw new Error(t("首条消息不能超过 12000 个字符。"));
     const title = draft.title.trim();
-    if (title.length > 200) throw new Error("标题不能超过 200 个字符。");
+    if (title.length > 200) throw new Error(t("标题不能超过 200 个字符。"));
     return { projectId: projectChoice === "__none__" ? null : projectChoice, ...(title ? { title } : {}), prompt };
   }
 
@@ -531,21 +533,21 @@ import { createAgentViewer } from "./agent-viewer.js";
     const attempt = state.createAttempt;
     const receipt = state.createReceipt;
     ui.createError.hidden = !state.createErrorText;
-    ui.createError.textContent = state.createErrorText || "";
+    i18n.text(ui.createError, () => t(state.createErrorText) || "");
     ui.createRecoveryState.hidden = !attempt && !receipt && !state.createRecoveryError;
-    ui.createRecoveryState.textContent = state.createRecoveryError || "";
+    i18n.text(ui.createRecoveryState, () => t(state.createRecoveryError) || "");
     ui.createRetry.hidden = !attempt || attempt.state !== "not_found";
     ui.checkCreateReceipt.hidden = !attempt || attempt.state !== "unknown";
     ui.enterCreatedFromDialog.hidden = !receipt;
     ui.createSubmit.hidden = !!attempt;
     if (attempt) {
       ui.createRecoveryState.hidden = false;
-      ui.createRecoveryState.textContent = state.createRecoveryError || (attempt.state === "not_found"
-        ? "未找到原请求记录。可手动沿用原请求编号和内容重试；请先核对会话列表。"
-        : attempt.state === "sending" ? "正在提交创建请求…" : "创建结果尚未确认。页面只会核对回执，不会自动重发。");
+      i18n.text(ui.createRecoveryState, () => t(state.createRecoveryError) || (attempt.state === "not_found"
+        ? t("未找到原请求记录。可手动沿用原请求编号和内容重试；请先核对会话列表。")
+        : attempt.state === "sending" ? t("正在提交创建请求…") : t("创建结果尚未确认。页面只会核对回执，不会自动重发。")));
     } else if (receipt) {
       ui.createRecoveryState.hidden = false;
-      ui.createRecoveryState.textContent = "会话已创建。首条消息已随创建请求发送。";
+      i18n.text(ui.createRecoveryState, () => t("会话已创建。首条消息已随创建请求发送。"));
     }
     const canCreate = mayCreateThread();
     let valid = false;
@@ -559,7 +561,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     const receipt = state.createReceipt;
     const show = !!receipt && state.selectedId !== receipt.threadId;
     ui.creationResult.hidden = !show;
-    if (show) ui.creationResultText.textContent = "新会话已创建。你可以继续当前任务，或进入刚创建的会话。";
+    if (show) i18n.text(ui.creationResultText, () => t("新会话已创建。你可以继续当前任务，或进入刚创建的会话。"));
   }
 
   function openNewThreadDialog() {
@@ -595,7 +597,7 @@ import { createAgentViewer } from "./agent-viewer.js";
   }
 
   async function finishThreadCreation(receipt, attempt, selection) {
-    if (!validCreateReceipt(receipt, attempt.requestId)) throw Object.assign(new Error("创建回执不匹配"), { code: "DELIVERY_UNKNOWN" });
+    if (!validCreateReceipt(receipt, attempt.requestId)) throw Object.assign(new Error(t("创建回执不匹配")), { code: "DELIVERY_UNKNOWN" });
     const currentDraft = ui.createDialog.open ? readCreateDraftFromForm() : state.createDraft;
     if (ui.createDialog.open) persistCreateDraft(currentDraft);
     let unchanged = state.createDraftRevision === attempt.draftRevision;
@@ -634,7 +636,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       request = { requestId: createRequestId(), payload, draftRevision: state.createDraftRevision, state: "sending" };
       try { sessionStorage.setItem(NEW_THREAD_PENDING_KEY, JSON.stringify(request)); }
       catch {
-        state.createErrorText = "浏览器无法保存创建恢复记录，会话尚未创建。请释放本站会话存储后重试。";
+        state.createErrorText = t("浏览器无法保存创建恢复记录，会话尚未创建。请释放本站会话存储后重试。");
         renderCreateRecoveryState();
         return;
       }
@@ -644,7 +646,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       if (request !== state.createAttempt || request.state !== "not_found") return;
       request.state = "sending";
       try { sessionStorage.setItem(NEW_THREAD_PENDING_KEY, JSON.stringify(request)); }
-      catch { state.createErrorText = "无法保存恢复状态，未重试创建请求。"; renderCreateRecoveryState(); return; }
+      catch { state.createErrorText = t("无法保存恢复状态，未重试创建请求。"); renderCreateRecoveryState(); return; }
       state.createSelection = { selectedId: state.selectedId, switching: state.switching };
     }
     state.createErrorText = "";
@@ -663,7 +665,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       } else {
         if (state.createAttempt) state.createAttempt.state = "unknown";
         try { sessionStorage.setItem(NEW_THREAD_PENDING_KEY, JSON.stringify(state.createAttempt)); } catch { /* The original marker remains in storage. */ }
-        state.createRecoveryError = "创建结果尚未确认。正在查询回执；不会自动重复创建。";
+        state.createRecoveryError = t("创建结果尚未确认。正在查询回执；不会自动重复创建。");
         state.createErrorText = error.message;
         recoverAfterSubmit = true;
       }
@@ -692,10 +694,10 @@ import { createAgentViewer } from "./agent-viewer.js";
         try { sessionStorage.setItem(NEW_THREAD_PENDING_KEY, JSON.stringify(attempt)); } catch { /* Preserve the in-memory retry only. */ }
       } else {
         attempt.state = "unknown";
-        state.createRecoveryError = "服务端仍无法确认创建结果。可以继续核对状态。";
+        state.createRecoveryError = t("服务端仍无法确认创建结果。可以继续核对状态。");
       }
     } catch (error) {
-      state.createRecoveryError = `无法核对创建回执：${error.message}。不会自动重发。`;
+      state.createRecoveryError = t`无法核对创建回执：${t(error.message)}。不会自动重发。`;
     } finally {
       state.creatingThread = false;
       renderCreateRecoveryState();
@@ -705,13 +707,13 @@ import { createAgentViewer } from "./agent-viewer.js";
 
   function showNotice(message, kind = "info", timeout = 0, source = null) {
     clearTimeout(state.noticeTimer);
-    if (!message) { ui.notice.hidden = true; ui.notice.textContent = ""; return; }
+    if (!message) { ui.notice.hidden = true; i18n.text(ui.notice, () => ""); return; }
     ui.notice.hidden = false;
     ui.notice.dataset.kind = kind;
     if (source) ui.notice.dataset.source = source;
     else delete ui.notice.dataset.source;
     delete ui.notice.dataset.taskId;
-    ui.notice.textContent = message;
+    i18n.text(ui.notice, () => t(message));
     if (timeout) state.noticeTimer = setTimeout(() => showNotice(""), timeout);
   }
 
@@ -725,7 +727,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       state.execution = execution;
       if (execution.available === false) {
         state.controlUnavailable = true;
-        ui.controlSummary.textContent = execution.reason || "运行控制快照暂不可用，保留当前待处理内容。";
+        i18n.text(ui.controlSummary, () => execution.reason || t("运行控制快照暂不可用，保留当前待处理内容。"));
         ui.controlState.hidden = false;
         for (const [key, entry] of state.pendingCards) updatePendingCard(id, entry.card, entry.card.__pendingControls.request);
         return;
@@ -736,7 +738,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       if (id === state.selectedId && token === state.switching) {
         state.execution = null;
         state.controlUnavailable = true;
-        ui.controlSummary.textContent = `暂时无法读取运行控制：${error.message}`;
+        i18n.text(ui.controlSummary, () => t`暂时无法读取运行控制：${t(error.message)}`);
         ui.controlState.hidden = false;
         for (const [key, entry] of state.pendingCards) updatePendingCard(id, entry.card, entry.card.__pendingControls.request);
       }
@@ -805,24 +807,24 @@ import { createAgentViewer } from "./agent-viewer.js";
   }
 
   function requestReadinessReason(request) {
-    if (!request || request.requestId == null || typeof request.token !== "string" || !request.token) return "请求凭据不完整，不能安全提交。";
+    if (!request || request.requestId == null || typeof request.token !== "string" || !request.token) return t("请求凭据不完整，不能安全提交。");
     if (request.kind === "commandApproval") {
-      if (typeof request.command !== "string" || !request.command || typeof request.cwd !== "string" || !request.cwd) return "缺少完整命令或工作目录，不能审批。";
+      if (typeof request.command !== "string" || !request.command || typeof request.cwd !== "string" || !request.cwd) return t("缺少完整命令或工作目录，不能审批。");
       return "";
     }
     if (request.kind === "fileApproval") {
-      if (typeof request.cwd !== "string" || !request.cwd || !Array.isArray(request.files) || !request.files.length) return "缺少工作目录或文件变更清单，不能审批。";
+      if (typeof request.cwd !== "string" || !request.cwd || !Array.isArray(request.files) || !request.files.length) return t("缺少工作目录或文件变更清单，不能审批。");
       for (const file of request.files) {
-        if (typeof file.path !== "string" || !["add", "update", "delete"].includes(file.type) || (file.movePath != null && typeof file.movePath !== "string")) return "文件变更信息不完整，不能审批。";
-        if (file.type !== "delete" && typeof file.diff !== "string") return "文件差异不完整，不能审批。";
+        if (typeof file.path !== "string" || !["add", "update", "delete"].includes(file.type) || (file.movePath != null && typeof file.movePath !== "string")) return t("文件变更信息不完整，不能审批。");
+        if (file.type !== "delete" && typeof file.diff !== "string") return t("文件差异不完整，不能审批。");
       }
       return "";
     }
     if (["userInput", "asyncUserInput"].includes(request.kind)) {
-      if (!Array.isArray(request.questions) || !request.questions.length || request.questions.some(question => typeof question.id !== "string" || (!question.header && !question.question) || !Array.isArray(question.options) || question.options.some(option => typeof option.label !== "string"))) return "问题或选项信息不完整，不能提交回答。";
+      if (!Array.isArray(request.questions) || !request.questions.length || request.questions.some(question => typeof question.id !== "string" || (!question.header && !question.question) || !Array.isArray(question.options) || question.options.some(option => typeof option.label !== "string"))) return t("问题或选项信息不完整，不能提交回答。");
       return "";
     }
-    return request.disabledReason || "此交互类型暂不支持在手机上回复。";
+    return request.disabledReason || t("此交互类型暂不支持在手机上回复。");
   }
 
   function requestIsActionable(request) {
@@ -835,10 +837,10 @@ import { createAgentViewer } from "./agent-viewer.js";
     row.className = `pending-fact ${className}`.trim();
     const label = document.createElement("span");
     label.className = "pending-fact-label";
-    label.textContent = labelText;
+    i18n.text(label, () => t(labelText));
     const content = document.createElement(className.includes("code") ? "pre" : "span");
     content.className = className.includes("code") ? "pending-code" : "pending-fact-value";
-    content.textContent = String(value);
+    i18n.text(content, () => String(value));
     row.append(label, content);
     parent.append(row);
   }
@@ -849,21 +851,21 @@ import { createAgentViewer } from "./agent-viewer.js";
     card.dataset.pendingKey = requestKey(threadId, request);
     const heading = document.createElement("h2");
     heading.className = "pending-title";
-    heading.textContent = request.title || ({ commandApproval: "命令审批", fileApproval: "文件更改审批", userInput: "需要回答", asyncUserInput: "需要回答" }[request.kind] || "待处理交互");
+    i18n.text(heading, () => request.title || ({ commandApproval: t("命令审批"), fileApproval: t("文件更改审批"), userInput: t("需要回答"), asyncUserInput: t("需要回答") }[request.kind] || t("待处理交互")));
     const facts = document.createElement("div");
     facts.className = "pending-facts";
     const form = ["userInput", "asyncUserInput"].includes(request.kind) ? document.createElement("form") : null;
     if (request.kind === "commandApproval") {
-      appendFact(facts, "命令", request.command, "code");
-      appendFact(facts, "工作目录", request.cwd);
-      appendFact(facts, "原因", request.reason);
+      appendFact(facts, t("命令"), request.command, "code");
+      appendFact(facts, t("工作目录"), request.cwd);
+      appendFact(facts, t("原因"), request.reason);
     } else if (request.kind === "fileApproval") {
-      appendFact(facts, "原因", request.reason);
-      appendFact(facts, "工作目录", request.cwd);
+      appendFact(facts, t("原因"), request.reason);
+      appendFact(facts, t("工作目录"), request.cwd);
       for (const file of request.files || []) {
-        appendFact(facts, file.movePath ? "新路径" : ({ add: "新增文件", update: "修改文件", delete: "删除文件" })[file.type] || "文件", file.path, "code");
-        if (file.movePath) appendFact(facts, "原路径", file.movePath, "code");
-        if (file.diff) appendFact(facts, "变更", file.diff, "code");
+        appendFact(facts, file.movePath ? t("新路径") : ({ add: t("新增文件"), update: t("修改文件"), delete: t("删除文件") })[file.type] || t("文件"), file.path, "code");
+        if (file.movePath) appendFact(facts, t("原路径"), file.movePath, "code");
+        if (file.diff) appendFact(facts, t("变更"), file.diff, "code");
       }
     } else if (["userInput", "asyncUserInput"].includes(request.kind)) {
       const secret = requestHasSecret(request);
@@ -874,7 +876,7 @@ import { createAgentViewer } from "./agent-viewer.js";
         const field = document.createElement("fieldset");
         field.className = "pending-question";
         const legend = document.createElement("legend");
-        legend.textContent = [question.header, question.question].filter(Boolean).join(" · ") || "回答";
+        i18n.text(legend, () => [question.header, question.question].filter(Boolean).join(" · ") || t("回答"));
         field.append(legend);
         const saved = answers[question.id];
         let textInput = null;
@@ -902,7 +904,7 @@ import { createAgentViewer } from "./agent-viewer.js";
           if (question.isOther === true) {
             const other = document.createElement("label"); other.className = "pending-option";
             const radio = document.createElement("input"); radio.type = "radio"; radio.name = groupName; radio.value = "__other__"; radio.checked = saved?.type === "other";
-            const copy = document.createElement("span"); copy.className = "pending-option-copy"; copy.textContent = "其他回答";
+            const copy = document.createElement("span"); copy.className = "pending-option-copy"; i18n.text(copy, () => t("其他回答"));
             other.append(radio, copy); field.append(other); radioInputs.push(radio);
             radio.addEventListener("change", () => {
               if (radio.checked) { if (textInput) { textInput.disabled = false; textInput.dataset.requestDisabled = "false"; } savePendingAnswers(threadId, request, { ...readPendingAnswers(threadId, request, !secret), [question.id]: { type: "other", value: textInput?.value || "" } }, !secret); textInput?.focus(); updateQuestionSubmit(card, request); }
@@ -915,8 +917,8 @@ import { createAgentViewer } from "./agent-viewer.js";
           if (question.isSecret === true) { textInput.type = "password"; textInput.autocomplete = "new-password"; textInput.spellcheck = false; }
           else { textInput.rows = 2; textInput.autocomplete = "off"; }
           textInput.className = "pending-answer";
-          textInput.setAttribute("aria-label", question.header || question.question || "回答");
-          textInput.placeholder = question.isSecret === true ? "输入敏感回答" : "输入回答";
+          i18n.attr(textInput, "aria-label", () => question.header || question.question || t("回答"));
+          i18n.attr(textInput, "placeholder", () => question.isSecret === true ? t("输入敏感回答") : t("输入回答"));
           if (saved?.type === "text" || saved?.type === "other") textInput.value = saved.value;
           if (question.options.length) textInput.disabled = saved?.type !== "other";
           if (question.options.length) textInput.dataset.requestDisabled = saved?.type !== "other" ? "true" : "false";
@@ -933,24 +935,24 @@ import { createAgentViewer } from "./agent-viewer.js";
     } else {
       const unsupported = document.createElement("p");
       unsupported.className = "pending-disabled-reason";
-      unsupported.textContent = request.disabledReason || "此交互类型暂不支持在手机上回复。";
+      i18n.text(unsupported, () => request.disabledReason || t("此交互类型暂不支持在手机上回复。"));
       facts.append(unsupported);
     }
     const feedback = document.createElement("p"); feedback.className = "pending-feedback"; feedback.setAttribute("role", "status");
     const disabledReason = document.createElement("p"); disabledReason.className = "pending-disabled-reason";
     const actions = document.createElement("div"); actions.className = "pending-actions";
-    const refresh = document.createElement("button"); refresh.type = "button"; refresh.className = "pending-refresh"; refresh.textContent = "刷新状态";
+    const refresh = document.createElement("button"); refresh.type = "button"; refresh.className = "pending-refresh"; i18n.text(refresh, () => t("刷新状态"));
     refresh.addEventListener("click", () => { void refreshExecution(threadId); });
     actions.append(refresh);
     let accept = null, decline = null, submit = null;
     if (request.kind === "commandApproval" || request.kind === "fileApproval") {
-      accept = document.createElement("button"); accept.type = "button"; accept.className = "pending-accept"; accept.textContent = "允许一次";
-      decline = document.createElement("button"); decline.type = "button"; decline.className = "pending-decline"; decline.textContent = "拒绝";
+      accept = document.createElement("button"); accept.type = "button"; accept.className = "pending-accept"; i18n.text(accept, () => t("允许一次"));
+      decline = document.createElement("button"); decline.type = "button"; decline.className = "pending-decline"; i18n.text(decline, () => t("拒绝"));
       actions.append(decline, accept);
       accept.addEventListener("click", () => { void submitPendingResponse(threadId, request, { decision: "accept" }); });
       decline.addEventListener("click", () => { void submitPendingResponse(threadId, request, { decision: "decline" }); });
     } else if (form) {
-      submit = document.createElement("button"); submit.type = "submit"; submit.className = "pending-submit"; submit.textContent = "提交回答";
+      submit = document.createElement("button"); submit.type = "submit"; submit.className = "pending-submit"; i18n.text(submit, () => t("提交回答"));
       actions.append(submit);
       form.append(actions);
       form.addEventListener("submit", event => {
@@ -1008,18 +1010,18 @@ import { createAgentViewer } from "./agent-viewer.js";
     controls.disabledReason.hidden = true;
     if (localState === "unknown") {
       controls.disabledReason.hidden = false;
-      controls.disabledReason.textContent = "提交结果尚未确认。不会再次发送；刷新状态并等待此请求消失。";
+      i18n.text(controls.disabledReason, () => t("提交结果尚未确认。不会再次发送；刷新状态并等待此请求消失。"));
     } else if (localState === "delivered") {
       controls.disabledReason.hidden = false;
-      controls.disabledReason.textContent = "回复已送达桌面，尚未确认请求已应用；等待此请求从列表消失。";
+      i18n.text(controls.disabledReason, () => t("回复已送达桌面，尚未确认请求已应用；等待此请求从列表消失。"));
     } else if (!requestIsActionable(request)) {
       controls.disabledReason.hidden = false;
-      controls.disabledReason.textContent = request.disabledReason || readinessReason || "此请求当前不可提交。";
+      i18n.text(controls.disabledReason, () => request.disabledReason || readinessReason || t("此请求当前不可提交。"));
     } else if (state.controlUnavailable) {
       controls.disabledReason.hidden = false;
-      controls.disabledReason.textContent = "无法确认请求仍有效。刷新状态前不能提交。";
+      i18n.text(controls.disabledReason, () => t("无法确认请求仍有效。刷新状态前不能提交。"));
     }
-    if (state.responding.has(key)) controls.feedback.textContent = "正在发送一次…";
+    if (state.responding.has(key)) i18n.text(controls.feedback, () => t("正在发送一次…"));
   }
 
   function renderPendingRequests(execution) {
@@ -1072,8 +1074,8 @@ import { createAgentViewer } from "./agent-viewer.js";
         ui.historicalQuestionsContent.append(text);
       }
     }
-    ui.controlSummary.textContent = count ? (requests.length ? `${count} 项待处理交互` : `${count} 项待处理交互暂时没有可显示的详情。`) : (!execution.available && normalizeStatus(state.thread?.status).kind === "running" ? (execution.reason || "运行控制暂不可用。") : "");
-    if (requests.length && !state.controlOpen && requests.some(request => !state.controlSeen.has(requestKey(execution.threadId, request)))) ui.controlSummary.textContent += " · 新";
+    i18n.text(ui.controlSummary, () => count ? (requests.length ? t`${count} 项待处理交互` : t`${count} 项待处理交互暂时没有可显示的详情。`) : (!execution.available && normalizeStatus(state.thread?.status).kind === "running" ? (execution.reason || t("运行控制暂不可用。")) : ""));
+    if (requests.length && !state.controlOpen && requests.some(request => !state.controlSeen.has(requestKey(execution.threadId, request)))) ui.controlSummary.textContent += t(" · 新");
     ui.controlState.hidden = !count && !ui.controlSummary.textContent;
     renderControlExpansion();
   }
@@ -1081,13 +1083,13 @@ import { createAgentViewer } from "./agent-viewer.js";
   function renderControlExpansion() {
     ui.pendingRequests.hidden = !state.controlOpen;
     ui.controlToggle.setAttribute("aria-expanded", String(state.controlOpen));
-    ui.controlToggle.title = state.controlOpen ? "收起待处理交互" : "查看待处理交互";
+    i18n.attr(ui.controlToggle, "title", () => state.controlOpen ? t("收起待处理交互") : t("查看待处理交互"));
     ui.closePending.hidden = !state.controlOpen;
     ui.controlState.dataset.expanded = String(state.controlOpen);
     if (state.controlOpen) {
       for (const key of state.pendingCards.keys()) state.controlSeen.add(key);
       try { sessionStorage.setItem(CONTROL_SEEN_PREFIX + state.selectedId, JSON.stringify([...state.controlSeen].slice(-100))); } catch { /* Expansion remains usable in this page. */ }
-      ui.controlSummary.textContent = ui.controlSummary.textContent.replace(/ · 新$/, "");
+      i18n.text(ui.controlSummary, () => ui.controlSummary.textContent.replace(/ · 新$/, ""));
     }
   }
 
@@ -1104,7 +1106,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     if (state.responding.has(key) || readResponseState(threadId, request) || !requestIsActionable(request) || state.controlUnavailable || threadId !== state.selectedId || state.execution?.threadId !== threadId) return;
     if (!saveResponseState(threadId, request, "unknown")) {
       const entry = state.pendingCards.get(key);
-      if (entry) entry.card.__pendingControls.feedback.textContent = "浏览器无法保存提交状态，回答尚未发送。请检查会话存储后重试。";
+      if (entry) i18n.text(entry.card.__pendingControls.feedback, () => t("浏览器无法保存提交状态，回答尚未发送。请检查会话存储后重试。"));
       return;
     }
     state.responding.add(key);
@@ -1112,16 +1114,16 @@ import { createAgentViewer } from "./agent-viewer.js";
     if (entry) updatePendingCard(threadId, entry.card, request);
     try {
       const result = await api(`/api/threads/${encodeURIComponent(threadId)}/respond`, { method: "POST", body: JSON.stringify({ requestId: request.requestId, token: request.token, ...payload }) });
-      if (result.threadId !== threadId || String(result.requestId) !== String(request.requestId) || result.delivered !== true) throw Object.assign(new Error("未收到有效送达确认"), { code: "DELIVERY_UNKNOWN" });
+      if (result.threadId !== threadId || String(result.requestId) !== String(request.requestId) || result.delivered !== true) throw Object.assign(new Error(t("未收到有效送达确认")), { code: "DELIVERY_UNKNOWN" });
       saveResponseState(threadId, request, "delivered");
-      if (selection === state.switching && threadId === state.selectedId && entry) entry.card.__pendingControls.feedback.textContent = "回复已送达桌面，正在等待请求状态更新。";
+      if (selection === state.switching && threadId === state.selectedId && entry) i18n.text(entry.card.__pendingControls.feedback, () => t("回复已送达桌面，正在等待请求状态更新。"));
     } catch (error) {
       const definitelyRejected = new Set(["DEVICE_OFFLINE", "LOGIN_REQUIRED", "INVALID_REQUEST", "REQUEST_CHANGED", "REQUEST_READ_ONLY", "CONTROL_DISABLED", "SEND_DISABLED", "SEND_BUSY", "OWNER_UNAVAILABLE", "PROTOCOL_INCOMPATIBLE", "UNSUPPORTED_THREAD", "DELIVERY_STORE_UNAVAILABLE", "LIMIT_REACHED"]);
       if (definitelyRejected.has(error.code)) clearResponseState(threadId, request);
       if (selection === state.switching && threadId === state.selectedId && entry) {
-        entry.card.__pendingControls.feedback.textContent = definitelyRejected.has(error.code)
-          ? `请求没有发送：${error.message}。正在刷新状态。`
-          : error.code === "REQUEST_CHANGED" ? "请求已变化或过期，正在刷新状态。" : "提交结果尚未确认，正在刷新状态；不会自动重试。";
+        i18n.text(entry.card.__pendingControls.feedback, () => definitelyRejected.has(error.code)
+          ? t`请求没有发送：${t(error.message)}。正在刷新状态。`
+          : error.code === "REQUEST_CHANGED" ? t("请求已变化或过期，正在刷新状态。") : t("提交结果尚未确认，正在刷新状态；不会自动重试。"));
       }
     } finally {
       state.responding.delete(key);
@@ -1142,16 +1144,16 @@ import { createAgentViewer } from "./agent-viewer.js";
     updateControls();
     try {
       const result = await api(`/api/threads/${encodeURIComponent(id)}/stop`, { method: "POST", body: JSON.stringify({ turnId: execution.turnId }) });
-      if (result.threadId !== id || result.turnId !== execution.turnId) throw Object.assign(new Error("停止结果不匹配"), { code: "DELIVERY_UNKNOWN" });
+      if (result.threadId !== id || result.turnId !== execution.turnId) throw Object.assign(new Error(t("停止结果不匹配")), { code: "DELIVERY_UNKNOWN" });
       if (id === state.selectedId) {
-        showNotice(result.stopped ? (result.goalPauseError ? "当前轮次已中断，但目标暂停失败，请在桌面检查。" : "当前轮次已停止。") : "当前轮次已结束，正在刷新。", "info", 6000);
+        showNotice(result.stopped ? (result.goalPauseError ? t("当前轮次已中断，但目标暂停失败，请在桌面检查。") : t("当前轮次已停止。")) : t("当前轮次已结束，正在刷新。"), "info", 6000);
         state.execution = null;
         await loadThread({ mode: "latest" });
       }
     } catch (error) {
       if (id === state.selectedId) {
         state.execution = null;
-        showNotice(error.code === "TURN_CHANGED" ? "运行轮次已变化，未停止新的轮次。请查看更新后的状态。" : deliveryIsUnknown(error) ? "停止结果尚未确认，页面不会自动重试；请核对当前状态。" : `暂时无法停止：${error.message}`, "error");
+        showNotice(error.code === "TURN_CHANGED" ? t("运行轮次已变化，未停止新的轮次。请查看更新后的状态。") : deliveryIsUnknown(error) ? t("停止结果尚未确认，页面不会自动重试；请核对当前状态。") : t`暂时无法停止：${t(error.message)}`, "error");
         void refreshExecution(id);
       }
     } finally { state.stopping = false; updateControls(); }
@@ -1290,7 +1292,7 @@ import { createAgentViewer } from "./agent-viewer.js";
         renderTranscript(false);
         saveThreadSnapshot(id);
         if (isUnknown(id)) showUnknownNotice(id);
-        else if (recovered) showNotice("已找回桌面接收回执，无需重发。", "info", 6000);
+        else if (recovered) showNotice(t("已找回桌面接收回执，无需重发。"), "info", 6000);
       }
     } catch { /* A failed read is not evidence that the original send failed. */ }
     finally { state.receiptChecks.delete(id); updateControls(); }
@@ -1319,28 +1321,28 @@ import { createAgentViewer } from "./agent-viewer.js";
     ui.notice.dataset.taskId = id;
     ui.notice.replaceChildren();
     const message = document.createElement("span");
-    message.textContent = "上一条消息的送达状态尚未确认。页面会查询接收回执，不会自动重发；仍无法确认时，请在桌面检查。";
+    i18n.text(message, () => t("上一条消息的送达状态尚未确认。页面会查询接收回执，不会自动重发；仍无法确认时，请在桌面检查。"));
     const recheck = document.createElement("button");
     recheck.type = "button";
     recheck.className = "notice-action";
-    recheck.textContent = "重新核对回执";
+    i18n.text(recheck, () => t("重新核对回执"));
     recheck.addEventListener("click", async () => {
       recheck.disabled = true;
-      recheck.textContent = "正在核对…";
+      i18n.text(recheck, () => t("正在核对…"));
       await recoverDeliveryReceipts(id, true);
       recheck.disabled = false;
-      recheck.textContent = "重新核对回执";
+      i18n.text(recheck, () => t("重新核对回执"));
     });
     const confirm = document.createElement("button");
     confirm.type = "button";
     confirm.className = "notice-action";
-    confirm.textContent = "我已人工检查，解除发送锁";
+    i18n.text(confirm, () => t("我已人工检查，解除发送锁"));
     confirm.addEventListener("click", () => {
       clearUnknown(id);
       const remaining = readPendingMessages(id).filter(item => item.state !== "unknown");
       storePendingMessages(id, remaining);
       if (id === state.selectedId) { state.pendingMessages = remaining; renderTranscript(false); }
-      showNotice("发送锁已解除。请根据桌面中的检查结果自行决定后续操作。", "info", 7000);
+      showNotice(t("发送锁已解除。请根据桌面中的检查结果自行决定后续操作。"), "info", 7000);
       updateControls();
     }, { once: true });
     ui.notice.append(message, recheck, confirm);
@@ -1402,12 +1404,12 @@ import { createAgentViewer } from "./agent-viewer.js";
   function bindOrderHandle(handle, { kind, key, id, label }) {
     handle.className = "order-handle";
     handle.type = "button";
-    handle.textContent = "⠿";
+    i18n.text(handle, () => "⠿");
     handle.dataset.orderKind = kind;
     handle.dataset.orderKey = key || "";
     handle.dataset.orderId = id;
-    handle.title = "拖动，或使用方向键调整顺序";
-    handle.setAttribute("aria-label", `调整顺序：${label}`);
+    i18n.attr(handle, "title", () => t("拖动，或使用方向键调整顺序"));
+    i18n.attr(handle, "aria-label", () => t`调整顺序：${label}`);
     handle.addEventListener("pointerdown", event => {
       if (!state.sorting || ui.taskSearch.value.trim()) return;
       event.preventDefault();
@@ -1430,16 +1432,16 @@ import { createAgentViewer } from "./agent-viewer.js";
     const up = document.createElement("button");
     up.type = "button";
     up.className = "order-step";
-    up.textContent = "↑";
-    up.title = `上移：${label}`;
-    up.setAttribute("aria-label", `上移：${label}`);
+    i18n.text(up, () => "↑");
+    i18n.attr(up, "title", () => t`上移：${label}`);
+    i18n.attr(up, "aria-label", () => t`上移：${label}`);
     up.addEventListener("click", () => moveOneOrderItem(kind, key, id, -1));
     const down = document.createElement("button");
     down.type = "button";
     down.className = "order-step";
-    down.textContent = "↓";
-    down.title = `下移：${label}`;
-    down.setAttribute("aria-label", `下移：${label}`);
+    i18n.text(down, () => "↓");
+    i18n.attr(down, "title", () => t`下移：${label}`);
+    i18n.attr(down, "aria-label", () => t`下移：${label}`);
     down.addEventListener("click", () => moveOneOrderItem(kind, key, id, 1));
     controls.append(handle, up, down);
     return controls;
@@ -1462,7 +1464,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     row.dataset.orderKey = groupKey;
     row.dataset.orderId = thread.id;
     if (state.sorting) {
-      row.append(orderControls({ kind: "thread", key: groupKey, id: thread.id, label: text(thread.title, "未命名会话") }));
+      row.append(orderControls({ kind: "thread", key: groupKey, id: thread.id, label: text(thread.title, t("未命名会话")) }));
     }
     const select = document.createElement("button");
     select.type = "button";
@@ -1470,12 +1472,12 @@ import { createAgentViewer } from "./agent-viewer.js";
     select.setAttribute("aria-current", String(thread.id === state.selectedId));
     const title = document.createElement("span");
     title.className = "task-title";
-    title.textContent = text(thread.title, "未命名会话");
+    i18n.text(title, () => text(thread.title, t("未命名会话")));
     const dotKind = statusDotKind(thread.status);
     if (dotKind) {
       const dot = document.createElement("span");
       dot.className = `status-dot ${dotKind}`;
-      dot.setAttribute("aria-label", dotKind === "running" ? "进行中" : "错误");
+      i18n.attr(dot, "aria-label", () => dotKind === "running" ? t("进行中") : t("错误"));
       select.append(dot);
     }
     select.append(title);
@@ -1484,15 +1486,15 @@ import { createAgentViewer } from "./agent-viewer.js";
     const menu = document.createElement("details");
     menu.className = "task-menu";
     const menuButton = document.createElement("summary");
-    menuButton.textContent = "···";
-    menuButton.title = "会话菜单";
-    menuButton.setAttribute("aria-label", `会话菜单：${text(thread.title, "未命名会话")}`);
+    i18n.text(menuButton, () => "···");
+    i18n.attr(menuButton, "title", () => t("会话菜单"));
+    i18n.attr(menuButton, "aria-label", () => t`会话菜单：${text(thread.title, t("未命名会话"))}`);
     const pinned = isThreadPinned(thread);
     const pin = document.createElement("button");
     pin.type = "button";
     pin.className = "task-pin-action";
-    pin.textContent = pinned ? "取消置顶" : "置顶会话";
-    pin.title = "同步到 Codex 桌面的置顶状态";
+    i18n.text(pin, () => pinned ? t("取消置顶") : t("置顶会话"));
+    i18n.attr(pin, "title", () => t("同步到 Codex 桌面的置顶状态"));
     pin.disabled = !mayManageThread(thread, "pin");
     pin.addEventListener("click", event => {
       event.stopPropagation();
@@ -1500,14 +1502,14 @@ import { createAgentViewer } from "./agent-viewer.js";
     });
     const rename = document.createElement("button");
     rename.type = "button";
-    rename.textContent = "重命名";
+    i18n.text(rename, () => t("重命名"));
     rename.disabled = !mayManageThread(thread, "rename");
     rename.addEventListener("click", () => openThreadAction(thread, "rename"));
     const archive = document.createElement("button");
     archive.type = "button";
-    archive.textContent = "归档会话";
+    i18n.text(archive, () => t(i18n.language === "en" ? "归档当前会话" : "归档会话"));
     archive.disabled = !mayManageThread(thread, "archive");
-    archive.title = archive.disabled ? "仅可归档未运行的会话，启动桥接的会话不可归档" : "归档后可在桌面恢复";
+    i18n.attr(archive, "title", () => archive.disabled ? t("仅可归档未运行的会话，启动桥接的会话不可归档") : t("归档后可在桌面恢复"));
     const actions = document.createElement("div");
     actions.className = "task-menu-actions";
     pin.className = "";
@@ -1524,7 +1526,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     group.className = "pinned-list";
     const heading = document.createElement("h3");
     heading.className = "list-section-heading";
-    heading.textContent = "已置顶";
+    i18n.text(heading, () => t("已置顶"));
     group.append(heading);
     for (const thread of threads) group.append(createTaskRow(thread, "@pinned"));
     ui.taskList.append(group);
@@ -1547,10 +1549,10 @@ import { createAgentViewer } from "./agent-viewer.js";
     heading.className = "project-folder-heading";
     const name = document.createElement("span");
     name.className = "project-name";
-    name.textContent = label;
+    i18n.text(name, () => key === "unassigned" ? t("其他会话") : label);
     const count = document.createElement("span");
     count.className = "project-count";
-    count.textContent = String(threads.length);
+    i18n.text(count, () => String(threads.length));
     heading.append(name, count);
     folder.append(heading);
     for (const thread of threads) folder.append(createTaskRow(thread, key));
@@ -1577,15 +1579,15 @@ import { createAgentViewer } from "./agent-viewer.js";
   function openThreadAction(thread, action, value) {
     if (!mayManageThread(thread, action)) return;
     state.threadAction = { id: thread.id, action, value };
-    ui.actionTitle.textContent = action === "rename" ? "重命名会话" : action === "archive" ? "归档会话" : value ? "置顶会话" : "取消置顶";
-    ui.actionHint.textContent = action === "archive" ? `归档“${thread.title}”？它会从网页与桌面列表移除，可在桌面恢复。` : `此操作会同步到桌面：“${thread.title}”。`;
+    i18n.text(ui.actionTitle, () => action === "rename" ? t("重命名会话") : action === "archive" ? t(i18n.language === "en" ? "归档当前会话" : "归档会话") : value ? t("置顶会话") : t("取消置顶"));
+    i18n.text(ui.actionHint, () => action === "archive" ? t`归档“${thread.title}”？它会从网页与桌面列表移除，可在桌面恢复。` : t`此操作会同步到桌面：“${thread.title}”。`);
     ui.nameInput.hidden = ui.nameLabel.hidden = action !== "rename";
     ui.nameInput.value = text(thread.title);
     ui.nameInput.required = action === "rename";
     ui.actionError.hidden = true;
     ui.actionConfirm.disabled = false;
-    ui.actionConfirm.textContent = action === "archive" ? "归档" : "保存";
-    ui.actionCancel.textContent = "取消";
+    i18n.text(ui.actionConfirm, () => action === "archive" ? t("归档") : t("保存"));
+    i18n.text(ui.actionCancel, () => t("取消"));
     ui.actionDialog.showModal();
     if (action === "rename") { ui.nameInput.focus(); ui.nameInput.select(); }
   }
@@ -1600,10 +1602,10 @@ import { createAgentViewer } from "./agent-viewer.js";
     ui.actionConfirm.disabled = true;
     ui.actionCancel.disabled = true;
     ui.actionError.hidden = true;
-    ui.actionConfirm.textContent = "处理中…";
+    i18n.text(ui.actionConfirm, () => t("处理中…"));
     try {
       const result = await api(`/api/threads/${encodeURIComponent(action.id)}/settings`, { method: "POST", body: JSON.stringify({ action: action.action, value }) });
-      if (!result.accepted || result.threadId !== action.id || result.action !== action.action) throw Object.assign(new Error("未收到有效确认"), { code: "DELIVERY_UNKNOWN" });
+      if (!result.accepted || result.threadId !== action.id || result.action !== action.action) throw Object.assign(new Error(t("未收到有效确认")), { code: "DELIVERY_UNKNOWN" });
       if (action.action === "pin") {
         state.pinnedOverrides.delete(action.id);
         try { localStorage.setItem(PINNED_KEY, JSON.stringify(Object.fromEntries(state.pinnedOverrides))); } catch { /* Native state is authoritative. */ }
@@ -1628,15 +1630,15 @@ import { createAgentViewer } from "./agent-viewer.js";
         }
       }
       ui.actionDialog.close();
-      showNotice("会话设置已同步到桌面。", "info", 5000);
+      showNotice(t("会话设置已同步到桌面。"), "info", 5000);
       await refreshTasks();
     } catch (error) {
       ui.actionError.hidden = false;
       const unknown = deliveryIsUnknown(error);
-      ui.actionError.textContent = unknown ? "操作结果尚未确认，请关闭后刷新列表或在桌面核对。页面不会自动重复提交。" : error.message;
+      i18n.text(ui.actionError, () => unknown ? t("操作结果尚未确认，请关闭后刷新列表或在桌面核对。页面不会自动重复提交。") : t(error.message));
       ui.actionConfirm.disabled = unknown;
-      ui.actionConfirm.textContent = unknown ? "结果待核对" : "重试";
-      ui.actionCancel.textContent = "关闭";
+      i18n.text(ui.actionConfirm, () => unknown ? t("结果待核对") : t("重试"));
+      i18n.text(ui.actionCancel, () => t("关闭"));
       if (unknown) state.threadAction = null;
     } finally {
       state.managing = false;
@@ -1655,10 +1657,10 @@ import { createAgentViewer } from "./agent-viewer.js";
     ui.sortToggle.setAttribute("aria-pressed", String(state.sorting));
     ui.resetOrder.disabled = !state.orderLoaded || state.orderSaving || (!state.orderConfigured && !state.orderDirty);
     ui.orderState.hidden = false;
-    if (query) ui.orderState.textContent = "清除搜索后可调整顺序";
-    else if (state.orderSaving) ui.orderState.textContent = "正在保存顺序…";
-    else if (state.orderDirty) ui.orderState.textContent = "顺序未保存；再调整一次以重试";
-    else if (state.orderConfigured) ui.orderState.textContent = "网页排序 · 已保存";
+    if (query) i18n.text(ui.orderState, () => t("清除搜索后可调整顺序"));
+    else if (state.orderSaving) i18n.text(ui.orderState, () => t("正在保存顺序…"));
+    else if (state.orderDirty) i18n.text(ui.orderState, () => t("顺序未保存；再调整一次以重试"));
+    else if (state.orderConfigured) i18n.text(ui.orderState, () => t("网页排序 · 已保存"));
     else ui.orderState.hidden = true;
     const filtered = state.threads.filter(thread => {
       if (knownAgent(thread.id) || delegatedThread(thread)) return false;
@@ -1672,14 +1674,14 @@ import { createAgentViewer } from "./agent-viewer.js";
       expanded: [...state.expandedProjects].sort(([a], [b]) => a.localeCompare(b)),
       threads: filtered.map(thread => [thread.id, thread.title, thread.status, thread.projectKey, thread.projectPath, thread.projectName, thread.projectId, thread.cwd, thread.projectOrder, thread.projectThreadOrder, thread.pinnedIndex, isThreadPinned(thread)])
     });
-    ui.taskCount.textContent = query ? `${filtered.length} / ${state.threads.length}` : `${state.threads.length} 个会话`;
+    i18n.text(ui.taskCount, () => query ? `${filtered.length} / ${state.threads.length}` : t`${state.threads.length} 个会话`);
     if (fingerprint === state.taskListFingerprint) return;
     state.taskListFingerprint = fingerprint;
     ui.taskList.replaceChildren();
     if (!filtered.length) {
       const empty = document.createElement("p");
       empty.className = "muted empty-list";
-      empty.textContent = state.threads.length ? "没有匹配的会话" : state.connected ? "暂时没有可显示的会话" : "连接后会显示会话";
+      i18n.text(empty, () => state.threads.length ? t("没有匹配的会话") : state.connected ? t("暂时没有可显示的会话") : t("连接后会显示会话"));
       ui.taskList.append(empty);
       return;
     }
@@ -1736,7 +1738,7 @@ import { createAgentViewer } from "./agent-viewer.js";
             state.orderLoaded = true;
           }
         } catch (error) {
-          if (!state.orderLoaded) showNotice(`无法读取会话排序：${error.message}`, "error");
+          if (!state.orderLoaded) showNotice(t`无法读取会话排序：${t(error.message)}`, "error");
         }
       }
       renderTasks();
@@ -1752,7 +1754,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       setConnection(false, null, error);
       if (!preserveOnError || !state.threads.length) renderTasks();
       if (isUnknown(state.selectedId)) showUnknownNotice(state.selectedId);
-      else showNotice(`暂时无法读取任务列表：${error.message}`, "error", 0, "connection");
+      else showNotice(t`暂时无法读取任务列表：${t(error.message)}`, "error", 0, "connection");
     } finally {
       state.lastListAt = Date.now();
       state.listLoading = false;
@@ -1788,11 +1790,11 @@ import { createAgentViewer } from "./agent-viewer.js";
               : { revision: latest.revision ?? 0, order: latest.order || { projects: [], threads: {} } };
             state.orderDirty = false;
           } catch { /* The current local order remains visible until the next refresh. */ }
-          showNotice("排序已被另一页面更新，已同步服务器顺序。请重新调整。", "error");
+          showNotice(t("排序已被另一页面更新，已同步服务器顺序。请重新调整。"), "error");
           break;
         }
         state.orderDirty = true;
-        showNotice("无法保存排序；本页面暂时保留当前顺序。", "error");
+        showNotice(t("无法保存排序；本页面暂时保留当前顺序。"), "error");
         break;
       }
     }
@@ -1836,8 +1838,8 @@ import { createAgentViewer } from "./agent-viewer.js";
     const thread = state.thread;
     if (!thread) {
       filesPanel.setThread(null);
-      ui.title.textContent = "选择一个会话";
-      ui.subtitle.textContent = "本机 Codex";
+      i18n.text(ui.title, () => t("选择一个会话"));
+      i18n.text(ui.subtitle, () => t("本机 Codex"));
       ui.status.hidden = true;
       ui.details.hidden = true;
       return;
@@ -1851,18 +1853,18 @@ import { createAgentViewer } from "./agent-viewer.js";
       projectName: thread.projectName || listed.projectName,
     };
     const { label: projectName } = projectGroup(combined);
-    ui.title.textContent = text(thread.title, "未命名会话");
-    ui.subtitle.textContent = projectName;
+    i18n.text(ui.title, () => text(thread.title, t("未命名会话")));
+    i18n.text(ui.subtitle, () => projectGroup(combined).key === "unassigned" ? t("其他会话") : projectName);
     const status = normalizeStatus(thread.status);
     ui.status.hidden = false;
-    ui.status.textContent = status.label;
+    i18n.text(ui.status, () => t(status.label));
     ui.status.dataset.kind = status.kind;
     ui.details.hidden = false;
     ui.details.dataset.threadId = state.selectedId;
     ui.details.open = state.taskDetailsOpen.get(state.selectedId) === true;
-    ui.id.textContent = text(thread.id, "—");
-    ui.project.textContent = text(combined.projectId || projectName, "—");
-    ui.cwd.textContent = text(combined.cwd, "未提供");
+    i18n.text(ui.id, () => text(thread.id, "—"));
+    i18n.text(ui.project, () => text(combined.projectId || projectName, "—"));
+    i18n.text(ui.cwd, () => text(combined.cwd, t("未提供")));
     filesPanel.setThread({ id: state.selectedId, cwd: text(combined.cwd, "") });
   }
 
@@ -1885,7 +1887,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       wrapper.classList.add("work-commentary");
       const label = document.createElement("span");
       label.className = "sr-only";
-      label.textContent = "Codex 工作过程说明";
+      i18n.text(label, () => t("Codex 工作过程说明"));
       const body = document.createElement("div");
       body.className = "message-body";
       appendSafeMarkdown(body, text(item.text, ""));
@@ -1897,7 +1899,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       wrapper.classList.add(isUser ? "user" : "agent");
       const label = document.createElement("span");
       label.className = "sr-only";
-      label.textContent = isUser ? "你发送的消息" : "Codex 回复";
+      i18n.text(label, () => isUser ? t("你发送的消息") : t("Codex 回复"));
       const body = document.createElement("div");
       body.className = "message-body";
       appendSafeMarkdown(body, text(item.text, ""));
@@ -1906,10 +1908,10 @@ import { createAgentViewer } from "./agent-viewer.js";
     }
     wrapper.className = "activity-item";
     const phase = text(item.phase);
-    const summaryText = text(item.text, phase || (type === "activity" ? "活动" : `其他内容 · ${type}`));
+    const summaryText = text(item.text, phase || (type === "activity" ? t("活动") : t`其他内容 · ${type}`));
     const summary = document.createElement("div");
     summary.className = "activity-summary";
-    summary.textContent = summaryText;
+    i18n.text(summary, () => summaryText);
     wrapper.append(summary);
     const detailText = displayDetail(item.detail);
     if (detailText) {
@@ -1917,7 +1919,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       details.className = "activity-details";
       restoreDetailsState(details, `item:${state.selectedId}:${item.id}`);
       const detailSummary = document.createElement("summary");
-      detailSummary.textContent = "查看详情";
+      i18n.text(detailSummary, () => t("查看详情"));
       const body = document.createElement("pre");
       body.className = "activity-detail";
       body.textContent = detailText;
@@ -1949,7 +1951,7 @@ import { createAgentViewer } from "./agent-viewer.js";
         details.dataset.summaryEligible = String(block.summaryEligible === true);
         restoreDetailsState(details, key);
         const summary = document.createElement("summary");
-        summary.textContent = formatWorkSummary(turn, block);
+        i18n.text(summary, () => formatWorkSummary(turn, block, t));
         const content = document.createElement("div");
         content.className = "work-process-content";
         for (const item of block.items) {
@@ -1972,9 +1974,9 @@ import { createAgentViewer } from "./agent-viewer.js";
     appendSafeMarkdown(body, message.prompt);
     const receipt = document.createElement("span");
     receipt.className = "message-receipt";
-    receipt.textContent = message.state === "sending" ? "发送中…"
-      : message.state === "unknown" ? "送达状态未知 · 页面不会重发"
-        : "桌面已接收 · 等待同步";
+    i18n.text(receipt, () => message.state === "sending" ? t("发送中…")
+      : message.state === "unknown" ? t("送达状态未知 · 页面不会重发")
+        : t("桌面已接收 · 等待同步"));
     wrapper.append(body, receipt);
     return wrapper;
   }
@@ -2008,7 +2010,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     for (const details of ui.transcript.querySelectorAll("details.work-process[data-turn-id]")) {
       const turn = state.turns.get(details.dataset.turnId);
       const summary = details.querySelector(":scope > summary");
-      if (turn && summary) summary.textContent = formatWorkSummary(turn, { type: "work", summaryEligible: details.dataset.summaryEligible === "true" });
+      if (turn && summary) i18n.text(summary, () => formatWorkSummary(turn, { type: "work", summaryEligible: details.dataset.summaryEligible === "true" }, t));
     }
   }
 
@@ -2032,7 +2034,7 @@ import { createAgentViewer } from "./agent-viewer.js";
 
   function setThreadLoading(message = "", retry = false) {
     ui.threadLoadState.hidden = !message;
-    ui.threadLoadText.textContent = message;
+    i18n.text(ui.threadLoadText, () => t(message));
     ui.retryThread.hidden = !retry;
   }
 
@@ -2089,8 +2091,8 @@ import { createAgentViewer } from "./agent-viewer.js";
     ui.olderButton.hidden = !state.hasMore || !state.selectedId;
     ui.olderRow.hidden = !state.selectedId || (!state.hasMore && !state.turns.size);
     ui.olderButton.disabled = state.loadingOlder || !state.hasMore;
-    ui.olderButton.textContent = state.loadingOlder ? "读取中…" : state.historyError ? "重试较早消息" : "↑　较早的消息";
-    ui.historyState.textContent = state.loadingOlder ? "" : state.historyError ? "读取失败" : state.hasMore ? "" : (state.turns.size ? "已到最早消息" : "");
+    i18n.text(ui.olderButton, () => state.loadingOlder ? t("读取中…") : state.historyError ? t("重试较早消息") : t("↑　较早的消息"));
+    i18n.text(ui.historyState, () => state.loadingOlder ? "" : state.historyError ? t("读取失败") : state.hasMore ? "" : (state.turns.size ? t("已到最早消息") : ""));
   }
 
   async function loadThread({ id = state.selectedId, cursor = null, mode = "latest", token = state.switching, scroll = false, prefetchedData = null } = {}) {
@@ -2103,7 +2105,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     const wasPaged = state.pagingInitialized;
     const priorCursor = state.cursor;
     const priorHasMore = state.hasMore;
-    if (mode === "latest" && !state.pagingInitialized) setThreadLoading(state.turns.size ? "正在同步最新消息…" : "正在读取会话…");
+    if (mode === "latest" && !state.pagingInitialized) setThreadLoading(state.turns.size ? t("正在同步最新消息…") : t("正在读取会话…"));
     try {
       let data = prefetchedData || await api(`/api/threads/${encodeURIComponent(id)}${query}`, { signal: controller.signal });
       if (controller.signal.aborted || token !== state.switching || id !== state.selectedId) return;
@@ -2154,7 +2156,7 @@ import { createAgentViewer } from "./agent-viewer.js";
         // Only resume the old history boundary after bridging the entire gap.
         // Otherwise keep the catch-up cursor so manual loading can fill it.
         if (wasPaged && overlap) updatePaging({ nextCursor: priorCursor, hasMore: priorHasMore });
-        if (wasPaged && knownTurnIds.size && !overlap && state.hasMore) ui.historyState.textContent = "更早的记录尚未完全载入";
+        if (wasPaged && knownTurnIds.size && !overlap && state.hasMore) i18n.text(ui.historyState, () => t("更早的记录尚未完全载入"));
       } else if (mode === "older") {
         state.historyError = false;
         updatePaging(data.page || {});
@@ -2181,9 +2183,9 @@ import { createAgentViewer } from "./agent-viewer.js";
       }
       setConnection(false, null, error);
       updateControls();
-      setThreadLoading("无法更新会话。最近读取的内容已保留。", true);
+      setThreadLoading(t("无法更新会话。最近读取的内容已保留。"), true);
       if (isUnknown(id)) showUnknownNotice(id);
-      else showNotice(`暂时无法更新对话快照：${error.message}。已有内容和草稿仍保留。`, "error", 0, "connection");
+      else showNotice(t`暂时无法更新对话快照：${t(error.message)}。已有内容和草稿仍保留。`, "error", 0, "connection");
     }
   }
 
@@ -2215,12 +2217,12 @@ import { createAgentViewer } from "./agent-viewer.js";
       catch (error) {
         if (selectionRequest !== state.selecting || controller.signal.aborted || error.name === "AbortError") return;
         setConnection(false, null, error);
-        showNotice(`暂时无法读取会话：${error.message}。已有内容和草稿仍保留。`, "error", 0, "connection");
+        showNotice(t`暂时无法读取会话：${t(error.message)}。已有内容和草稿仍保留。`, "error", 0, "connection");
         return;
       } finally { if (state.selectionController === controller) { state.selectionController = null; updateControls(); } }
       if (selectionRequest !== state.selecting || controller.signal.aborted) return;
       if (prefetchedData.thread?.id !== id) {
-        showNotice("返回的会话与请求不匹配，已有内容和草稿仍保留。", "error");
+        showNotice(t("返回的会话与请求不匹配，已有内容和草稿仍保留。"), "error");
         return;
       }
       if (delegatedThread(prefetchedData.thread)) {
@@ -2264,11 +2266,11 @@ import { createAgentViewer } from "./agent-viewer.js";
     ui.historicalQuestions.hidden = true;
     ui.showHistory.hidden = true;
     ui.historicalQuestionsContent.replaceChildren();
-    ui.controlSummary.textContent = "";
+    i18n.text(ui.controlSummary, () => "");
     ui.controlState.hidden = true;
     saveSelectedThread(id);
     state.taskListFingerprint = "";
-    state.thread = state.threads.find((thread) => thread.id === id) || { id, title: "读取中…", status: "unknown" };
+    state.thread = state.threads.find((thread) => thread.id === id) || { id, title: t("读取中…"), status: "unknown" };
     const cached = restoreThreadSnapshot(id);
     if (!cached) {
       state.cursor = null;
@@ -2280,11 +2282,11 @@ import { createAgentViewer } from "./agent-viewer.js";
     }
     ui.input.value = readDraft(id);
     autosizeInput();
-    ui.historyState.textContent = "";
+    i18n.text(ui.historyState, () => "");
     ui.olderButton.hidden = true;
     ui.olderRow.hidden = true;
     ui.newMessages.hidden = true;
-    setThreadLoading(cached ? "正在同步最新消息…" : "正在读取会话…");
+    setThreadLoading(cached ? t("正在同步最新消息…") : t("正在读取会话…"));
     refreshTaskNotice();
     renderTasks();
     renderThreadHeader();
@@ -2326,7 +2328,7 @@ import { createAgentViewer } from "./agent-viewer.js";
         setConnection(!!status.connected, status);
         if (!state.connected) {
           const issue = connectionIssue(state.connectionFault);
-          if (!isUnknown(state.selectedId)) showNotice(issue?.notice || "桌面 Codex 暂时不可用。页面会保留最近内容并继续重试。", "error", 0, "connection");
+          if (!isUnknown(state.selectedId)) showNotice(issue?.notice || t("桌面 Codex 暂时不可用。页面会保留最近内容并继续重试。"), "error", 0, "connection");
           return;
         }
         if (ui.notice.dataset.source === "connection") showNotice("");
@@ -2345,7 +2347,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       setConnection(false, null, error);
       updateControls();
       if (state.selectedId && isUnknown(state.selectedId)) showUnknownNotice(state.selectedId);
-      else showNotice("本机桥接服务暂时不可用。页面会保留最近内容并继续重试。", "error", 0, "connection");
+      else showNotice(t("本机桥接服务暂时不可用。页面会保留最近内容并继续重试。"), "error", 0, "connection");
     } finally {
       state.idlePolls = revision === state.changeRevision ? state.idlePolls + 1 : 0;
       state.polling = false;
@@ -2373,15 +2375,22 @@ import { createAgentViewer } from "./agent-viewer.js";
   }
 
   function autosizeInput() {
+    const computed = window.getComputedStyle(ui.input);
+    const lineHeight = Number.parseFloat(computed.lineHeight) || Number.parseFloat(computed.fontSize) * 1.45 || 24;
+    const padding = Math.max(0, (44 - lineHeight) / 2);
+    ui.input.style.setProperty("--composer-padding", `${padding}px`);
     ui.input.style.height = "auto";
-    ui.input.style.height = `${Math.min(ui.input.scrollHeight, 180)}px`;
+    const singleLineHeight = Math.max(44, lineHeight);
+    const contentHeight = ui.input.value ? Math.max(singleLineHeight, ui.input.scrollHeight) : singleLineHeight;
+    ui.input.closest(".composer-input-row").dataset.multiline = String(contentHeight > singleLineHeight + 2);
+    ui.input.style.height = `${Math.min(contentHeight, 180)}px`;
     if (state.selectedId) saveDraft(state.selectedId, ui.input.value);
     updateControls();
   }
 
   function clearFollowupDraft() {
     state.followupDraft = null;
-    followupUI.preview.textContent = "";
+    i18n.text(followupUI.preview, () => "");
     if (followupUI.dialog.open) followupUI.dialog.close();
   }
 
@@ -2389,7 +2398,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     if (state.sessionExpired || state.selectionController || !state.selectedId || ui.input.disabled || typeof prompt !== "string" || !prompt.trim()) return;
     const current = ui.input.value;
     const next = append && current.trim() ? `${current}\n\n${prompt}` : prompt;
-    if (next.length > ui.input.maxLength) { showNotice("建议加入后超过消息长度上限，原草稿已保留。", "error"); return; }
+    if (next.length > ui.input.maxLength) { showNotice(t("建议加入后超过消息长度上限，原草稿已保留。"), "error"); return; }
     ui.input.value = next;
     autosizeInput();
     ui.input.focus();
@@ -2439,7 +2448,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     const prompt = attachmentSnapshot?.prompt;
     if (!attachmentSnapshot || !prompt || prompt.length > 12000 || state.selectionController || state.selectedId !== id || !maySendSelected() || !state.connected || !state.canSend || isUnknown(id)) {
       state.sending = false; updateControls();
-      showNotice("附件尚未就绪、会话已变化或消息过长，请核对后发送。", "error"); return;
+      showNotice(t("附件尚未就绪、会话已变化或消息过长，请核对后发送。"), "error"); return;
     }
     const requestId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const pending = [...(state.pendingByThread.get(id) || [])];
@@ -2453,7 +2462,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       storePendingMessages(id, pending.filter(item => item.requestId !== requestId));
       clearUnknown(id);
       state.sending = false;
-      showNotice("浏览器无法保存发送恢复记录，消息尚未发送。请释放本站存储空间或允许会话存储后重试；草稿仍在输入框中。", "error");
+      showNotice(t("浏览器无法保存发送恢复记录，消息尚未发送。请释放本站存储空间或允许会话存储后重试；草稿仍在输入框中。"), "error");
       updateControls();
       return;
     }
@@ -2467,7 +2476,7 @@ import { createAgentViewer } from "./agent-viewer.js";
         body: JSON.stringify({ prompt, requestId, ...selection })
       });
       if (result.accepted !== true) {
-        const error = new Error("桥接没有确认接收这条消息");
+        const error = new Error(t("桥接没有确认接收这条消息"));
         error.code = "DELIVERY_UNKNOWN";
         throw error;
       }
@@ -2475,7 +2484,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       clearUnknown(id);
       clearSentDraft(id, message);
       if (id === state.selectedId) await loadThread({ mode: "latest", scroll: true });
-      if (id === state.selectedId) showNotice("桌面已接收消息", "info", 5000);
+      if (id === state.selectedId) showNotice(t("桌面已接收消息"), "info", 5000);
     } catch (error) {
       if (deliveryIsUnknown(error)) {
         markUnknown(id);
@@ -2486,7 +2495,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       else {
         updatePendingMessage(id, requestId, () => null);
         clearUnknown(id);
-        if (id === state.selectedId) showNotice(`消息未能发送：${error.message}。输入内容已保留。`, "error");
+        if (id === state.selectedId) showNotice(t`消息未能发送：${t(error.message)}。输入内容已保留。`, "error");
       }
     } finally {
       state.sending = false;
@@ -2504,12 +2513,12 @@ import { createAgentViewer } from "./agent-viewer.js";
     const anchor = [...scroller.children].find(el => el.getBoundingClientRect().bottom > top);
     const offset = anchor ? anchor.getBoundingClientRect().top - top : 0;
     document.documentElement.style.setProperty("--font-size", `${size}px`);
-    ui.fontSizeValue.textContent = String(size);
+    i18n.text(ui.fontSizeValue, () => String(size));
     ui.fontRange.value = String(size);
     ui.fontReadout.value = `${size} px`;
     ui.fontDecrease.disabled = size === minimum;
     ui.fontIncrease.disabled = size === maximum;
-    ui.fontControl.setAttribute("aria-label", `调整字体大小，当前 ${size} 像素`);
+    i18n.attr(ui.fontControl, "aria-label", () => t`调整字体大小，当前 ${size} 像素`);
     autosizeInput();
     // Keep the same visible message when changing size, or follow the end if already there.
     scroller.scrollTo({ top: atBottom ? scroller.scrollHeight : scroller.scrollTop + (anchor ? anchor.getBoundingClientRect().top - top - offset : 0), behavior: "instant" });
@@ -2625,7 +2634,7 @@ import { createAgentViewer } from "./agent-viewer.js";
         setConnection(!!status.connected, status);
         if (!state.connected) {
           const issue = connectionIssue(state.connectionFault);
-          showNotice(issue?.notice || "正在等待桌面 Codex 连接。", "error", 0, "connection");
+          showNotice(issue?.notice || t("正在等待桌面 Codex 连接。"), "error", 0, "connection");
           return;
         }
         if (state.createAttempt?.requestId) await recoverThreadCreation();
@@ -2635,7 +2644,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       } catch (error) {
         setConnection(false, null, error);
         renderTasks();
-        showNotice("本机桥接服务暂时不可用。页面会保留最近内容并继续重试。", "error", 0, "connection");
+        showNotice(t("本机桥接服务暂时不可用。页面会保留最近内容并继续重试。"), "error", 0, "connection");
       } finally {
         schedulePoll();
       }
