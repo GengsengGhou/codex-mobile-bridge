@@ -1,40 +1,57 @@
 # Codex Mobile Bridge
 
-Codex Mobile Bridge 可让你通过手机浏览器查看和继续 Windows 电脑上正在运行的 Codex 会话。电脑连接器连接本机 Codex，手机网页通过 HTTPS 服务访问已绑定的电脑；不需要在网页填写模型 API 密钥。
+电脑上的 Codex 正在处理一项工作时，你可以离开桌前，用手机浏览器打开同一个会话查看进度、补充消息或处理支持的请求；电脑继续负责实际执行任务。
 
-**稳定版 v1.0.0** 已提供 Windows x64 连接器和 VPS 服务包。普通用户只需 Windows x64 电脑和管理员提供的 HTTPS 入口与邀请；需要独立服务的用户可自行部署 VPS。
+Windows 连接器运行在 Codex 所在电脑上，连接本机桌面并主动连到 HTTPS Hub。Hub 为网页登录、账号邀请、设备配对和请求转发提供统一入口。管理员邀请用于注册账号；用户登录后生成的一次性配对码用于绑定电脑，两者不能互换。网页沿用桌面配置的模型和提供方，不需要填写模型 API 密钥。
 
-## 下载 v1.0.0
+这是 Codex Mobile Bridge 的首个正式公开稳定版 v1.0.0。
+
+## 下载
 
 | 文件 | 用途 |
 | --- | --- |
-| [CodexMobileConnector-Setup.exe](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/CodexMobileConnector-Setup.exe) | Windows x64 图形安装器，普通用户推荐 |
+| [CodexMobileConnector-Setup.exe](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/CodexMobileConnector-Setup.exe) | Windows x64 图形安装器，普通用户推荐；内置 Node.js 和连接依赖 |
 | [codex-mobile-connector-windows.zip](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/codex-mobile-connector-windows.zip) | Windows x64 终端安装备用包 |
-| [codex-device-hub.tar.gz](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/codex-device-hub.tar.gz) | VPS 服务与部署脚本 |
+| [codex-device-hub.tar.gz](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/codex-device-hub.tar.gz) | VPS Hub 服务与部署脚本 |
 | [SHA256SUMS](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/SHA256SUMS) | 三个安装包的 SHA-256 校验清单 |
 
-请从同一 Release 下载所需文件和校验清单，并在安装前核对 SHA-256。Release 下载不需要 GitHub 令牌，也不会自动创建服务账号。
+安装前从同一 Release 下载软件包和 `SHA256SUMS`，核对文件哈希。公开下载无需 GitHub 令牌，也不会自动创建服务账号。Windows 需要 WebView2 Runtime；缺少时按连接器提示安装微软官方运行时。
 
-## 选择使用方式
+## 首次使用
 
-- **使用已有服务**：向管理员私下索取 HTTPS 入口网址和一次性邀请，按[快速开始](docs/quick-start.md)注册账号并绑定电脑。邀请用于注册账号；网页生成的一次性配对码用于绑定连接器，二者不能互换。
-- **自行部署服务**：准备 Ubuntu / Debian VPS、域名和可用的 HTTPS，按[原生部署教程](docs/native-vps-deployment.md)操作；已有 Docker Engine 的用户也可参考[Compose 部署](docs/compose-deployment.md)。
-- **临时访问单台电脑**：源码用户可用[临时 HTTPS 手机访问](docs/temporary-mobile-access.md)，无需 VPS 或自有域名；隧道地址会变化，不适合作为长期入口。
+1. 选择入口：已有服务的用户向管理员私下索取 HTTPS 网址和一次性邀请；自行部署者先按[原生 VPS 部署](docs/native-vps-deployment.md)或[Docker Compose 部署](docs/compose-deployment.md)配置 Hub、HTTPS 和管理员。
+2. 在运行 Codex 的 Windows x64 电脑上安装连接器。普通用户使用 EXE；ZIP 供需要终端安装的用户使用。
+3. 在电脑上打开连接器，填写管理员提供的 HTTPS 网址，并打开浏览器登录。新用户用管理员邀请注册账号，再登录该入口。
+4. 在网页中打开“添加设备”，生成一次性配对码；回到连接器，填写设备名称和配对码，完成电脑绑定。
+5. 在手机浏览器打开同一个 HTTPS 网址，登录后选择已配对电脑，再打开要继续的会话。
 
-连接器应安装在运行 Codex 的 Windows x64 电脑上。使用时用户需要已登录 Windows，电脑需要开机并联网，Codex 桌面和连接器需要运行。首次安装、邀请注册、配对、升级和排错步骤见[快速开始](docs/quick-start.md)与[Windows 安装说明](docs/windows-installer.md)。
+电脑使用时必须开机、联网并已登录 Windows，Codex 桌面和连接器都要运行。完整配对、升级和排错步骤见[快速开始](docs/quick-start.md)与[Windows 安装说明](docs/windows-installer.md)。
 
-## 能做什么
+## 使用方式
 
-通过手机网页查看普通 Codex 会话、历史消息和运行状态，继续发送消息，处理已支持的审批与问题，选择下一轮模型和推理强度，并查看或下载当前会话工作目录中允许访问的文件。可选 VPS Hub 支持多用户、设备配对和设备撤销。详情见[功能与服务结构](docs/vps-device-hub.md)及[文档索引](docs/README.md)。
+- **使用管理员提供的服务**：不需要自己的 VPS 或域名。管理员负责 Hub 和账号邀请；你负责安装连接器并配对自己的电脑。
+- **自行部署 VPS**：准备 Ubuntu / Debian VPS、域名和可用 HTTPS；管理员邀请用户，每位用户配对并访问自己的电脑。
+- **源码临时访问**：开发者可通过 [Quick Tunnel 临时访问单台电脑](docs/temporary-mobile-access.md)，无需 VPS 或自有域名；临时 URL 会变化，不适合作为长期入口。
+
+## 功能
+
+- 查看会话、历史消息和运行状态；按文本搜索，并按项目、置顶和自定义顺序浏览会话。
+- 创建会话、重命名、归档和恢复；发送消息或向运行中的会话补充消息。
+- 处理支持的问题和审批，查看交互状态，或停止当前运行。结果不明时查询回执，不自动重发。
+- 为下一轮选择模型、推理强度和权限；运行中补充消息沿用当前轮的设置。
+- 上传附件；在会话工作目录允许的范围内浏览文件、预览文本/图片/PDF，并下载文件。
+- 使用 Markdown、代码复制和 KaTeX 公式；中英文界面、10–48 px 字号与可折叠的工作过程展示。
+- Hub 支持多账号、多台已配对电脑及设备撤销；连接器提供托盘状态、登录后自动连接和保留配对的重连。
+
+页面以轮询快照同步状态，不提供逐 token 实时流。子智能体内容仅供只读查看。文件访问受会话工作目录和类型/大小限制约束，不等同于任意远程磁盘访问。
 
 ## 兼容与安全边界
 
-- 本项目是非官方客户端，依赖 Codex 桌面的内部接口；这些接口没有稳定性承诺，桌面升级后可能需要更新适配，不能保证兼容未来桌面版本。
-- VPS Hub 是受信任的中转服务，会处理经过它的请求与内容。本方案不是端到端加密；不要把不可信运营者的服务用于敏感会话。默认不会把聊天正文和文件内容持久化到 VPS。
-- Windows 电脑离线、Codex 未运行或连接器未连接时，网页无法继续该电脑上的会话。登录前控制、自动启动 Codex、睡眠唤醒和断电恢复不在支持范围内。
-- 实体手机、第二台实际电脑和未来 Codex 桌面版本的兼容情况，以[验收记录](docs/verification.md)中明确记载的验证范围为准。
+本项目是非官方客户端，依赖 Codex 桌面的内部接口；这些接口没有稳定性承诺，桌面升级后可能需要更新适配。Hub 是受信任的中转服务，会处理经过它的请求与内容；系统不提供端到端加密，默认不持久化聊天正文或文件内容。只在你信任的服务上登录和配对。
 
-源码仓库：[GengsengGhou/codex-mobile-bridge](https://github.com/GengsengGhou/codex-mobile-bridge)。维护者和开发者请从[开发与架构文档](docs/README.md#开发者)开始。
+这不是远程桌面：电脑离线、用户未登录 Windows、Codex 未运行或连接器未连接时，手机无法继续会话。产品不支持登录 Windows 前控制、自动启动 Codex、睡眠唤醒或断电恢复。实际验证范围见[验收记录](docs/verification.md)，部署与信任边界见[服务结构说明](docs/vps-device-hub.md)。
+
+文档索引见[docs/README.md](docs/README.md)。源码仓库：[GengsengGhou/codex-mobile-bridge](https://github.com/GengsengGhou/codex-mobile-bridge)。
 
 ## 开发者
 
@@ -53,4 +70,4 @@ $env:BRIDGE_SEND_SCOPE = 'all-local'
 npm start
 ```
 
-首次启动会把任务关联、端口和发送范围保存在忽略版本控制的 `.local/runtime.json`。此后可从项目目录运行 `npm run start:background`，无需重新选择任务。本地页面默认位于 `http://127.0.0.1:4317/`。测试与只读探针说明见[验收记录](docs/verification.md)和各功能文档；协议集成边界见[协议记录](docs/protocol-notes.md)。
+首次启动会把任务关联、端口和发送范围保存在忽略版本控制的 `.local/runtime.json`。此后可从项目目录运行 `npm run start:background`，无需重新选择任务。本地页面默认位于 `http://127.0.0.1:4317/`。测试与只读探针说明见[验收记录](docs/verification.md)，协议集成边界见[协议记录](docs/protocol-notes.md)。
