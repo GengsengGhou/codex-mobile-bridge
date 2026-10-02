@@ -16,7 +16,7 @@ New-Item -ItemType Directory -Path $stage | Out-Null
 try {
     $app = Join-Path $stage 'app'
     New-Item -ItemType Directory -Path $app | Out-Null
-    foreach ($item in @('package.json','package-lock.json','README.md','src','hub','public','scripts','deploy','docs')) { Copy-Item -LiteralPath (Join-Path $root $item) -Destination $app -Recurse }
+    foreach ($item in @('package.json','package-lock.json','README.md','CHANGELOG.md','src','hub','public','scripts','deploy','docs')) { Copy-Item -LiteralPath (Join-Path $root $item) -Destination $app -Recurse }
     $verification = Join-Path $app 'docs/verification'
     if (Test-Path -LiteralPath $verification) { Remove-Item -LiteralPath $verification -Recurse -Force }
     foreach ($item in Get-ChildItem -LiteralPath $app -Recurse -Force) {

@@ -468,7 +468,6 @@ export const messages = {
   "请查看这些附件。": "Please review these attachments.",
   "Codex 手机桥接": "Codex Mobile Bridge",
   "打开任务列表": "Open task list",
-  "实验 · 仅本机": "Experimental · Local only",
   "正在连接": "Connecting",
   "刷新任务和消息": "Refresh tasks and messages",
   "任务列表": "Task list",

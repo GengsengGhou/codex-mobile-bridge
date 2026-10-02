@@ -17,7 +17,7 @@ async function checkReleaseInput(relative) {
 for (const directory of ['hub', 'public', 'src', 'scripts', 'deploy', 'docs']) await checkReleaseInput(directory);
 await mkdir(new URL('../dist/', import.meta.url), { recursive: true });
 const file = 'dist/codex-device-hub.tar.gz';
-const result = spawnSync('tar', ['--exclude=.env', '--exclude=*.sqlite*', '--exclude=*.tmp', '--exclude=docs/verification', '-czf', file, 'package.json', 'package-lock.json', 'README.md', 'hub', 'public', 'src', 'scripts', 'deploy', 'node_modules/ws', 'docs'], { cwd: root, stdio: 'inherit' });
+const result = spawnSync('tar', ['--exclude=.env', '--exclude=*.sqlite*', '--exclude=*.tmp', '--exclude=docs/verification', '-czf', file, 'package.json', 'package-lock.json', 'README.md', 'CHANGELOG.md', 'hub', 'public', 'src', 'scripts', 'deploy', 'node_modules/ws', 'docs'], { cwd: root, stdio: 'inherit' });
 if (result.status !== 0) throw new Error('Packaging failed; a compatible tar executable is required.');
 const digest = createHash('sha256').update(await readFile(new URL('../' + file, import.meta.url))).digest('hex');
 let sums = `${digest}  codex-device-hub.tar.gz\n`;

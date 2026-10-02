@@ -2,7 +2,7 @@
 
 用手机浏览器继续电脑上的 Codex 会话。电脑需要开机、联网，用户已登录 Windows，Codex 桌面已打开；连接器不会自动开启 Codex，也不能唤醒睡眠或断电的电脑。
 
-本项目是实验性的非官方客户端。服务运营者能处理经过 VPS 的消息和文件，当前方案不是端到端加密。仅在你信任的服务上登录和配对。
+本项目是非官方客户端，依赖 Codex 桌面的内部接口；桌面升级可能要求更新适配。服务运营者能处理经过 VPS 的请求和内容，当前方案不是端到端加密。仅在你信任的服务上登录和配对。
 
 ## 选择接入方式
 
@@ -15,14 +15,14 @@
 
 ## 下载与校验
 
-打开 [发行版本](https://github.com/GengsengGhou/codex-mobile-bridge/releases)，选择需要的版本，下载同一版本的文件和 `SHA256SUMS`：
+稳定版为 v1.0.0。请从 [最新稳定版 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest) 下载所需文件和同一版本的 `SHA256SUMS`：
 
 | 文件 | 用途 |
 | --- | --- |
-| `CodexMobileConnector-Setup.exe` | Windows x64 中文安装器，普通用户优先使用；内置 Node.js 和连接依赖 |
-| `codex-mobile-connector-windows.zip` | Windows 终端安装备用包 |
-| `codex-device-hub.tar.gz` | VPS 服务及部署脚本 |
-| `SHA256SUMS` | 三个安装产物的 SHA-256 清单 |
+| [CodexMobileConnector-Setup.exe](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/CodexMobileConnector-Setup.exe) | Windows x64 图形安装器，普通用户优先使用；内置 Node.js 和连接依赖 |
+| [codex-mobile-connector-windows.zip](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/codex-mobile-connector-windows.zip) | Windows 终端安装备用包 |
+| [codex-device-hub.tar.gz](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/codex-device-hub.tar.gz) | VPS 服务及部署脚本 |
+| [SHA256SUMS](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/SHA256SUMS) | 三个安装产物的 SHA-256 清单 |
 
 公开仓库与 Release 可直接下载，不需要 GitHub 令牌。下载源码或安装包不会授予任何桥接账号；使用已有服务仍需管理员私下提供入口和邀请。不要把实际入口、邀请或配对码放进公开 issue 或截图。
 
@@ -33,7 +33,7 @@ Get-FileHash .\CodexMobileConnector-Setup.exe -Algorithm SHA256
 Get-Content .\SHA256SUMS
 ```
 
-把计算结果与清单中同名文件的完整 64 位哈希比较，字母大小写不影响比较；不一致时停止安装并重新下载。EXE 尚未进行代码签名，Windows 可能显示未知发布者或信誉提示，SHA 校验不能替代代码签名。
+把计算结果与同一 Release 清单中同名文件的完整 64 位哈希比较，字母大小写不影响比较；不一致时停止安装并重新下载。EXE 尚未进行代码签名，Windows 可能显示未知发布者或信誉提示，SHA 校验不能替代代码签名。
 
 ## 受邀使用已有服务
 

@@ -54,7 +54,7 @@ systemctl is-active caddy
 
 ## 3. 下载、上传并校验服务器包
 
-打开公开的 [发行版本](https://github.com/GengsengGhou/codex-mobile-bridge/releases)，选择需要的版本，下载同一版本的 `codex-device-hub.tar.gz` 和 `SHA256SUMS`。可在自己的电脑用浏览器下载后上传，也可直接在 VPS 下载，不需要 GitHub 令牌；下载不授予桥接服务账号。
+下载 v1.0.0 的 [`codex-device-hub.tar.gz`](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v1.0.0/codex-device-hub.tar.gz) 和同一发行版的 [`SHA256SUMS`](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v1.0.0/SHA256SUMS)。可在自己的电脑用浏览器下载后上传，也可直接在 VPS 下载，不需要 GitHub 令牌；下载不授予桥接服务账号。
 
 先在 VPS root shell 创建上传目录：
 
@@ -68,11 +68,11 @@ install -d -m 0700 /root/codex-hub-release
 scp codex-device-hub.tar.gz SHA256SUMS root@VPS_IP:/root/codex-hub-release/
 ```
 
-或者在 VPS root shell 直接下载公开资产。将 `release_tag` 设为版本页中选定的标签；以下以 `v0.1.2` 为例：
+或者在 VPS root shell 直接下载同一发行版的公开资产：
 
 ```bash
 cd /root/codex-hub-release
-release_tag=v0.1.2
+release_tag=v1.0.0
 release_url="https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/$release_tag"
 curl -fL --proto '=https' --tlsv1.2 "$release_url/codex-device-hub.tar.gz" -o codex-device-hub.tar.gz
 curl -fL --proto '=https' --tlsv1.2 "$release_url/SHA256SUMS" -o SHA256SUMS
@@ -204,4 +204,4 @@ Hub 默认限制为 256 MiB 内存及一个 CPU 核，记录清理和日志轮�
 
 当前原生和 Compose 安装器接受域名并配置 `https://域名`，没有稳定的裸 IP 一键安装路径。自签名证书会被普通浏览器或连接器拒绝，不能作为可直接使用的替代；即使平台支持 IP 证书，也需要自行维护 TLS 和更新流程，当前脚本没有包含。
 
-可选择一个能控制 DNS 的免费 / 动态 DNS 主机名，并确认 A/AAAA 指向 VPS、可签发受信任证书后沿用教程；其可用性取决于域名提供方。也可以请已有服务管理员邀请你，无需自己的 VPS 或域名。只想试用单台电脑时，源码版支持 [临时 HTTPS 手机入口](../README.md#临时手机访问)，但 Quick Tunnel 地址会变化，不能承诺长期固定访问，也不是 VPS 多账号方案。
+可选择一个能控制 DNS 的免费 / 动态 DNS 主机名，并确认 A/AAAA 指向 VPS、可签发受信任证书后沿用教程；其可用性取决于域名提供方。也可以请已有服务管理员邀请你，无需自己的 VPS 或域名。只想临时访问单台电脑时，源码版可使用[临时 HTTPS 手机入口](temporary-mobile-access.md)；Quick Tunnel 地址会变化，不能承诺长期固定访问，也不是 VPS 多账号方案。

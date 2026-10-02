@@ -5,9 +5,9 @@ Probe date: 2026-09-25. Local CLI: `codex-cli 0.156.1`.
 ## Evidence collected
 
 - `codex app-server --help` advertises `stdio://` (default), `unix://`, `unix://PATH`, `ws://IP:PORT`, and `off` transports. `codex app-server proxy --help` describes a stdio-byte proxy to an already running app-server Unix control socket (`--sock`). The help also exposes daemon management commands, including `start`, `enable-remote-control`, and `disable-remote-control`.
-- Generated experimental TypeScript and JSON Schema bundles are in the project's [`work/codex-probe/schema`](../work/codex-probe/schema). They were generated locally with `codex app-server generate-ts --experimental` and `generate-json-schema --experimental`; no app-server was started and no model task was run. These intermediate generated files are not included in the source delivery archive.
+- The TypeScript and JSON Schema bundles generated for this probe are local working artifacts under `work/codex-probe/schema` when present. They are excluded from Git and release archives, so a fresh checkout does not contain them. They were generated locally with `codex app-server generate-ts --experimental` and `generate-json-schema --experimental`; no app-server was started and no model task was run.
 - Official documentation, read 2026-09-25: [Codex App Server](https://learn.chatgpt.com/docs/app-server) and its [Markdown form](https://learn.chatgpt.com/docs/app-server.md). It describes app-server as the interface for rich/custom clients, including authentication, conversation history, approvals, and streamed events. This is documentation for the general protocol, not evidence that the desktop's own server is exposed to arbitrary clients.
-- The graph service had no project for this newly created bridge directory; its listed projects were unrelated. The generated schema was read directly.
+- These findings describe the locally installed CLI and the evidence collected on the probe date; they are not a compatibility promise for later desktop or CLI versions.
 
 ## Findings by capability
 

@@ -484,7 +484,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const bridge = new DesktopBridge({ callerThreadId, request: createDesktopRequest({ preferredPipe: process.env.CODEX_APP_TOOLS_PIPE_PATH }) });
     const server = createBridgeServer({ bridge, enableSend, allowedSendThreadId, sendScope, deliveryStore: new DeliveryStore(), creationStore: new CreationStore(), uploadStore: new UploadStore(), control: new DesktopControl(), recovery: createRecoveryManager(), remoteAccess: createRemoteAccessManager() });
     server.on('error', error => { console.error(`启动失败：${error.code}`); process.exitCode = 1; });
-    server.listen(port, '127.0.0.1', () => console.log(`Codex mobile prototype: http://127.0.0.1:${port} (local only; send ${enableSend ? 'experimental' : 'disabled'})`));
+    server.listen(port, '127.0.0.1', () => console.log(`Codex Mobile Bridge: http://127.0.0.1:${port} (local only; send ${enableSend ? 'enabled' : 'disabled'})`));
     process.on('SIGINT', () => server.close());
     process.on('SIGTERM', () => server.close());
   } catch (error) { console.error(error.message); process.exitCode = 1; }

@@ -1,9 +1,9 @@
 {
   "name": "codex-mobile-bridge",
-  "version": "0.2.3",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Local experimental mobile reader for existing Codex desktop tasks",
+  "description": "Mobile access and remote control for existing Codex desktop tasks through a local connector and device hub",
   "engines": {
     "node": ">=22.16"
   },
