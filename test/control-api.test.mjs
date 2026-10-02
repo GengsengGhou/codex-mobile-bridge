@@ -144,13 +144,71 @@ test('control compatibility and unloaded-owner failures leave conversation reads
 });
 
 test('owner read diagnostics distinguish timeout and disconnect without claiming the entire chat cannot continue', async t => {
-  for (const [reason, expected] of [['no-client-found', /暂时无法读取/], ['request-timeout', /超时/], ['client-disconnected', /连接已断开/], ['server-closed', /连接已断开/]]) {
+  for (const [reason, expected] of [['no-client-found', /会话待命/], ['request-timeout', /超时/], ['client-disconnected', /连接已断开/], ['server-closed', /连接已断开/]]) {
     const f = await fixture(t, { properties: { status: 'notLoaded' }, controlError: 'OWNER_UNAVAILABLE', controlDiagnostic: { reason, method: 'thread-owner-discovery', version: 1 } });
     const control = await (await f.read(ID)).json();
     assert.equal(control.code, 'OWNER_UNAVAILABLE'); assert.equal(control.canStop, false);
-    assert.match(control.reason, expected); assert.match(control.reason, /沿用桌面设置仍可发送/);
-    assert.doesNotMatch(control.reason, /载入|运行实例|请在桌面/);
+    assert.match(control.reason, expected); assert.match(control.reason, /沿用桌面设置/);
+    assert.equal(control.standby === true, reason === 'no-client-found');
+    assert.doesNotMatch(control.reason, /请在桌面/);
     const thread = await (await f.readThread(ID)).json();
     assert.equal(thread.canSend, true); assert.equal(f.stops(), 0);
   }
+});
+
+test('a loaded owner missing is a failure rather than cold standby', async t => {
+  const f = await fixture(t, { properties: { status: 'idle' }, controlError: 'OWNER_UNAVAILABLE', controlDiagnostic: { reason: 'no-client-found' } });
+  const body = await (await f.read(ID)).json();
+  assert.equal(body.available, false); assert.equal(body.canStop, false); assert.equal(body.standby, undefined);
+  assert.match(body.reason, /暂时无法读取/);
+});
+
+test('supplemental reads share current GET work, then recover cold standby with a fresh owner snapshot', async t => {
+  let reads = 0, snapshots = 0, releaseRead, releaseSnapshot, unavailable = true;
+  let readGate = new Promise(resolve => { releaseRead = resolve; });
+  let snapshotGate = new Promise(resolve => { releaseSnapshot = resolve; });
+  const bridge = { callerThreadId: ID, read: async id => { reads++; await readGate; return { thread: { id, kind: 'codex', hostId: 'local', status: 'notLoaded' }, turns: [] }; } };
+  const context = { permissions: { supported: false, current: 'unknown', options: [] }, agents: { items: [] }, sources: { items: [] } };
+  const control = { context: async () => { throw Error('ordinary context must share native snapshot'); }, snapshot: async id => {
+    snapshots++; await snapshotGate;
+    if (unavailable) throw Object.assign(new BridgeError('missing', 'OWNER_UNAVAILABLE'), { controlDiagnostic: { reason: 'no-client-found' } });
+    return { threadId: id, currentTurnId: 'fresh-turn', pendingRequests: [], threadContext: context };
+  } };
+  const server = createBridgeServer({ bridge, control, enableSend: true });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const cookie = (await fetch(base)).headers.get('set-cookie').split(';')[0];
+  const headers = { Cookie: cookie, 'X-Bridge-Client': 'mobile-v1' };
+  const get = path => fetch(`${base}/api/threads/${ID}/${path}`, { headers }).then(res => res.json());
+  const pending = [get('control'), get('context')];
+  while (reads === 0) await new Promise(resolve => setTimeout(resolve, 5));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(reads, 1); releaseRead();
+  while (snapshots === 0) await new Promise(resolve => setTimeout(resolve, 5));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(snapshots, 1); releaseSnapshot();
+  const initial = await Promise.all(pending);
+  assert.ok(initial.every(body => body.available === false && body.standby === true));
+  unavailable = false; readGate = Promise.resolve(); snapshotGate = Promise.resolve();
+  const recovered = await get('control');
+  assert.equal(reads, 2); assert.equal(snapshots, 2);
+  assert.equal(recovered.available, true); assert.equal(recovered.canStop, true); assert.equal(recovered.turnId, 'fresh-turn'); assert.equal(recovered.standby, undefined);
+});
+
+test('delegated context uses its read-only adapter while control stays forbidden', async t => {
+  let snapshots = 0, contexts = 0;
+  const bridge = { callerThreadId: ID, read: async id => ({ thread: { id, kind: 'codex', hostId: 'local', status: 'idle', delegated: true }, turns: [] }) };
+  const control = { snapshot: async () => { snapshots++; throw Error('delegated control must not run'); }, context: async id => {
+    contexts++; return { threadId: id, threadContext: { permissions: { supported: false, current: 'unknown', options: [] }, agents: { items: [] }, sources: { items: [] } } };
+  } };
+  const server = createBridgeServer({ bridge, control, enableSend: true });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const cookie = (await fetch(base)).headers.get('set-cookie').split(';')[0];
+  const headers = { Cookie: cookie, 'X-Bridge-Client': 'mobile-v1' };
+  const [run, context] = await Promise.all(['control', 'context'].map(path => fetch(`${base}/api/threads/${ID}/${path}`, { headers }).then(res => res.json())));
+  assert.equal(run.available, false); assert.equal(run.canStop, false); assert.equal(context.available, true);
+  assert.equal(context.permissions.canOverride, false); assert.equal(snapshots, 0); assert.equal(contexts, 1);
 });

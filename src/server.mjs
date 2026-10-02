@@ -23,8 +23,14 @@ import { publicAssets, assetContentType, appCsp } from './static-assets.mjs';
 
 const publicRoot = new URL('../public/', import.meta.url);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function ownerReadReason(error, subject, canSend) {
+function ownerStandby(error, thread) {
+  return error.code === 'OWNER_UNAVAILABLE' && error.controlDiagnostic?.reason === 'no-client-found' && String(thread?.status).toLowerCase() === 'notloaded';
+}
+function ownerReadReason(error, subject, canSend, thread) {
   const reason = error.controlDiagnostic?.reason;
+  if (ownerStandby(error, thread)) {
+    return `会话待命${canSend ? '，发送时沿用桌面设置' : '，运行状态尚未载入'}`;
+  }
   const message = reason === 'request-timeout' ? `读取${subject}超时，可刷新重试`
     : ['client-disconnected', 'server-closed'].includes(reason) ? `${subject}连接已断开，正在重试`
       : `暂时无法读取${subject}，可刷新重试`;
@@ -46,6 +52,27 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
   const unsupported = new Set();
   const creating = new Set();
   const creationReadFailures = new Map();
+  // Share only work that is currently in flight. Never retain a snapshot for a
+  // later poll or reuse this read path for a mutation's fresh preflight.
+  const supplementalReads = new Map(), supplementalSnapshots = new Map();
+  const sharedRead = (map, key, operation) => {
+    if (!map.has(key)) {
+      const pending = Promise.resolve().then(operation).finally(() => { if (map.get(key) === pending) map.delete(key); });
+      map.set(key, pending);
+    }
+    return map.get(key);
+  };
+  const readSupplement = id => sharedRead(supplementalReads, id, () => bridge.read(id, undefined, { turnLimit: 1 }));
+  const readSnapshot = (id, thread, context = false) => {
+    const method = context && thread.delegated ? 'context' : 'snapshot';
+    return sharedRead(supplementalSnapshots, `${method}:${id}`, () => {
+      // Context-only adapters remain supported; ordinary native snapshots
+      // already carry the context and can serve both GETs safely.
+      const read = method === 'snapshot' && typeof control?.snapshot !== 'function' && context ? control?.context : control?.[method];
+      if (typeof read !== 'function') throw new BridgeError('信息读取未连接', 'CONTROL_UNAVAILABLE', 503);
+      return read.call(control, id);
+    });
+  };
   const creationEnabled = names => enableSend && sendScope === 'all-local' && typeof bridge.create === 'function' && typeof bridge.projects === 'function' && ['create_thread', 'list_projects'].every(n => names.includes(n));
   const activeStatuses = ['active', 'running', 'in_progress', 'inprogress'];
   const inScope = id => enableSend && (sendScope === 'all-local' || id === allowedSendThreadId);
@@ -267,14 +294,14 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
       if (!match || !UUID.test(match[1]) || (match[3] && !UUID.test(match[3]))) throw new BridgeError('无效的任务地址', 'INVALID_REQUEST', 400);
       const id = match[1];
       if (req.method === 'GET' && match[2] === '/context') {
-        const { thread } = await bridge.read(id, undefined, { turnLimit: 1 });
+        const { thread } = await readSupplement(id);
         const unavailable = reason => ({ available: false, items: [], reason });
         if (thread.kind !== 'codex' || thread.hostId && thread.hostId !== 'local') {
           json(res, 200, { threadId: id, available: false, reason: '仅支持本机 Codex 会话', permissions: { supported: false, current: 'unknown', canOverride: false, options: [] }, git: unavailable('当前会话不是本机会话'), agents: unavailable('当前会话不是本机会话'), sources: unavailable('当前会话不是本机会话') }); return;
         }
         try {
           if (typeof control?.context !== 'function') throw new BridgeError('信息读取未连接', 'CONTROL_UNAVAILABLE', 503);
-          const snapshot = await control.context(id);
+          const snapshot = await readSnapshot(id, thread, true);
           if (snapshot.threadId !== id || !snapshot.threadContext) throw new BridgeError('会话信息不匹配', 'PROTOCOL_ERROR', 502);
           const context = snapshot.threadContext;
           const canOverride = context.permissions.supported && typeof control.send === 'function' && sendAccess(thread).canSend && !snapshot.permissionActive;
@@ -283,18 +310,18 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
             ...(!canOverride ? { reason: snapshot.permissionActive ? '正在运行，权限选择将在下一轮发送时生效' : '此会话当前不能覆盖权限' } : {}) }, git, agents, sources: context.sources });
         } catch (error) {
           const code = ['PROTOCOL_ERROR', 'PROTOCOL_INCOMPATIBLE', 'OWNER_UNAVAILABLE', 'UNSUPPORTED_THREAD'].includes(error.code) ? error.code : 'CONTROL_UNAVAILABLE';
-          const reason = code === 'OWNER_UNAVAILABLE' ? ownerReadReason(error, '会话权限与运行状态', sendAccess(thread).canSend) : '暂时无法读取会话信息，可刷新重试';
-          json(res, 200, { threadId: id, available: false, code, reason, permissions: { supported: false, current: 'unknown', canOverride: false, options: [] }, git: await readGitContext(thread.cwd), agents: unavailable(reason), sources: unavailable(reason) });
+          const reason = code === 'OWNER_UNAVAILABLE' ? ownerReadReason(error, '会话权限与运行状态', sendAccess(thread).canSend, thread) : '暂时无法读取会话信息，可刷新重试';
+          json(res, 200, { threadId: id, available: false, code, reason, ...(ownerStandby(error, thread) ? { standby: true } : {}), permissions: { supported: false, current: 'unknown', canOverride: false, options: [] }, git: await readGitContext(thread.cwd), agents: unavailable(reason), sources: unavailable(reason) });
         }
         return;
       }
       if (req.method === 'GET' && match[2] === '/control') {
-        const { thread } = await bridge.read(id, undefined, { turnLimit: 1 });
+        const { thread } = await readSupplement(id);
         if (!control || !controlAccess(thread)) {
           json(res, 200, { available: false, canStop: false, threadId: id, reason: '此会话未开放运行控制' }); return;
         }
         try {
-          const snapshot = await control.snapshot(id);
+          const snapshot = await readSnapshot(id, thread);
           if (snapshot.threadId !== id) throw new BridgeError('运行状态不匹配', 'PROTOCOL_ERROR', 502);
           const pendingRequests = await Promise.all((snapshot.pendingRequests ?? []).map(async pending => {
             const visible = publicPendingRequest(pending), previous = pending.attemptId ? await deliveryStore.get(pending.attemptId) : null;
@@ -307,10 +334,10 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
         } catch (error) {
           const code = ['PROTOCOL_ERROR', 'PROTOCOL_INCOMPATIBLE', 'OWNER_UNAVAILABLE', 'UNSUPPORTED_THREAD'].includes(error.code) ? error.code : 'CONTROL_UNAVAILABLE';
           const reason = ['PROTOCOL_ERROR', 'PROTOCOL_INCOMPATIBLE'].includes(code) ? '当前桌面版本的运行控制不兼容，会话读写仍可使用'
-            : code === 'OWNER_UNAVAILABLE' ? ownerReadReason(error, '运行状态', sendAccess(thread).canSend)
+            : code === 'OWNER_UNAVAILABLE' ? ownerReadReason(error, '运行状态', sendAccess(thread).canSend, thread)
               : code === 'UNSUPPORTED_THREAD' ? '此类会话暂不支持网页运行控制'
                 : '暂时无法读取运行状态，可刷新重试';
-          json(res, 200, { available: false, canStop: false, threadId: id, code, reason });
+          json(res, 200, { available: false, canStop: false, threadId: id, code, reason, ...(ownerStandby(error, thread) ? { standby: true } : {}) });
         }
         return;
       }

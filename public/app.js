@@ -721,23 +721,32 @@ import { createAgentViewer } from "./agent-viewer.js";
     if (!state.statusSnapshot?.executionControl || state.controlReads.has(id)) return;
     state.controlReads.add(id);
     try {
-      const execution = await api(`/api/threads/${encodeURIComponent(id)}/control`);
+      const execution = await requestApi(`/api/threads/${encodeURIComponent(id)}/control`);
       if (id !== state.selectedId || token !== state.switching || execution.threadId !== id) return;
       if (JSON.stringify(state.execution) !== JSON.stringify(execution)) state.changeRevision += 1;
       state.execution = execution;
       if (execution.available === false) {
         state.controlUnavailable = true;
-        i18n.text(ui.controlSummary, () => execution.reason || t("运行控制快照暂不可用，保留当前待处理内容。"));
-        ui.controlState.hidden = false;
+        if (execution.standby === true) {
+          ui.controlState.dataset.kind = "standby";
+          i18n.text(ui.controlSummary, () => t(execution.reason || "会话待命，发送时沿用桌面设置"));
+          ui.controlState.hidden = state.pendingCards.size === 0;
+        } else {
+          delete ui.controlState.dataset.kind;
+          i18n.text(ui.controlSummary, () => execution.reason || t("运行控制快照暂不可用，保留当前待处理内容。"));
+          ui.controlState.hidden = false;
+        }
         for (const [key, entry] of state.pendingCards) updatePendingCard(id, entry.card, entry.card.__pendingControls.request);
         return;
       }
       state.controlUnavailable = false;
+      delete ui.controlState.dataset.kind;
       renderPendingRequests(execution);
     } catch (error) {
       if (id === state.selectedId && token === state.switching) {
         state.execution = null;
         state.controlUnavailable = true;
+        delete ui.controlState.dataset.kind;
         i18n.text(ui.controlSummary, () => t`暂时无法读取运行控制：${t(error.message)}`);
         ui.controlState.hidden = false;
         for (const [key, entry] of state.pendingCards) updatePendingCard(id, entry.card, entry.card.__pendingControls.request);
@@ -1707,7 +1716,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     }
   }
 
-  async function refreshTasks({ preserveOnError = true } = {}) {
+  async function refreshTasks({ preserveOnError = true, selectIfEmpty = true } = {}) {
     if (state.listLoading) return;
     state.listLoading = true;
     try {
@@ -1726,6 +1735,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       }
       state.threads = threads;
       if (state.orderConfigured || state.orderDirty) state.sidebarOrder = mergeSidebarOrder(state.sidebarOrder, threads.map(thread => ({ ...thread, pinned: isThreadPinned(thread) })));
+      renderTasks();
       if (!state.orderSaving && !state.orderDirty && !state.dragging) {
         try {
           const requestedOrder = state.sidebarOrder;
@@ -1742,7 +1752,7 @@ import { createAgentViewer } from "./agent-viewer.js";
         }
       }
       renderTasks();
-      if (!state.selectedId) {
+      if (selectIfEmpty && !state.selectedId) {
         const targetId = preferredThreadId(state.statusSnapshot) || state.threads[0]?.id;
         if (targetId) await selectThread(targetId);
       }
@@ -2171,7 +2181,11 @@ import { createAgentViewer } from "./agent-viewer.js";
       else if (!ui.notice.hidden && ui.notice.dataset.kind === "error") showNotice("");
       renderTasks();
       updateControls();
-      if (mode === "latest" && document.visibilityState === "visible") { void recoverDeliveryReceipts(id); void contextPanel.refresh(); await refreshExecution(id, token); }
+      if (mode === "latest" && document.visibilityState === "visible") {
+        void recoverDeliveryReceipts(id);
+        void contextPanel.refresh();
+        void refreshExecution(id, token);
+      }
       return true;
     } catch (error) {
       if (token !== state.switching || id !== state.selectedId) return;
@@ -2637,10 +2651,10 @@ import { createAgentViewer } from "./agent-viewer.js";
           showNotice(issue?.notice || t("正在等待桌面 Codex 连接。"), "error", 0, "connection");
           return;
         }
-        if (state.createAttempt?.requestId) await recoverThreadCreation();
+        if (state.createAttempt?.requestId) void recoverThreadCreation();
         const preferred = preferredThreadId(status);
-        if (preferred) await selectThread(preferred);
-        await refreshTasks();
+        void refreshTasks({ selectIfEmpty: !preferred });
+        if (preferred) void selectThread(preferred);
       } catch (error) {
         setConnection(false, null, error);
         renderTasks();

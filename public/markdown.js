@@ -2,8 +2,26 @@ import { createI18n } from "./i18n.js";
 import { splitLocalReference } from "./files.js";
 
 let katex = null;
-try { katex = (await import("./vendor/katex/katex.mjs")).default; }
-catch { /* A stale gateway or failed asset load must not prevent reading the conversation. */ }
+const pendingMathContainers = new Set();
+export const mathReady = import("./vendor/katex/katex.mjs").then(module => {
+  katex = module.default;
+  for (const container of pendingMathContainers) {
+    const doc = container.ownerDocument;
+    if (!container.isConnected) continue;
+    try {
+      const html = katex.renderToString(container.dataset.latex, {
+        displayMode: container.classList.contains("markdown-math-display"), output: "htmlAndMathml",
+        throwOnError: true, trust: false, strict: "ignore", maxExpand: 1000, maxSize: 20
+      });
+      const template = doc.createElement("template");
+      template.innerHTML = html;
+      container.classList.remove("markdown-math-fallback");
+      container.replaceChildren(template.content);
+    } catch { /* Keep the readable source for invalid or unsupported math. */ }
+  }
+  pendingMathContainers.clear();
+  return katex;
+}).catch(() => { pendingMathContainers.clear(); return null; }); // A stale gateway or failed asset load must not prevent reading the conversation.
 const MAX_MATH_SOURCE = 4096;
 const MAX_MATH_PER_MESSAGE = 128;
 const MAX_DIRECTIVE_SOURCE = 8192;
@@ -374,7 +392,8 @@ function appendMath(parent, node, doc, budget) {
   container.className = node.display ? "markdown-math markdown-math-display" : "markdown-math markdown-math-inline";
   container.dataset.latex = node.text;
   try {
-    if (!katex || node.text.length > MAX_MATH_SOURCE || budget.remaining-- <= 0) throw new Error("Math rendering unavailable or limited");
+    if (node.text.length > MAX_MATH_SOURCE || budget.remaining-- <= 0) throw new Error("Math rendering unavailable or limited");
+    if (!katex) { pendingMathContainers.add(container); throw new Error("Math renderer is loading"); }
     const html = katex.renderToString(node.text, { displayMode: node.display, output: "htmlAndMathml", throwOnError: true, trust: false, strict: "ignore", maxExpand: 1000, maxSize: 20 });
     const template = doc.createElement("template");
     // Only KaTeX output with trust disabled enters this inert template, never raw task HTML.

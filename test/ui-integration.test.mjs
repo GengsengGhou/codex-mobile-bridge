@@ -55,7 +55,7 @@ function pollingClock(window) {
   };
 }
 
-async function mount(t, route = () => undefined, { session = {}, expectedRows = 3, urlThread = A, automaticClock = false, language = 'zh-CN' } = {}) {
+async function mount(t, route = () => undefined, { session = {}, expectedRows = 3, urlThread = A, automaticClock = false, language = 'zh-CN', delayedMath = false } = {}) {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const dom = new JSDOM(html, { url: `http://127.0.0.1:4317/?thread=${urlThread}`, runScripts: 'outside-only', pretendToBeVisual: true });
   Object.defineProperty(dom.window.navigator, 'language', { value: language, configurable: true }); // Existing Chinese-copy fixtures default to zh-CN.
@@ -95,11 +95,23 @@ async function mount(t, route = () => undefined, { session = {}, expectedRows = 
     throw new Error(`Unexpected UI request: ${path}`);
   };
   let source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  const mathGate = delayedMath ? deferred() : null;
   window.__modules = {};
   for (const match of source.matchAll(/^import \{([^}]+)\} from "(\.\/[^"\n]+)";$/gm)) {
     const modules = { ...await import(new URL('../public/' + match[2].slice(2), import.meta.url)) };
     if (modules.createApi) { const create = modules.createApi; modules.createApi = options => create({ ...options, fetchImpl: window.fetch }); }
     if (modules.appendMarkdown) { const append = modules.appendMarkdown; modules.appendMarkdown = (parent, value, _doc, options) => append(parent, value, window.document, options); }
+    if (modules.appendMarkdown && mathGate) {
+      const markdownSource = (await readFile(new URL('../public/markdown.js', import.meta.url), 'utf8'))
+        .replace(/^import .*;\r?\n/gm, '')
+        .replaceAll('export ', '')
+        .replace('import("./vendor/katex/katex.mjs")', 'releaseKatex');
+      const [{ createI18n }, { splitLocalReference }] = await Promise.all([
+        import('../public/i18n.js'), import('../public/files.js')
+      ]);
+      const createDelayedMarkdown = new Function('createI18n', 'splitLocalReference', 'releaseKatex', 'window', `${markdownSource}\nreturn { appendMarkdown, parseMarkdown, safeHref, mathReady };`);
+      Object.assign(modules, createDelayedMarkdown(createI18n, splitLocalReference, mathGate.promise, window));
+    }
     window.__modules[match[2]] = modules;
   }
   source = source.replace(/^import \{([^}]+)\} from "(\.\/[^"\n]+)";$/gm, (_, names, path) => `const {${names.replace(/\s+as\s+/g, ':')}} = globalThis.__modules[${JSON.stringify(path)}];`);
@@ -109,7 +121,7 @@ async function mount(t, route = () => undefined, { session = {}, expectedRows = 
     throw new Error(`${error.message}; app errors: ${errors.map(item => item?.message || item).join('; ')}`);
   });
   assert.deepEqual(errors, []);
-  return { window, doc, requests, errors, intervals, clock, savedOrder: () => savedOrder };
+  return { window, doc, requests, errors, intervals, clock, mathGate, mathReady: window.__modules['./markdown.js']?.mathReady, markdown: window.__modules['./markdown.js'], savedOrder: () => savedOrder };
 }
 
 test('model settings stay scoped to each chat and omit overrides for default and active supplements', async t => {
@@ -208,6 +220,85 @@ test('composer shows one icon action and empty submission never stops an active 
   assert.equal(stop.hidden, false); assert.equal(send.hidden, true);
 });
 
+test('slow control refresh stays in the background while thread switches preserve drafts and unavailable state', async t => {
+  const delayedControl = deferred();
+  const ui = await mount(t, call => {
+    if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', defaultThreadId: A, executionControl: true });
+    if (call.path === `/api/threads/${A}/control`) return delayedControl.promise;
+    if (call.path === `/api/threads/${B}/control`) return response({ threadId: B, available: false, reason: 'OWNER_UNAVAILABLE', pendingRequestCount: 0 });
+    if (call.path.endsWith('/control')) return response({ threadId: C, available: true, canStop: false, pendingRequestCount: 0 });
+  }, { automaticClock: true });
+
+  assert.ok(ui.doc.getElementById('transcript').textContent.includes('Alpha reply'));
+  assert.ok(ui.requests.some(call => call.path === `/api/threads/${A}/control`));
+  ui.doc.getElementById('refreshButton').click();
+  await ui.clock.advance(0);
+  const statusReads = ui.requests.filter(call => call.path === '/api/status').length;
+  const historyReads = ui.requests.filter(call => call.path === `/api/threads/${A}`).length;
+  ui.doc.getElementById('refreshButton').click();
+  await ui.clock.advance(0);
+  assert.ok(ui.requests.filter(call => call.path === '/api/status').length > statusReads, 'status polling continues during the pending control read');
+  assert.ok(ui.requests.filter(call => call.path === `/api/threads/${A}`).length > historyReads, 'history polling continues during the pending control read');
+  assert.equal(ui.requests.filter(call => call.path === `/api/threads/${A}/control`).length, 1, 'pending control reads are coalesced by thread');
+  const input = ui.doc.getElementById('promptInput');
+  input.value = 'draft for Alpha'; input.dispatchEvent(new ui.window.Event('input'));
+
+  [...ui.doc.querySelectorAll('.task-item')].find(row => row.textContent === 'Beta').click();
+  await until(() => ui.doc.getElementById('threadTitle').textContent === 'Beta' && ui.doc.getElementById('transcript').textContent.includes('Beta reply'), 'switch while prior control read is pending');
+  assert.equal(input.value, '');
+  assert.equal(ui.window.sessionStorage.getItem(`codex-mobile-draft:${A}`), 'draft for Alpha');
+  await until(() => ui.doc.getElementById('controlSummary').textContent.includes('OWNER_UNAVAILABLE'), 'real unavailable result displayed');
+
+  delayedControl.resolve(response({ threadId: A, available: true, canStop: true, turnId: 'old-alpha-turn', pendingRequestCount: 0 }));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Beta');
+  assert.equal(ui.doc.getElementById('controlSummary').textContent, 'OWNER_UNAVAILABLE');
+  assert.equal(ui.doc.getElementById('stopButton').hidden, true);
+
+  [...ui.doc.querySelectorAll('.task-item')].find(row => row.textContent === 'Alpha').click();
+  await until(() => ui.doc.getElementById('threadTitle').textContent === 'Alpha' && input.value === 'draft for Alpha', 'saved draft restored');
+  assert.deepEqual(ui.errors, []);
+});
+
+test('app starts while math import is delayed and transcript plus other Markdown consumers hydrate in place', async t => {
+  const formulaText = 'Alpha reply\n\nInline $x^2$ and display $$y^2$$.\n\nBad $\\frac{1}{$ then valid $z^2$.';
+  const ui = await mount(t, call => call.path === `/api/threads/${A}` ? response(snapshot(A, formulaText)) : undefined, { delayedMath: true });
+  const input = ui.doc.getElementById('promptInput');
+  assert.ok(ui.doc.getElementById('transcript').textContent.includes('Alpha reply'));
+  assert.equal(ui.doc.querySelectorAll('#transcript .markdown-math-fallback').length, 4);
+  assert.equal(ui.doc.querySelectorAll('#transcript .katex').length, 0);
+
+  input.value = 'Alpha draft'; input.dispatchEvent(new ui.window.Event('input'));
+  [...ui.doc.querySelectorAll('.task-item')].find(row => row.textContent === 'Beta').click();
+  await until(() => ui.doc.getElementById('threadTitle').textContent === 'Beta', 'switch while math import is pending');
+  input.value = 'Beta draft'; input.dispatchEvent(new ui.window.Event('input'));
+  [...ui.doc.querySelectorAll('.task-item')].find(row => row.textContent === 'Alpha').click();
+  await until(() => ui.doc.getElementById('threadTitle').textContent === 'Alpha' && input.value === 'Alpha draft', 'restore selection and draft before math loads');
+
+  const other = ui.doc.createElement('div');
+  ui.doc.body.append(other);
+  ui.markdown.appendMarkdown(other, 'Other view $q^2$ and invalid $\\frac{1}{$.', ui.doc);
+  const overLimit = ui.doc.createElement('div');
+  ui.doc.body.append(overLimit);
+  ui.markdown.appendMarkdown(overLimit, Array.from({ length: 129 }, () => '$w$').join(' '), ui.doc);
+  assert.equal(other.querySelectorAll('.katex').length, 0);
+  assert.equal(overLimit.querySelectorAll('.markdown-math-fallback').length, 129);
+
+  const katex = (await import('../public/vendor/katex/katex.mjs')).default;
+  ui.mathGate.resolve({ default: katex });
+  await ui.mathReady;
+  assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Alpha');
+  assert.equal(input.value, 'Alpha draft');
+  assert.equal(ui.window.sessionStorage.getItem(`codex-mobile-draft:${B}`), 'Beta draft');
+  assert.equal(ui.doc.querySelectorAll('#transcript .katex').length, 3);
+  assert.equal(ui.doc.querySelectorAll('#transcript .markdown-math-fallback').length, 1);
+  assert.equal(other.querySelectorAll('.katex').length, 1);
+  assert.equal(other.querySelectorAll('.markdown-math-fallback').length, 1);
+  assert.equal(overLimit.querySelectorAll('.katex').length, 128);
+  assert.equal(overLimit.querySelectorAll('.markdown-math-fallback').length, 1);
+  assert.deepEqual(ui.errors, []);
+});
+
 test('followup confirmation clears on selection change and login expiry without changing drafts', async t => {
   const suggestion = ':codex-followup[继续检查]{prompt="未发送的私有建议"}';
   const ui = await mount(t, call => call.path === `/api/threads/${A}` ? response(snapshot(A, `Alpha reply\n\n${suggestion}`)) : undefined);
@@ -261,15 +352,17 @@ test('an unready attachment keeps the active arrow disabled and cannot trigger s
   assert.equal(ui.requests.some(call => call.method === 'POST'), false);
 });
 
-test('a cold historical chat can explicitly send with inherited settings while runtime controls remain unavailable', async t => {
+test('a cold historical chat shows quiet standby and can explicitly send with inherited settings', async t => {
   const ui = await mount(t, call => {
     if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', defaultThreadId: A, executionControl: true });
     if (call.path === '/api/threads') return response({ threads: rows.map(row => row.id === A ? { ...row, status: 'notLoaded' } : row) });
     if (call.path === `/api/threads/${A}`) return response(snapshot(A, 'Alpha reply', 'notLoaded'));
-    if (call.path === `/api/threads/${A}/control`) return response({ threadId: A, available: false, canStop: false, code: 'OWNER_UNAVAILABLE', reason: '暂时无法读取运行状态，可刷新重试；沿用桌面设置仍可发送消息' });
+    if (call.path === `/api/threads/${A}/control`) return response({ threadId: A, available: false, canStop: false, code: 'OWNER_UNAVAILABLE', standby: true, reason: '会话待命，发送时沿用桌面设置' });
     if (call.path === `/api/threads/${A}/messages`) return response({ accepted: true });
   });
-  await until(() => ui.doc.getElementById('controlSummary').textContent.includes('仍可发送'), 'scoped runtime warning');
+  await until(() => ui.doc.getElementById('controlSummary').textContent.includes('沿用桌面设置'), 'standby state loaded');
+  assert.equal(ui.doc.getElementById('controlState').hidden, true);
+  assert.equal(ui.doc.getElementById('stopButton').hidden, true);
   assert.equal(ui.doc.getElementById('threadStatus').textContent, '等待继续');
   const input = ui.doc.getElementById('promptInput'); input.value = '继续同一会话'; input.dispatchEvent(new ui.window.Event('input'));
   assert.equal(ui.doc.getElementById('sendButton').disabled, false); assert.equal(ui.doc.getElementById('stopButton').hidden, true);

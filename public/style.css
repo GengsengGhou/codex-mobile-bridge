@@ -374,6 +374,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .stop-button { flex-shrink: 0; min-height: 44px; padding: 7px 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink); cursor: pointer; }
 .stop-button:disabled { opacity: .45; cursor: default; }
 .control-state { flex: 0 0 auto; max-height: min(42vh, 420px); overflow-y: auto; overscroll-behavior: contain; padding: 7px 9px; border: 1px solid #e8d6ad; border-radius: 5px; background: #fbf7ee; color: var(--ink); font-size: max(10px, calc(var(--font-size) * .68)); line-height: 1.5; }
+.control-state[data-kind="standby"] { border-color: var(--line); background: var(--surface); color: var(--muted); }
 .control-state-heading { min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--amber); font-weight: 650; }
 .control-state-heading .text-button { min-height: 36px; flex: 0 0 auto; }
 .pending-requests { display: grid; gap: 8px; }

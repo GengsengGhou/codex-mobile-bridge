@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
-import { parseMarkdown, parseInline, appendMarkdown } from '../public/markdown.js';
+import { parseMarkdown, parseInline, appendMarkdown, mathReady } from '../public/markdown.js';
+
+await mathReady;
 
 function render(source) {
   const dom = new JSDOM('<main></main>');

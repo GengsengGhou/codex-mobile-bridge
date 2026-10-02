@@ -137,6 +137,7 @@ export const messages = {
   "服务端仍无法确认创建结果。可以继续核对状态。": "The server cannot confirm creation yet. You can keep checking.",
   "无法核对创建回执：{0}。不会自动重发。": "Could not check the creation receipt: {0}. The request will not be resent automatically.",
   "运行控制快照暂不可用，保留当前待处理内容。": "Execution snapshot unavailable. Current pending interactions are retained.",
+  "会话待命，发送时沿用桌面设置": "Conversation is on standby. Sending will use desktop settings.",
   "暂时无法读取运行控制：{0}": "Could not read execution controls: {0}",
   "请求凭据不完整，不能安全提交。": "Request credentials are incomplete; submission is unavailable.",
   "缺少完整命令或工作目录，不能审批。": "The full command or working directory is missing; approval is unavailable.",
