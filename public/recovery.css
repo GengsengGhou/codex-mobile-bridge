@@ -1,4 +1,4 @@
-.drawer-foot #recoveryButton { display: block; min-height: 44px; margin-top: 4px; }
+.drawer-more-actions #recoveryButton { display: block; min-height: 44px; }
 .recovery-panel { box-sizing: border-box; width: min(600px, calc(100vw - 24px)); max-height: 85dvh; overflow-y: auto; padding: 16px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: max(10px, calc(var(--font-size) * .7)); }
 .recovery-panel::backdrop { background: rgb(0 0 0 / 28%); }
 .recovery-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }

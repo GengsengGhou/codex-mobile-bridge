@@ -1,4 +1,4 @@
-.drawer-foot #archivesButton { display: block; min-height: 44px; margin-top: 4px; }
+.drawer-more-actions #archivesButton { display: block; min-height: 44px; }
 .archives-panel { width: min(600px, calc(100vw - 24px)); max-height: 85dvh; padding: 16px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); }
 .archives-panel::backdrop { background: rgb(0 0 0 / 28%); }
 .archives-heading, .archives-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

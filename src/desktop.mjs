@@ -2,7 +2,7 @@ import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { readSidebarMetadata, projectForThread, visibleUserText } from './presentation.mjs';
+import { readSidebarMetadata, projectForThread, applySidebarOrder, visibleUserText } from './presentation.mjs';
 
 export const MAX_FRAME = 8 * 1024 * 1024;
 export const THREAD_MANAGEMENT_TOOLS = Object.freeze({ rename: 'set_thread_title', pin: 'set_thread_pinned', archive: 'set_thread_archived' });
@@ -69,9 +69,12 @@ export class DesktopBridge {
     this.pipePath = pipePath; this.callerThreadId = callerThreadId; this.request = request;
     this.sidebarPath = sidebarPath; this.metadataReader = metadataReader; this.metadata = null; this.metadataAt = 0;
   }
-  async sidebarMetadata() {
-    if (!this.metadata || Date.now() - this.metadataAt > 3000) {
-      this.metadata = await this.metadataReader(this.sidebarPath); this.metadataAt = Date.now();
+  async sidebarMetadata({ fresh = false } = {}) {
+    if (fresh || !this.metadata || Date.now() - this.metadataAt > 3000) {
+      if (!this.metadataRead) this.metadataRead = Promise.resolve().then(() => this.metadataReader(this.sidebarPath))
+        .then(metadata => { this.metadata = metadata; this.metadataAt = Date.now(); return metadata; })
+        .finally(() => { this.metadataRead = null; });
+      return this.metadataRead;
     }
     return this.metadata;
   }
@@ -104,7 +107,7 @@ export class DesktopBridge {
   }
   async list() {
     const data = await this.call('list_threads', { limit: 50 });
-    const metadata = await this.sidebarMetadata();
+    const metadata = await this.sidebarMetadata({ fresh: true });
     if (!Array.isArray(data.threads) || !Array.isArray(data.pinnedThreads)) throw new BridgeError('任务列表格式不兼容', 'PROTOCOL_ERROR', 502);
     const unique = new Map([...data.pinnedThreads, ...data.threads].filter(t => t.kind === 'codex' && (!t.hostId || t.hostId === 'local')).map(t => [t.id, {
       id: t.id, title: t.title || '未命名任务', kind: t.kind, status: statusOf(t.status), hostId: 'local', cwd: t.cwd,
@@ -112,7 +115,7 @@ export class DesktopBridge {
       pinned: Number.isInteger(t.pinnedIndex), pinnedIndex: t.pinnedIndex ?? null, updatedAt: t.updatedAt,
       ...(isDelegatedThread(t) ? { delegated: true } : {}),
     }]));
-    return { threads: [...unique.values()], unavailableHosts: data.unavailableHosts ?? [], unavailableSources: data.unavailableSources ?? [] };
+    return { threads: applySidebarOrder([...unique.values()], metadata), unavailableHosts: data.unavailableHosts ?? [], unavailableSources: data.unavailableSources ?? [] };
   }
   async read(id, cursor, { turnLimit = 10 } = {}) {
     // Delegated user input is carried in a functionCallOutput envelope on this desktop version.
@@ -122,7 +125,22 @@ export class DesktopBridge {
     const data = await this.call('read_thread', args);
     if (data.thread?.id !== id || !Array.isArray(data.turns)) throw new BridgeError('桌面返回了不匹配的任务', 'PROTOCOL_ERROR', 502);
     const normalized = normalizeThread(data);
-    Object.assign(normalized.thread, projectForThread(data.thread, await this.sidebarMetadata()));
+    const project = projectForThread(data.thread, await this.sidebarMetadata());
+    // A singleton read cannot rank the complete sidebar. Keep the fresh list's
+    // computed ranks when the frontend merges transcript metadata into it.
+    delete project.projectThreadOrder; delete project.projectOrder;
+    Object.assign(normalized.thread, project);
+    return normalized;
+  }
+  async readMetadata(id) {
+    // Eligibility and connection probes need fresh native thread metadata, not
+    // transcript/tool output hydration. Preserve the same identity checks.
+    const data = await this.call('read_thread', { threadId: id, hostId: 'local', turnLimit: 1, includeOutputs: false });
+    if (data.thread?.id !== id || !Array.isArray(data.turns)) throw new BridgeError('桌面返回了不匹配的任务', 'PROTOCOL_ERROR', 502);
+    const normalized = normalizeThread({ thread: data.thread, turns: [] });
+    const project = projectForThread(data.thread, await this.sidebarMetadata());
+    delete project.projectThreadOrder; delete project.projectOrder;
+    Object.assign(normalized.thread, project);
     return normalized;
   }
   async send(id, prompt, selection = {}) {

@@ -26,6 +26,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function ownerStandby(error, thread) {
   return error.code === 'OWNER_UNAVAILABLE' && error.controlDiagnostic?.reason === 'no-client-found' && String(thread?.status).toLowerCase() === 'notloaded';
 }
+function controlReadDiagnostic(error) {
+  const reason = error.controlDiagnostic?.reason;
+  const known = ['no-client-found', 'client-disconnected', 'server-closed', 'request-timeout', 'request-version-mismatch', 'no-handler-for-request', 'unknown-desktop-error'];
+  return typeof reason === 'string' ? { nativeReason: known.includes(reason) ? reason : 'unknown-desktop-error' } : {};
+}
 function ownerReadReason(error, subject, canSend, thread) {
   const reason = error.controlDiagnostic?.reason;
   if (ownerStandby(error, thread)) {
@@ -62,7 +67,8 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
     }
     return map.get(key);
   };
-  const readSupplement = id => sharedRead(supplementalReads, id, () => bridge.read(id, undefined, { turnLimit: 1 }));
+  const readMetadata = id => typeof bridge.readMetadata === 'function' ? bridge.readMetadata(id) : bridge.read(id, undefined, { turnLimit: 1 });
+  const readSupplement = id => sharedRead(supplementalReads, id, () => readMetadata(id));
   const readSnapshot = (id, thread, context = false) => {
     const method = context && thread.delegated ? 'context' : 'snapshot';
     return sharedRead(supplementalSnapshots, `${method}:${id}`, () => {
@@ -201,7 +207,7 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
         try {
           const names = await bridge.capabilities();
           if (!['list_threads', 'read_thread'].every(n => names.includes(n))) throw new BridgeError('Codex 桌面未提供所需的读取接口。', 'PROTOCOL_ERROR', 502);
-          await bridge.read(bridge.callerThreadId, undefined, { turnLimit: 1 });
+          await readMetadata(bridge.callerThreadId);
           connected = true; sendAvailable = names.includes('send_message_to_thread');
           canCreate = creationEnabled(names);
           for (const [action, tool] of Object.entries(THREAD_MANAGEMENT_TOOLS)) {
@@ -311,7 +317,7 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
         } catch (error) {
           const code = ['PROTOCOL_ERROR', 'PROTOCOL_INCOMPATIBLE', 'OWNER_UNAVAILABLE', 'UNSUPPORTED_THREAD'].includes(error.code) ? error.code : 'CONTROL_UNAVAILABLE';
           const reason = code === 'OWNER_UNAVAILABLE' ? ownerReadReason(error, '会话权限与运行状态', sendAccess(thread).canSend, thread) : '暂时无法读取会话信息，可刷新重试';
-          json(res, 200, { threadId: id, available: false, code, reason, ...(ownerStandby(error, thread) ? { standby: true } : {}), permissions: { supported: false, current: 'unknown', canOverride: false, options: [] }, git: await readGitContext(thread.cwd), agents: unavailable(reason), sources: unavailable(reason) });
+          json(res, 200, { threadId: id, available: false, code, reason, ...controlReadDiagnostic(error), ...(ownerStandby(error, thread) ? { standby: true } : {}), permissions: { supported: false, current: 'unknown', canOverride: false, options: [] }, git: await readGitContext(thread.cwd), agents: unavailable(reason), sources: unavailable(reason) });
         }
         return;
       }
@@ -337,7 +343,7 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
             : code === 'OWNER_UNAVAILABLE' ? ownerReadReason(error, '运行状态', sendAccess(thread).canSend, thread)
               : code === 'UNSUPPORTED_THREAD' ? '此类会话暂不支持网页运行控制'
                 : '暂时无法读取运行状态，可刷新重试';
-          json(res, 200, { available: false, canStop: false, threadId: id, code, reason, ...(ownerStandby(error, thread) ? { standby: true } : {}) });
+          json(res, 200, { available: false, canStop: false, threadId: id, code, reason, ...controlReadDiagnostic(error), ...(ownerStandby(error, thread) ? { standby: true } : {}) });
         }
         return;
       }

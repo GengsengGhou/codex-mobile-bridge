@@ -55,9 +55,9 @@ function pollingClock(window) {
   };
 }
 
-async function mount(t, route = () => undefined, { session = {}, expectedRows = 3, urlThread = A, automaticClock = false, language = 'zh-CN', delayedMath = false } = {}) {
+async function mount(t, route = () => undefined, { session = {}, expectedRows = 3, urlThread = A, automaticClock = false, language = 'zh-CN', delayedMath = false, pathname = '/', disconnectedStartup = false } = {}) {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  const dom = new JSDOM(html, { url: `http://127.0.0.1:4317/?thread=${urlThread}`, runScripts: 'outside-only', pretendToBeVisual: true });
+  const dom = new JSDOM(html, { url: `http://127.0.0.1:4317${pathname}?thread=${urlThread}`, runScripts: 'outside-only', pretendToBeVisual: true });
   Object.defineProperty(dom.window.navigator, 'language', { value: language, configurable: true }); // Existing Chinese-copy fixtures default to zh-CN.
   t.after(() => dom.window.close());
   const { window } = dom, requests = [], errors = [], intervals = [];
@@ -79,18 +79,19 @@ async function mount(t, route = () => undefined, { session = {}, expectedRows = 
     const call = { path, ...options }; requests.push(call);
     const special = await route(call);
     if (special !== undefined) return special;
-    if (path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', allowedSendThreadId: null, callerThreadId: A, defaultThreadId: A });
-    if (path === '/api/threads') return response({ threads: rows });
-    const uploadMatch = path.match(/^\/api\/threads\/([^/?]+)\/uploads\/([^/?]+)$/);
+    const apiPath = path.replace(/^\/devices\/[0-9a-f-]+\//i, '/');
+    if (apiPath === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', allowedSendThreadId: null, callerThreadId: A, defaultThreadId: A });
+    if (apiPath === '/api/threads') return response({ threads: rows });
+    const uploadMatch = apiPath.match(/^\/api\/threads\/([^/?]+)\/uploads\/([^/?]+)$/);
     if (uploadMatch && !options.method) {
       const item = JSON.parse(window.sessionStorage.getItem(`codex-mobile-uploads:${uploadMatch[1]}`) || '[]').find(item => item.uploadId === uploadMatch[2]);
       return response(item?.receipt ? { state: 'uploaded', receipt: item.receipt } : { state: 'not_found' });
     }
-    if (path === '/api/sidebar-order') {
+    if (apiPath === '/api/sidebar-order') {
       if (options.method === 'PUT') { const body = JSON.parse(options.body); savedOrder = { revision: savedOrder.revision + 1, order: body.order }; }
       return response(savedOrder);
     }
-    const match = path.match(/^\/api\/threads\/([^/?]+)$/);
+    const match = apiPath.match(/^\/api\/threads\/([^/?]+)$/);
     if (match) return response(snapshot(match[1]));
     throw new Error(`Unexpected UI request: ${path}`);
   };
@@ -117,7 +118,9 @@ async function mount(t, route = () => undefined, { session = {}, expectedRows = 
   source = source.replace(/^import \{([^}]+)\} from "(\.\/[^"\n]+)";$/gm, (_, names, path) => `const {${names.replace(/\s+as\s+/g, ':')}} = globalThis.__modules[${JSON.stringify(path)}];`);
   window.eval(source);
   const doc = window.document;
-  await until(() => doc.querySelector('#transcript').textContent.includes('Alpha reply') && doc.querySelectorAll('.task-item').length === expectedRows, 'initial task content and list').catch(error => {
+  await until(() => disconnectedStartup
+    ? doc.getElementById('connection').dataset.state === 'disconnected' && !doc.getElementById('drawerDeviceRow')?.hidden
+    : doc.querySelector('#transcript').textContent.includes('Alpha reply') && doc.querySelectorAll('.task-item').length === expectedRows, disconnectedStartup ? 'disconnected device startup' : 'initial task content and list').catch(error => {
     throw new Error(`${error.message}; app errors: ${errors.map(item => item?.message || item).join('; ')}`);
   });
   assert.deepEqual(errors, []);
@@ -908,6 +911,53 @@ test('available false preserves pending cards and prevents stale submission unti
   assert.equal(ui.requests.filter(call => call.path === `/api/threads/${A}/respond`).length, 0);
   ui.doc.querySelector('#refreshControl').click();
   await until(() => !ui.doc.querySelector('.pending-card'), 'fresh snapshot removes expired request');
+  assert.deepEqual(ui.errors, []);
+});
+
+test('unavailable control snapshots retry quickly and preserve pending cards through recovery', async t => {
+  let reads = 0;
+  const userInput = {
+    requestId: 'input-retry', token: 'input-retry-token', kind: 'userInput', turnId: 'turn-1', title: 'Answer', actionable: true, disabledReason: null,
+    questions: [{ id: 'q1', header: 'Answer', question: 'What should Codex do?', options: [], isOther: false, isSecret: false }]
+  };
+  const ui = await mount(t, call => {
+    if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', callerThreadId: A, defaultThreadId: A, executionControl: true });
+    if (call.path === `/api/threads/${A}/control`) {
+      reads += 1;
+      if (reads === 2) return response({ threadId: A, available: false, reason: 'Owner unavailable', pendingRequestCount: 0 });
+      return response({ threadId: A, available: true, canStop: false, pendingRequestCount: reads === 1 ? 1 : 0, pendingRequests: reads === 1 ? [userInput] : [] });
+    }
+  }, { automaticClock: true });
+  await until(() => ui.doc.querySelector('.pending-card'), 'pending card');
+  const card = ui.doc.querySelector('.pending-card');
+  const answer = card.querySelector('textarea');
+  answer.value = 'Keep me'; answer.dispatchEvent(new ui.window.Event('input', { bubbles: true }));
+  ui.doc.querySelector('#refreshControl').click();
+  await until(() => ui.doc.querySelector('#controlSummary').textContent === 'Owner unavailable', 'unavailable snapshot');
+  assert.equal(card.isConnected, true);
+  assert.equal(answer.value, 'Keep me');
+  assert.equal(card.querySelector('.pending-submit').disabled, true);
+  await ui.clock.advance(2999);
+  assert.equal(reads, 2, 'retry must not run before three seconds');
+  await ui.clock.advance(1);
+  await until(() => reads === 3 && !ui.doc.querySelector('.pending-card'), 'fresh automatic snapshot');
+  await ui.clock.advance(2999);
+  assert.equal(reads, 3, 'a successful snapshot restores the normal cadence');
+  assert.deepEqual(ui.errors, []);
+});
+
+test('honest standby control snapshots stay on the normal polling cadence', async t => {
+  let reads = 0;
+  const ui = await mount(t, call => {
+    if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', callerThreadId: A, defaultThreadId: A, executionControl: true });
+    if (call.path === `/api/threads/${A}/control`) {
+      reads += 1;
+      return response({ threadId: A, available: false, canStop: false, standby: true, reason: '会话待命，发送时沿用桌面设置' });
+    }
+  }, { automaticClock: true });
+  await until(() => ui.doc.getElementById('controlSummary').textContent.includes('沿用桌面设置'), 'standby snapshot');
+  await ui.clock.advance(3000);
+  assert.equal(reads, 1, 'standby is not treated as an outage requiring fast retries');
   assert.deepEqual(ui.errors, []);
 });
 
@@ -1738,5 +1788,61 @@ test('switching web language immediately retains drafts, conversation, scroll, s
   }
   assert.equal(ui.doc.getElementById('modelSettingsTitle').textContent, '下一轮设置');
   assert.equal(ui.window.localStorage.getItem('codex-mobile-language'), 'zh-CN');
+  assert.deepEqual(ui.errors, []);
+});
+
+test('drawer More dialog keeps secondary controls reachable without growing the footer', async t => {
+  const ui = await mount(t);
+  const drawer = ui.doc.getElementById('taskDrawer'), foot = drawer.querySelector('.drawer-foot');
+  const more = ui.doc.getElementById('drawerMoreDialog');
+  assert.equal(foot.querySelectorAll(':scope > *').length, 2);
+  assert.equal(foot.querySelector('#drawerMoreButton').getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(ui.doc.querySelector('#drawerMoreActions #archivesButton')?.textContent, '归档会话');
+  assert.equal(ui.doc.querySelector('#drawerMoreActions #recoveryButton')?.textContent, '运行与恢复');
+  assert.ok(ui.doc.querySelector('#drawerMoreAccess .access-panel'));
+  assert.ok(more.querySelector('.drawer-more-note').textContent.includes('快照'));
+
+  ui.doc.getElementById('drawerMoreButton').click();
+  assert.equal(more.open, true);
+  ui.doc.getElementById('drawerMoreClose').click();
+  assert.equal(more.open, false);
+  ui.doc.getElementById('drawerMoreButton').click();
+  more.dispatchEvent(new ui.window.MouseEvent('click', { bubbles: true }));
+  assert.equal(more.open, false, 'backdrop click closes the settings dialog');
+  assert.deepEqual(ui.errors, []);
+});
+
+test('a thread refresh cannot replace newer desktop ranks with stale snapshot ranks', async t => {
+  let desktopRows = rows.map(row => ({ ...row })), threadReads = 0;
+  const ui = await mount(t, call => {
+    if (call.path === '/api/threads') return response({ threads: desktopRows });
+    if (call.path === `/api/threads/${A}`) { threadReads++; return response(snapshot(A)); }
+  });
+  desktopRows = desktopRows.map(row => row.id === A ? { ...row, projectThreadOrder: 1 } : row.id === B ? { ...row, projectThreadOrder: 0 } : row);
+  ui.doc.getElementById('refreshButton').click();
+  await until(() => threadReads > 1, 'selected thread refreshed');
+  await until(() => [...ui.doc.querySelectorAll('.task-row[data-order-key="project-one"]')].map(node => node.dataset.orderId).join(',') === `${B},${A}`, 'latest desktop ranks retained');
+  assert.deepEqual(ui.savedOrder().order, { projects: [], threads: {} });
+  assert.equal(ui.requests.some(call => call.method === 'PUT'), false);
+  assert.deepEqual(ui.errors, []);
+});
+
+test('device routes show the name, live connection state, and devices link in one drawer row', async t => {
+  const deviceId = '11111111-1111-4111-8111-111111111111';
+  const ui = await mount(t, call => {
+    if (call.path === `/devices/${deviceId}/context`) return response({ user: { id: 'fixture-user' }, device: { id: deviceId, name: 'Office computer', online: true } });
+    if (call.path === '/api/status') return response({ connected: false, canSend: false, sendScope: 'disabled' });
+  }, { pathname: `/devices/${deviceId}/`, disconnectedStartup: true });
+  const row = ui.doc.getElementById('drawerDeviceRow');
+  await until(() => !row.hidden && ui.doc.getElementById('drawerDeviceName').textContent === 'Office computer', 'device identity initialized');
+  assert.equal(row.dataset.state, 'online');
+  assert.equal(ui.doc.getElementById('drawerDeviceState').textContent, '在线');
+  assert.equal(ui.doc.getElementById('connection').dataset.state, 'disconnected', 'Codex readiness remains separate from device transport');
+  assert.equal(row.querySelector('a').getAttribute('href'), '/');
+  assert.equal(row.querySelectorAll(':scope > *').length, 3);
+
+  ui.window.dispatchEvent(new ui.window.CustomEvent('bridge-device-state-changed', { detail: { online: false } }));
+  await until(() => row.dataset.state === 'offline', 'device offline state propagated');
+  assert.equal(ui.doc.getElementById('drawerDeviceState').textContent, '离线');
   assert.deepEqual(ui.errors, []);
 });

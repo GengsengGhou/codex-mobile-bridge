@@ -15,13 +15,9 @@ export function createAccessPanel({ document, window, api, fetchImpl = fetch, de
   const logout = document.createElement("button"); logout.type = "button"; i18n.text(logout, () => t("退出登录"));
   const revoke = document.createElement("button"); revoke.type = "button"; i18n.text(revoke, () => t("撤销全部登录"));
   const cancel = document.createElement("button"); cancel.type = "button"; i18n.text(cancel, () => t("取消")); cancel.hidden = true;
-  panel.append(status, logout, revoke, cancel); (document.querySelector(".drawer-foot") || document.getElementById("taskDrawer") || document.body).append(panel);
+  panel.append(status, logout, revoke, cancel); (document.getElementById("drawerMoreAccess") || document.querySelector(".drawer-foot") || document.body).append(panel);
   if (deviceContext) {
-    const name = document.createElement("strong"); i18n.text(name, () => deviceContext.device.name);
-    const back = document.createElement("a"); back.href = "/"; i18n.text(back, () => t("返回设备列表"));
-    panel.replaceChildren(name, back, status); panel.hidden = false;
-    const top = document.querySelector(".brand-block"); if (top) { const identity = document.createElement("div"); identity.className = "device-identity"; identity.textContent = deviceContext.device.name; i18n.attr(identity, "title", () => deviceContext.device.name); top.append(identity); }
-    i18n.text(status, () => deviceContext.device.online ? t("设备已连接") : t("设备离线，暂时无法操作"));
+    panel.replaceChildren(); panel.hidden = true;
   }
   let busy = false, confirming = false;
   const reset = () => { confirming = false; i18n.text(revoke, () => t("撤销全部登录")); cancel.hidden = true; };

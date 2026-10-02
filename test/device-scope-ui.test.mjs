@@ -153,7 +153,7 @@ test("actual mobile app restores only selected device drafts and scopes files an
     source = source.replace(/^import \{([^}]+)\} from "(\.\/[^"\n]+)";$/gm, (_, names, path) => `const {${names.replace(/\s+as\s+/g, ":")}} = globalThis.__modules[${JSON.stringify(path)}];`); window.eval(source);
     for (let count = 0; count < 80 && !window.document.getElementById("promptInput").value; count++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.equal(window.document.getElementById("promptInput").value, id === A ? "device A draft" : "device B draft");
-    assert.ok(window.document.querySelector(".brand-block").textContent.includes(device.name));
+    assert.equal(window.document.getElementById("drawerDeviceName").textContent, device.name);
     window.document.getElementById("filesButton").click(); window.document.getElementById("recoveryButton").click(); await tick();
     assert.ok(calls.some(path => path.includes("/files?"))); assert.ok(calls.some(path => path.endsWith("/api/recovery")));
     assert.equal(window.document.querySelector('link[href="./access.css"]').href, `https://hub.test/devices/${id}/access.css`);

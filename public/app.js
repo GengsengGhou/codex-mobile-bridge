@@ -60,7 +60,7 @@ import { createAgentViewer } from "./agent-viewer.js";
   const THREAD_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const $ = (id) => document.getElementById(id);
   const ui = {
-    connection: $("connection"), connectionText: $("connectionText"), menuButton: $("menuButton"), drawer: $("taskDrawer"),
+    connection: $("connection"), connectionText: $("connectionText"), drawerDeviceRow: $("drawerDeviceRow"), drawerDeviceName: $("drawerDeviceName"), drawerDeviceState: $("drawerDeviceState"), drawerMore: $("drawerMoreDialog"), drawerMoreButton: $("drawerMoreButton"), drawerMoreClose: $("drawerMoreClose"), menuButton: $("menuButton"), drawer: $("taskDrawer"),
     scrim: $("drawerScrim"), closeDrawer: $("closeDrawer"), taskList: $("taskList"), taskCount: $("taskCount"),
     refreshTasks: $("refreshTasks"), refreshButton: $("refreshButton"), taskSearch: $("taskSearch"),
     title: $("threadTitle"), subtitle: $("threadSubtitle"), status: $("threadStatus"), details: $("threadDetails"),
@@ -148,7 +148,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     orderLoaded: false, orderConfigured: false, orderSaving: false, orderDirty: false, sorting: false, dragging: null,
     receiptChecks: new Map(), receiptCheckAt: new Map(), draftRevisions: new Map(), threadAction: null, managing: false,
     execution: null, controlReads: new Set(), stopping: false, responding: new Set(), responseStates: new Map(), followupDraft: null, sessionExpired: false,
-    pendingCards: new Map(), pendingDrafts: new Map(), controlUnavailable: false,
+    pendingCards: new Map(), pendingDrafts: new Map(), controlUnavailable: false, controlRetry: false,
     controlOpen: false, controlSeen: new Set(), historyFingerprint: "", historyDismissed: "",
     projects: [], projectsLoaded: false, projectsLoading: false, projectsCanCreate: null, projectsError: "",
     createDraft: { projectChoice: "", title: "", prompt: "" }, createDraftRevision: 0, createDraftLoaded: false, createDraftStorageFailed: false,
@@ -257,6 +257,15 @@ import { createAgentViewer } from "./agent-viewer.js";
     return !!status.canSend;
   }
 
+  function renderDeviceIdentity(online = deviceScope.context?.device?.online === true) {
+    if (!ui.drawerDeviceRow) return;
+    ui.drawerDeviceRow.hidden = !deviceScope.id;
+    if (!deviceScope.id) return;
+    i18n.text(ui.drawerDeviceName, () => deviceScope.context.device.name);
+    i18n.text(ui.drawerDeviceState, () => online ? t("在线") : t("离线"));
+    ui.drawerDeviceRow.dataset.state = online ? "online" : "offline";
+  }
+
   function setConnection(connected, status = null, error = null) {
     if (status) state.statusSnapshot = status;
     state.connectionError = connected ? null : error || status?.error || state.connectionError;
@@ -269,6 +278,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     state.connectionFault = fault;
     if (status) { populateModelControls("create"); if (modelUI.dialog.open) populateModelControls("send"); }
     state.connected = connected;
+    renderDeviceIdentity();
     if (connected && status?.canCreate === true && state.projectsCanCreate === false) {
       state.projectsCanCreate = null;
       state.projectsLoaded = false;
@@ -727,6 +737,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       state.execution = execution;
       if (execution.available === false) {
         state.controlUnavailable = true;
+        state.controlRetry = execution.standby !== true;
         if (execution.standby === true) {
           ui.controlState.dataset.kind = "standby";
           i18n.text(ui.controlSummary, () => t(execution.reason || "会话待命，发送时沿用桌面设置"));
@@ -740,18 +751,24 @@ import { createAgentViewer } from "./agent-viewer.js";
         return;
       }
       state.controlUnavailable = false;
+      state.controlRetry = false;
       delete ui.controlState.dataset.kind;
       renderPendingRequests(execution);
     } catch (error) {
       if (id === state.selectedId && token === state.switching) {
         state.execution = null;
         state.controlUnavailable = true;
+        state.controlRetry = true;
         delete ui.controlState.dataset.kind;
         i18n.text(ui.controlSummary, () => t`暂时无法读取运行控制：${t(error.message)}`);
         ui.controlState.hidden = false;
         for (const [key, entry] of state.pendingCards) updatePendingCard(id, entry.card, entry.card.__pendingControls.request);
       }
-    } finally { state.controlReads.delete(id); updateControls(); }
+    } finally {
+      state.controlReads.delete(id);
+      updateControls();
+      if (state.controlRetry && !state.polling) schedulePoll(3000);
+    }
   }
 
   function tokenFingerprint(token) {
@@ -2274,6 +2291,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     state.threadFingerprint = "";
     state.execution = null;
     state.controlUnavailable = false;
+    state.controlRetry = false;
     for (const entry of state.pendingCards.values()) entry.card.remove();
     state.pendingCards.clear();
     ui.pendingRequests.replaceChildren();
@@ -2375,7 +2393,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     const active = normalizeStatus(state.thread?.status).kind === "running" || /requires|waiting|approval|attention/i.test(text(state.thread?.status))
       || [...state.turns.values()].some(turn => normalizeStatus(turn.status).kind === "running");
     const pending = !!state.execution?.pendingRequestCount || state.pendingCards.size > 0 || state.sending || state.responding.size > 0 || state.pendingMessages.length > 0;
-    const interval = delay ?? (state.forcePoll ? 3000 : syncPollDelay({ active, pending, unavailable: !state.connected, idlePolls: state.idlePolls }));
+    const interval = delay ?? (state.forcePoll || state.controlRetry ? 3000 : syncPollDelay({ active, pending, unavailable: !state.connected, idlePolls: state.idlePolls }));
     state.pollTimer = setTimeout(async () => {
       await poll(state.forcePoll);
       if (!state.polling) schedulePoll();
@@ -2580,11 +2598,16 @@ import { createAgentViewer } from "./agent-viewer.js";
     ui.menuButton.addEventListener("click", () => setDrawer(true));
     ui.closeDrawer.addEventListener("click", () => setDrawer(false));
     ui.scrim.addEventListener("click", () => setDrawer(false));
+    ui.drawerMoreButton.addEventListener("click", () => { if (!ui.drawerMore.open) ui.drawerMore.showModal(); });
+    ui.drawerMoreClose.addEventListener("click", () => ui.drawerMore.close());
+    ui.drawerMore.addEventListener("click", event => { if (event.target === ui.drawerMore) ui.drawerMore.close(); });
     ui.refreshButton.addEventListener("click", wakeSync);
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") wakeSync(); else clearTimeout(state.pollTimer); });
     window.addEventListener("online", wakeSync);
     window.addEventListener("bridge-device-state-changed", event => {
+      if (deviceScope.id && typeof event.detail?.online === "boolean") deviceScope.context.device.online = event.detail.online;
       if (event.detail?.online === false) setConnection(false);
+      if (typeof event.detail?.online === "boolean") renderDeviceIdentity(event.detail.online);
       wakeSync();
     });
     window.addEventListener("focus", wakeSync);

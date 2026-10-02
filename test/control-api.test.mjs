@@ -148,6 +148,7 @@ test('owner read diagnostics distinguish timeout and disconnect without claiming
     const f = await fixture(t, { properties: { status: 'notLoaded' }, controlError: 'OWNER_UNAVAILABLE', controlDiagnostic: { reason, method: 'thread-owner-discovery', version: 1 } });
     const control = await (await f.read(ID)).json();
     assert.equal(control.code, 'OWNER_UNAVAILABLE'); assert.equal(control.canStop, false);
+    assert.equal(control.nativeReason, reason);
     assert.match(control.reason, expected); assert.match(control.reason, /沿用桌面设置/);
     assert.equal(control.standby === true, reason === 'no-client-found');
     assert.doesNotMatch(control.reason, /请在桌面/);
@@ -161,6 +162,13 @@ test('a loaded owner missing is a failure rather than cold standby', async t => 
   const body = await (await f.read(ID)).json();
   assert.equal(body.available, false); assert.equal(body.canStop, false); assert.equal(body.standby, undefined);
   assert.match(body.reason, /暂时无法读取/);
+});
+
+test('unavailable read diagnostics whitelist reason codes without exposing native text', async t => {
+  const f = await fixture(t, { controlError: 'OWNER_UNAVAILABLE', controlDiagnostic: { reason: 'private prompt and token', method: 'private-native-data', version: 1 } });
+  const body = await (await f.read(ID)).json();
+  assert.equal(body.nativeReason, 'unknown-desktop-error'); assert.doesNotMatch(JSON.stringify(body), /private prompt|private-native|token/);
+  assert.equal(body.available, false); assert.equal(body.canStop, false);
 });
 
 test('supplemental reads share current GET work, then recover cold standby with a fresh owner snapshot', async t => {

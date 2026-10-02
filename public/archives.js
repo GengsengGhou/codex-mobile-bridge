@@ -4,7 +4,7 @@ export function createArchivesPanel({ document: doc, window: win, api, onRestore
   const make = (tag, className, text) => { const el = doc.createElement(tag); if (className) el.className = className; if (text) i18n.text(el, () => typeof text === "function" ? text() : text); return el; };
   const css = make('link'); css.rel = 'stylesheet'; css.href = './archives.css'; doc.head.append(css);
   const open = make('button', 'text-button', () => t('归档会话')); open.type = 'button'; open.id = 'archivesButton';
-  doc.querySelector('.drawer-foot').append(open);
+  (doc.getElementById('drawerMoreActions') || doc.querySelector('.drawer-foot')).append(open);
   const panel = make('dialog', 'archives-panel'); panel.id = 'archivesPanel'; panel.setAttribute('aria-labelledby', 'archivesTitle');
   const heading = make('div', 'archives-heading'), title = make('h2', '', () => t('归档会话')); title.id = 'archivesTitle';
   const close = make('button', '', () => '×'); close.type = 'button'; i18n.attr(close, 'aria-label', () => t('关闭归档会话'));

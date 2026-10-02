@@ -54,6 +54,9 @@ async function fixture(t, { enableSend = true, sendScope = 'all-local', capabili
   bridge.capabilities = async () => capabilities;
   bridge.list = async () => ({ threads: structuredClone(threads) });
   bridge.read = async id => { if (id === CREATED) await readGate; if (readFail && id === CREATED) throw new BridgeError('Not loaded'); return { thread: { id, kind: 'codex', hostId: 'local', status: 'idle', archived: id === CREATED && archived }, turns: [] }; };
+  // This fixture replaces native thread reads; metadata probes must use the
+  // same identity/status fixture rather than the creation-result adapter.
+  bridge.readMetadata = id => bridge.read(id);
   const create = bridge.create.bind(bridge);
   bridge.create = async (args, options) => create(args, { beforeDispatch: async () => {
     await options.beforeDispatch(); mutations++; await gate;
@@ -70,7 +73,8 @@ async function fixture(t, { enableSend = true, sendScope = 'all-local', capabili
 
 test('creation HTTP requires all-local authorization, capabilities, session, origin and strict bounded fields', async t => {
   const f = await fixture(t);
-  assert.equal((await (await f.get('/api/status')).json()).canCreate, true);
+  const status = await (await f.get('/api/status')).json();
+  assert.equal(status.connected, true); assert.equal(status.canCreate, true);
   assert.equal((await (await f.get('/api/projects')).json()).projects[0].projectId, PROJECT.projectId);
   assert.equal((await f.create(body, { Cookie: '' })).status, 401);
   assert.equal((await f.create(body, { Origin: 'http://other.example' })).status, 403);

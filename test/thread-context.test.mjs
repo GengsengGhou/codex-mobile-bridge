@@ -7,6 +7,18 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { summarizeThreadContext, safeSourceUrl, readGitContext, hydrateAgentContext } from '../src/thread-context.mjs';
 const ID = '00000000-0000-7000-8000-000000000001', CHILD = '00000000-0000-7000-8000-000000000002';
+test('agent hydration reads fresh metadata without transcript outputs and preserves unavailable/completed semantics', async () => {
+  const agents = { items: [{ threadId: CHILD, status: 'completed', name: 'Saved' }, { threadId: ID, status: 'active', name: 'Unknown' }] };
+  const actual = await hydrateAgentContext(agents, {
+    read: async () => { throw Error('Transcript hydration must not run'); },
+    readMetadata: async id => {
+      if (id === ID) throw Error('Unavailable child');
+      return { thread: { id, kind: 'codex', hostId: 'local', title: 'Current title', status: 'notLoaded' }, turns: [] };
+    },
+  });
+  assert.equal(actual.items[0].name, 'Current title'); assert.equal(actual.items[0].status, 'completed'); assert.equal(actual.items[0].canRead, true);
+  assert.equal(actual.items[1].status, 'unknown'); assert.equal(actual.items[1].canRead, false);
+});
 test('sources contain recognized attachment/web/tool metadata and omit raw arguments, output, queries and credentials', () => {
   const result = summarizeThreadContext({ id: ID, cwd: 'E:/repo', source: 'vscode' }, [{ params: { attachments: [{ path: 'E:/repo/report.pdf', label: 'Report' }] }, items: [
     { type: 'webSearch', query: 'private query', action: { type: 'openPage', url: 'https://example.com/page?token=private#private' } },

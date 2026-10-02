@@ -3,7 +3,7 @@ export function createRecoveryPanel({ document: doc, api }) {
   const i18n = createI18n({ window: doc.defaultView, document: doc }), t = i18n.t;
   const make = (tag, className, text) => { const el = doc.createElement(tag); if (className) el.className = className; if (text) i18n.text(el, () => typeof text === "function" ? text() : text); return el; };
   const css = make('link'); css.rel = 'stylesheet'; css.href = './recovery.css'; doc.head.append(css);
-  const open = make('button', 'text-button', () => t('运行与恢复')); open.type = 'button'; open.id = 'recoveryButton'; doc.querySelector('.drawer-foot').append(open);
+  const open = make('button', 'text-button', () => t('运行与恢复')); open.type = 'button'; open.id = 'recoveryButton'; (doc.getElementById('drawerMoreActions') || doc.querySelector('.drawer-foot')).append(open);
   const panel = make('dialog', 'recovery-panel'); panel.id = 'recoveryPanel'; panel.setAttribute('aria-labelledby', 'recoveryTitle');
   const heading = make('div', 'recovery-heading'), title = make('h2', '', () => t('运行与恢复')); title.id = 'recoveryTitle';
   const close = make('button', '', () => '×'); close.type = 'button'; i18n.attr(close, 'aria-label', () => t('关闭运行与恢复')); heading.append(title, i18n.languagePicker(), close);

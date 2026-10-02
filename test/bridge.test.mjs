@@ -38,6 +38,40 @@ test('updated desktop requires callerSource and returns the same requested task'
   assert.equal((await bridge.read(ID)).thread.id, ID);
 });
 
+test('each sidebar list follows current desktop preferences and transcript reads cannot overwrite collection ranks', async () => {
+  let manual = false, metadataReads = 0;
+  const bridge = new DesktopBridge({ callerThreadId: ID, metadataReader: async () => {
+    metadataReads++; return { projects: [{ id: 'dev', rootPaths: ['E:/dev'] }], threadOrders: { dev: ['old', ID] }, sorting: { projectThreads: manual ? 'manual' : 'updated_at', chats: 'updated_at' } };
+  } });
+  bridge.call = async tool => tool === 'list_threads' ? { pinnedThreads: [], threads: [
+    { id: ID, kind: 'codex', hostId: 'local', cwd: 'E:/dev', updatedAt: 1 },
+    { id: 'old', kind: 'codex', hostId: 'local', cwd: 'E:/dev', updatedAt: 10 },
+  ] } : { thread: { id: ID, kind: 'codex', cwd: 'E:/dev' }, turns: [] };
+  const first = await bridge.list();
+  assert.equal(first.threads[0].projectThreadOrder, 0);
+  manual = true;
+  const second = await bridge.list();
+  assert.equal(second.threads[0].projectThreadOrder, 1); assert.equal(metadataReads, 2);
+  const read = await bridge.read(ID);
+  assert.equal(read.thread.projectThreadOrder, undefined); assert.equal(read.thread.projectOrder, undefined);
+  assert.equal(read.thread.projectId, 'dev');
+  assert.equal(metadataReads, 2);
+});
+
+test('metadata reads skip native tool outputs and transcript normalization while checking identity and delegated eligibility', async () => {
+  const bridge = new DesktopBridge({ callerThreadId: ID, metadataReader: async () => ({}) });
+  bridge.call = async (tool, args) => {
+    assert.equal(tool, 'read_thread'); assert.equal(args.threadId, ID); assert.equal(args.turnLimit, 1); assert.equal(args.includeOutputs, false);
+    return { thread: { id: ID, kind: 'codex', hostId: 'local', status: { type: 'active' }, parentThreadId: 'parent', cwd: 'E:/repo' },
+      turns: [{ id: 'current', items: [{ type: 'agentMessage', text: 'private transcript' }] }] };
+  };
+  const actual = await bridge.readMetadata(ID);
+  assert.equal(actual.thread.status, 'active'); assert.equal(actual.thread.delegated, true); assert.equal(actual.thread.cwd, 'E:/repo');
+  assert.deepEqual(actual.turns, []); assert.doesNotMatch(JSON.stringify(actual), /private transcript|parentThreadId/);
+  bridge.call = async () => ({ thread: { id: 'wrong' }, turns: [] });
+  await assert.rejects(bridge.readMetadata(ID), { code: 'PROTOCOL_ERROR' });
+});
+
 test('a healthy catalog cannot mask broken desktop reads, and recovery restores health', async t => {
   const s = await setup(t, { enableSend: true });
   const original = s.bridge.read;

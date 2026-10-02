@@ -99,7 +99,8 @@ export async function readGitContext(cwd, execute = run) {
 export async function hydrateAgentContext(agents, bridge) {
   const items = await Promise.all(agents.items.map(async item => {
     try {
-      const data = await bridge.read(item.threadId, undefined, { turnLimit: 1 });
+      const data = typeof bridge.readMetadata === 'function' ? await bridge.readMetadata(item.threadId)
+        : await bridge.read(item.threadId, undefined, { turnLimit: 1 });
       if (data.thread?.id !== item.threadId || data.thread.kind !== 'codex' || data.thread.hostId && data.thread.hostId !== 'local') return item;
       const nativeStatus = text(data.thread.status, 64) ?? 'unknown';
       // A dormant snapshot describes loading state, not the latest recorded completion event.
