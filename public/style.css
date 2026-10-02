@@ -276,7 +276,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .thread-action-error { color: var(--red); line-height: 1.5; }
 .drawer-heading { gap: 7px; }
 .new-conversation-button { min-height: 44px; flex: 0 0 auto; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 620; cursor: pointer; }
-.new-conversation-button > span { font-size: 18px; vertical-align: -1px; }
+.new-conversation-button > span[aria-hidden="true"] { font-size: 18px; vertical-align: -1px; }
 .new-conversation-button:disabled { opacity: .45; cursor: default; }
 .create-capability-state { padding: 0 7px 7px; color: var(--muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 .new-thread-dialog { width: min(560px, calc(100% - 24px)); border-radius: 8px; padding: clamp(14px, 3vw, 22px); }
@@ -443,7 +443,7 @@ input.pending-answer { resize: none; }
 .drawer-heading .new-conversation-button { min-width: 0; flex-shrink: 1; }
 @media (max-width: 600px) { .environment-tag { display: none; } }
 @media (max-width: 430px) {
-  .drawer-heading .new-conversation-button { max-width: 110px; white-space: normal; }
+  .drawer-heading .new-conversation-button { max-width: 110px; white-space: nowrap; }
   .drawer-heading h2 { overflow: hidden; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
   .brand-line strong { max-width: 134px; white-space: normal; font-size: 13px; }
   .brand-mark { display: none; }
@@ -471,5 +471,3 @@ input.pending-answer { resize: none; }
 .drawer-more-actions button { min-width: 0; min-height: 44px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); font-size: 13px; }
 .drawer-more-access .access-panel { padding: 12px 0 0; border-top: 1px solid var(--line); }
 .drawer-more-access .access-panel > strong { display: block; margin-bottom: 8px; color: var(--ink); }
-.font-dialog > .language-select, .font-dialog > form > .language-select { float: right; margin: 0 0 8px 12px; }
-.agent-viewer-actions .language-select, .files-heading .language-select { flex: 0 0 54px; }

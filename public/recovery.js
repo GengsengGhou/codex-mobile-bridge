@@ -6,7 +6,7 @@ export function createRecoveryPanel({ document: doc, api }) {
   const open = make('button', 'text-button', () => t('运行与恢复')); open.type = 'button'; open.id = 'recoveryButton'; (doc.getElementById('drawerMoreActions') || doc.querySelector('.drawer-foot')).append(open);
   const panel = make('dialog', 'recovery-panel'); panel.id = 'recoveryPanel'; panel.setAttribute('aria-labelledby', 'recoveryTitle');
   const heading = make('div', 'recovery-heading'), title = make('h2', '', () => t('运行与恢复')); title.id = 'recoveryTitle';
-  const close = make('button', '', () => '×'); close.type = 'button'; i18n.attr(close, 'aria-label', () => t('关闭运行与恢复')); heading.append(title, i18n.languagePicker(), close);
+  const close = make('button', '', () => '×'); close.type = 'button'; i18n.attr(close, 'aria-label', () => t('关闭运行与恢复')); heading.append(title, close);
   const feedback = make('p', 'recovery-feedback'); feedback.setAttribute('role', 'status');
   const status = make('dl', 'recovery-status');
   const toggles = {};

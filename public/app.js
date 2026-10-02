@@ -79,7 +79,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     stop: $("stopButton"), controlState: $("controlState"), controlSummary: $("controlSummary"),
     pendingRequests: $("pendingRequests"), refreshControl: $("refreshControl"), controlToggle: $("controlToggle"), closePending: $("closePendingRequests"),
     closeHistory: $("closeHistoricalQuestions"), showHistory: $("showHistoricalQuestions"),
-    newThreadButton: $("newThreadButton"), createCapabilityState: $("createCapabilityState"),
+    newThreadButton: $("newThreadButton"), newThreadLabel: $("newThreadLabel"), createCapabilityState: $("createCapabilityState"),
     createDialog: $("newThreadDialog"), createForm: $("newThreadForm"), createProject: $("newThreadProject"),
     projectLoadState: $("projectLoadState"), projectLoadText: $("projectLoadText"), retryProjects: $("retryProjects"), projectDetail: $("projectSelectionDetail"),
     createName: $("newThreadName"), createPrompt: $("newThreadPrompt"), createRecoveryState: $("createRecoveryState"),
@@ -87,6 +87,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     createRetry: $("createRetry"), checkCreateReceipt: $("checkCreateReceipt"), enterCreatedFromDialog: $("enterCreatedFromDialog"),
     creationResult: $("creationResult"), creationResultText: $("creationResultText"), enterCreatedThread: $("enterCreatedThread")
   };
+  i18n.text(ui.newThreadLabel, () => i18n.language === "en" ? "New" : "新建会话");
   const modelUI = { button: $("modelSettingsButton"), label: $("modelSettingsLabel"), dialog: $("modelSettingsDialog"), model: $("messageModel"), thinking: $("messageThinking"), permission: $("messagePermission"), message: $("modelSettingsState"), createModel: $("createModel"), createThinking: $("createThinking") };
   const followupUI = { dialog: $("followupDraftDialog"), preview: $("followupDraftPreview"), cancel: $("followupDraftCancel"), append: $("followupDraftAppend") };
   const modelSettings = new Map();

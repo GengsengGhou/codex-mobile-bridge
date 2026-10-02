@@ -8,7 +8,7 @@ export function createArchivesPanel({ document: doc, window: win, api, onRestore
   const panel = make('dialog', 'archives-panel'); panel.id = 'archivesPanel'; panel.setAttribute('aria-labelledby', 'archivesTitle');
   const heading = make('div', 'archives-heading'), title = make('h2', '', () => t('归档会话')); title.id = 'archivesTitle';
   const close = make('button', '', () => '×'); close.type = 'button'; i18n.attr(close, 'aria-label', () => t('关闭归档会话'));
-  heading.append(title, i18n.languagePicker(), close);
+  heading.append(title, close);
   const feedback = make('p', 'archives-feedback'); feedback.setAttribute('role', 'status');
   const list = make('div', 'archives-list');
   const footer = make('div', 'archives-footer'), refresh = make('button', '', () => t('刷新')), more = make('button', '', () => t('加载更多'));
