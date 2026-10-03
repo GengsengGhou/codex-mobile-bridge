@@ -127,6 +127,110 @@ async function mount(t, route = () => undefined, { session = {}, expectedRows = 
   return { window, doc, requests, errors, intervals, clock, mathGate, mathReady: window.__modules['./markdown.js']?.mathReady, markdown: window.__modules['./markdown.js'], savedOrder: () => savedOrder };
 }
 
+test('a newly listed thread switches after startup while rejected reads preserve the healthy parent and its draft', async t => {
+  const D = '00000000-0000-0000-0000-000000000005';
+  let listed = false, rejectRead = true;
+  const ui = await mount(t, call => {
+    if (call.path === '/api/threads') return response({ threads: listed ? [...rows, { id: D, title: 'New desktop task', status: 'active' }] : rows });
+    if (call.path === `/api/threads/${D}`) return rejectRead
+      ? response({ code: 'DESKTOP_REJECTED', error: '桌面拒绝了请求' }, 502)
+      : response({ ...snapshot(D, 'New desktop reply', 'active'), thread: { id: D, title: 'New desktop task', status: 'active' }, outputsAvailable: false });
+  });
+  const input = ui.doc.getElementById('promptInput'); input.value = 'Alpha retained draft'; input.dispatchEvent(new ui.window.Event('input'));
+  listed = true; ui.doc.getElementById('refreshTasks').click();
+  await until(() => ui.doc.querySelector(`.task-row[data-order-id="${D}"]`), 'new desktop task appears');
+  const selectNew = () => ui.doc.querySelector(`.task-row[data-order-id="${D}"] .task-item`).click();
+  selectNew(); await until(() => ui.doc.getElementById('notice').textContent.includes('桌面拒绝'), 'rejected candidate notice');
+  assert.equal(ui.doc.getElementById('connection').dataset.state, 'connected'); assert.equal(ui.doc.getElementById('sendButton').disabled, false);
+  assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Alpha'); assert.equal(input.value, 'Alpha retained draft');
+  assert.equal(new URL(ui.window.location.href).searchParams.get('thread'), A);
+  rejectRead = false; selectNew();
+  await until(() => ui.doc.getElementById('transcript').textContent.includes('New desktop reply'), 'output-free new task read');
+  assert.equal(ui.doc.getElementById('threadTitle').textContent, 'New desktop task'); assert.equal(input.value, '');
+  assert.equal(ui.doc.getElementById('connection').dataset.state, 'connected');
+  input.value = 'New task draft'; input.dispatchEvent(new ui.window.Event('input'));
+  ui.doc.querySelector(`.task-row[data-order-id="${A}"] .task-item`).click();
+  await until(() => input.value === 'Alpha retained draft', 'original draft restored');
+  selectNew(); await until(() => input.value === 'New task draft', 'new draft restored');
+  assert.equal(ui.requests.some(call => call.method && call.method !== 'GET'), false); assert.deepEqual(ui.errors, []);
+});
+
+test('malformed first reads and wrong-ID known-thread refreshes cannot replace content or disable healthy parent sending', async t => {
+  let mode = 'malformed';
+  const ui = await mount(t, call => {
+    if (call.path === `/api/threads/${B}`) {
+      if (mode === 'malformed') return new Response('{');
+      if (mode === 'wrong') return response(snapshot(A, 'Wrong Alpha response'));
+    }
+  });
+  const input = ui.doc.getElementById('promptInput'); input.value = 'Alpha draft'; input.dispatchEvent(new ui.window.Event('input'));
+  const beta = () => ui.doc.querySelector(`.task-row[data-order-id="${B}"] .task-item`).click();
+  beta(); await until(() => ui.doc.getElementById('notice').textContent.includes('数据不完整'), 'invalid JSON explicit error');
+  assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Alpha'); assert.equal(input.value, 'Alpha draft');
+  assert.equal(ui.doc.getElementById('connection').dataset.state, 'connected'); assert.equal(ui.doc.getElementById('sendButton').disabled, false);
+  mode = 'valid'; beta(); await until(() => ui.doc.getElementById('transcript').textContent.includes('Beta reply'), 'Beta established');
+  input.value = 'Beta draft'; input.dispatchEvent(new ui.window.Event('input'));
+  mode = 'wrong'; ui.doc.getElementById('retryThreadButton').click();
+  await until(() => ui.doc.getElementById('notice').textContent.includes('不匹配'), 'known-thread mismatch rejected');
+  assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Beta'); assert.equal(input.value, 'Beta draft');
+  assert.ok(ui.doc.getElementById('transcript').textContent.includes('Beta reply')); assert.ok(!ui.doc.getElementById('transcript').textContent.includes('Wrong Alpha response'));
+  assert.equal(ui.doc.getElementById('connection').dataset.state, 'connected');
+  assert.equal(ui.requests.some(call => call.method && call.method !== 'GET'), false); assert.deepEqual(ui.errors, []);
+});
+
+test('late candidate rejection cannot poison a newer successful selection or its draft', async t => {
+  const late = deferred();
+  const ui = await mount(t, call => call.path === `/api/threads/${B}` ? late.promise : undefined);
+  ui.doc.querySelector(`.task-row[data-order-id="${B}"] .task-item`).click();
+  await until(() => ui.requests.some(call => call.path === `/api/threads/${B}`), 'old candidate pending');
+  ui.doc.querySelector(`.task-row[data-order-id="${C}"] .task-item`).click();
+  await until(() => ui.doc.getElementById('threadTitle').textContent === 'Gamma', 'new candidate selected');
+  const input = ui.doc.getElementById('promptInput'); input.value = 'Gamma draft'; input.dispatchEvent(new ui.window.Event('input'));
+  late.resolve(response({ code: 'DESKTOP_UNAVAILABLE', error: 'Late failure' }, 503));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Gamma'); assert.equal(input.value, 'Gamma draft');
+  assert.equal(ui.doc.getElementById('connection').dataset.state, 'connected'); assert.ok(!ui.doc.getElementById('notice').textContent.includes('Late failure'));
+  assert.equal(ui.requests.some(call => call.method && call.method !== 'GET'), false); assert.deepEqual(ui.errors, []);
+});
+
+test('wrong-thread older pages preserve history and paging until a valid retry', async t => {
+  let wrong = true;
+  const ui = await mount(t, call => {
+    if (call.path === `/api/threads/${A}`) return response({ ...snapshot(A), page: { hasMore: true, nextCursor: 'older' } });
+    if (call.path === `/api/threads/${A}?cursor=older`) return response(wrong ? snapshot(B, 'Wrong older Beta')
+      : { ...snapshot(A, 'Valid older Alpha'), turns: [{ id: 'older-turn', items: [{ id: 'older-reply', type: 'agentMessage', text: 'Valid older Alpha' }] }] });
+  });
+  ui.doc.getElementById('olderButton').click();
+  await until(() => ui.doc.getElementById('historyState').textContent.includes('读取失败'), 'older mismatch surfaced');
+  assert.ok(!ui.doc.getElementById('transcript').textContent.includes('Wrong older Beta')); assert.equal(ui.doc.getElementById('connection').dataset.state, 'connected');
+  wrong = false; ui.doc.getElementById('olderButton').click();
+  await until(() => ui.doc.getElementById('transcript').textContent.includes('Valid older Alpha'), 'same paging boundary retried');
+  assert.ok(ui.doc.getElementById('transcript').textContent.includes('Alpha reply')); assert.deepEqual(ui.errors, []);
+});
+
+test('read-only live desktop HTTP shape replays through actual selection, messages and draft restoration', { skip: !process.env.BRIDGE_READONLY_SHAPE }, async t => {
+  const real = JSON.parse(await readFile(process.env.BRIDGE_READONLY_SHAPE, 'utf8'));
+  const id = real.thread.id;
+  assert.ok(real.turns.flatMap(turn => turn.items).some(item => item.type === 'userMessage'));
+  assert.ok(real.turns.flatMap(turn => turn.items).some(item => item.type === 'agentMessage'));
+  const ui = await mount(t, call => {
+    if (call.path === '/api/threads') return response({ threads: [...rows, real.thread] });
+    if (call.path === `/api/threads/${id}`) return response(real);
+  }, { expectedRows: 4 });
+  const input = ui.doc.getElementById('promptInput'); input.value = 'Retained parent draft'; input.dispatchEvent(new ui.window.Event('input'));
+  const selectReal = () => ui.doc.querySelector(`.task-row[data-order-id="${id}"] .task-item`).click();
+  selectReal();
+  await until(() => ui.doc.getElementById('transcript').textContent.includes('Readonly real agentMessage'), 'real assistant rendered');
+  assert.ok(ui.doc.getElementById('transcript').textContent.includes('Readonly real userMessage'));
+  assert.equal(ui.doc.getElementById('threadTitle').textContent, real.thread.title);
+  assert.equal(ui.doc.getElementById('connection').dataset.state, 'connected');
+  input.value = 'Retained real task draft'; input.dispatchEvent(new ui.window.Event('input'));
+  ui.doc.querySelector(`.task-row[data-order-id="${A}"] .task-item`).click();
+  await until(() => input.value === 'Retained parent draft', 'parent draft retained');
+  selectReal(); await until(() => input.value === 'Retained real task draft', 'real task draft retained');
+  assert.equal(ui.requests.some(call => call.method && call.method !== 'GET'), false); assert.deepEqual(ui.errors, []);
+});
+
 test('model settings stay scoped to each chat and omit overrides for default and active supplements', async t => {
   let active = false;
   const options = [{ id: 'gpt-6-luna', efforts: ['low', 'high', 'max'] }, { id: 'gpt-6-astra', efforts: ['high', 'ultra'] }];

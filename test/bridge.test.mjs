@@ -72,6 +72,69 @@ test('metadata reads skip native tool outputs and transcript normalization while
   await assert.rejects(bridge.readMetadata(ID), { code: 'PROTOCOL_ERROR' });
 });
 
+test('output hydration rejection falls back once to the same read, preserving messages, paging and identity', async () => {
+  const calls = [];
+  const bridge = new DesktopBridge({ callerThreadId: ID, metadataReader: async () => ({}), request: async (_pipe, _method, params, options) => {
+    calls.push({ args: params.arguments, options });
+    assert.equal(params.tool, 'read_thread'); assert.equal(options.mutation, false);
+    if (params.arguments.includeOutputs) throw new BridgeError('rejected', 'DESKTOP_REJECTED', 502);
+    return { success: true, contentItems: [{ type: 'inputText', text: JSON.stringify({ ...data,
+      page: { hasMore: true, nextCursor: 'older', order: 'newest_first' },
+      turns: [{ id: 'new', items: [{ id: 'reply', type: 'agentMessage', text: 'Readable reply' }] },
+        { id: 'old', items: [{ id: 'input', type: 'userMessage', content: [{ type: 'text', text: 'Readable input' }] }] }]
+    }) }] };
+  } });
+  const actual = await bridge.read(ID, 'original-cursor', { turnLimit: 3 });
+  assert.equal(actual.outputsAvailable, false); assert.equal(actual.thread.id, ID);
+  assert.equal(actual.page.nextCursor, 'older'); assert.equal(actual.page.hasMore, true);
+  assert.deepEqual(actual.turns.map(turn => turn.id), ['old', 'new']);
+  assert.deepEqual(actual.turns.flatMap(turn => turn.items).map(item => item.text), ['Readable input', 'Readable reply']);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].args, { ...calls[0].args, includeOutputs: false });
+  assert.equal(calls[1].args.cursor, 'original-cursor'); assert.equal(calls[1].args.turnLimit, 3);
+});
+
+test('read fallback rejects wrong identity or shape and never retries unrelated failures or mutations', async () => {
+  for (const reply of [null, [], { thread: { id: 'wrong' }, turns: [] }, { thread: { id: ID }, turns: null }]) {
+    let calls = 0;
+    const bridge = new DesktopBridge({ callerThreadId: ID });
+    bridge.call = async () => { if (++calls === 1) throw new BridgeError('rejected', 'DESKTOP_REJECTED', 502); return reply; };
+    await assert.rejects(bridge.read(ID), { code: 'PROTOCOL_ERROR' }); assert.equal(calls, 2);
+  }
+  for (const code of ['PROTOCOL_ERROR', 'DESKTOP_UNAVAILABLE', 'UNSUPPORTED_THREAD', 'DELIVERY_UNKNOWN']) {
+    let calls = 0;
+    const bridge = new DesktopBridge({ callerThreadId: ID });
+    bridge.call = async () => { calls++; throw new BridgeError('fault', code); };
+    await assert.rejects(bridge.read(ID), { code }); assert.equal(calls, 1);
+  }
+  let calls = 0;
+  const bridge = new DesktopBridge({ callerThreadId: ID, request: async () => { calls++; throw new BridgeError('rejected', 'DESKTOP_REJECTED', 502); } });
+  await assert.rejects(bridge.send(ID, 'no retry'), { code: 'DESKTOP_REJECTED' }); assert.equal(calls, 1);
+});
+
+test('successful output reads keep recognized delegation inputs and a fallback can recover on the next read', async () => {
+  let failure = true;
+  const bridge = new DesktopBridge({ callerThreadId: ID, metadataReader: async () => ({}) });
+  bridge.call = async (_tool, args) => {
+    if (failure && args.includeOutputs) throw new BridgeError('rejected', 'DESKTOP_REJECTED', 502);
+    return { ...data, turns: [{ id: 'turn', items: [{ id: 'input', type: 'functionCallOutput', namespace: 'codex_app', name: 'create_thread',
+      output: args.includeOutputs ? { text: '<codex_delegation><source_thread_id>parent</source_thread_id><input>Initial input</input></codex_delegation>', truncated: false } : undefined }] }] };
+  };
+  assert.equal((await bridge.read(ID)).outputsAvailable, false);
+  failure = false;
+  const recovered = await bridge.read(ID);
+  assert.equal(recovered.outputsAvailable, undefined);
+  assert.equal(recovered.turns[0].items[0].source, 'desktop-bridge'); assert.equal(recovered.turns[0].items[0].text, 'Initial input');
+});
+
+test('HTTP cannot emit or cache a snapshot from another thread even with a permissive adapter', async t => {
+  const s = await setup(t, { enableSend: true });
+  s.bridge.read = async () => ({ ...data, thread: { ...data.thread, id: 'wrong' } });
+  const response = await fetch(`${s.base}/api/threads/${ID}`, { headers: s.headers });
+  assert.equal(response.status, 502); assert.equal((await response.json()).code, 'PROTOCOL_ERROR');
+  assert.equal(response.headers.get('etag'), null);
+});
+
 test('a healthy catalog cannot mask broken desktop reads, and recovery restores health', async t => {
   const s = await setup(t, { enableSend: true });
   const original = s.bridge.read;
@@ -301,7 +364,7 @@ test('malformed JSON and non-object bodies do not trigger desktop sends', async 
 async function pipeFixture(t, handler) {
   const address = process.platform === 'win32' ? `\\\\.\\pipe\\codex-mobile-test-${randomUUID()}` : join(tmpdir(), `cmb-${randomUUID()}.sock`);
   const sockets = new Set();
-  const server = net.createServer(socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); socket.once('data', () => handler(socket)); });
+  const server = net.createServer(socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); socket.once('data', chunk => handler(socket, chunk)); });
   await new Promise(r => server.listen(address, r));
   t.after(() => new Promise(r => { for (const s of sockets) s.destroy(); server.close(r); }));
   return address;
@@ -312,6 +375,24 @@ test('pipe framing handles split headers and Chinese UTF-8 payloads', async t =>
     socket.write(frame.subarray(0, 2)); setTimeout(() => socket.write(frame.subarray(2, 19)), 5); setTimeout(() => socket.write(frame.subarray(19)), 10);
   });
   assert.deepEqual(await pipeRequest(path, 'tools/list', {}), { message: '中文分段消息' });
+});
+
+test('real pipe rejection triggers only the bounded output-free read while parallel sockets retain thread identity', async t => {
+  const other = '00000000-0000-0000-0000-000000000002', requests = [];
+  const path = await pipeFixture(t, (socket, bytes) => {
+    const request = JSON.parse(bytes.subarray(4).toString('utf8')), args = request.params.arguments; requests.push(args);
+    if (args.threadId === ID && args.includeOutputs) {
+      socket.end(encodeFrame({ jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'Codex app tool request failed' } })); return;
+    }
+    const result = { success: true, contentItems: [{ type: 'inputText', text: JSON.stringify({ ...data, thread: { ...data.thread, id: args.threadId } }) }] };
+    const send = () => socket.end(encodeFrame({ jsonrpc: '2.0', id: 1, result }));
+    if (args.threadId === ID) setTimeout(send, 20); else send();
+  });
+  const bridge = new DesktopBridge({ pipePath: path, callerThreadId: ID, metadataReader: async () => ({}) });
+  const [first, second] = await Promise.all([bridge.read(ID), bridge.read(other)]);
+  assert.equal(first.thread.id, ID); assert.equal(first.outputsAvailable, false);
+  assert.equal(second.thread.id, other); assert.equal(second.outputsAvailable, undefined);
+  assert.equal(requests.filter(args => args.threadId === ID).length, 2); assert.equal(requests.filter(args => args.threadId === other).length, 1);
 });
 test('disconnect after a mutation write reports unknown delivery', async t => {
   const path = await pipeFixture(t, socket => socket.destroy());

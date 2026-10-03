@@ -8,6 +8,12 @@ The local server computes conditional validators from freshly read JSON for stat
 
 Static scripts, styles and fonts use content SHA-256 validators with `private, no-cache` after the relevant authentication/ownership checks. HTML and authentication JSON remain `no-store`. Every browser reuse must revalidate, so changed assets are invalidated safely after an upgrade without requiring immutable versioned URL support. The temporary gateway and device hub preserve authenticated conditional transport.
 
+Thread switching validates the exact requested thread ID and the turns array before storing a conditional snapshot, classifying a newly listed thread, or merging latest and historical pages. Malformed successful JSON is a response error, rather than an empty successful snapshot. An explicit ETag on a 304 must match the requested validator. Snapshot keys include the entire path and cursor; another task or page cannot supply the cached response. Selection generations and aborted reads continue to fence late responses, preserving the current draft and transcript.
+
+A desktop rejection while reading raw tool outputs permits one read of the same task, cursor and turn limit with `includeOutputs:false`. It must still return the correct task and a valid turns array. The response sets `outputsAvailable:false`; regular user and assistant messages and activity records remain readable. A rejected task read or invalid snapshot does not mark a healthy device or desktop connection offline. Transport and authentication failures still disable controls until health recovers. No send, creation, approval or other mutation is retried by this fallback.
+
+The output-free page can omit user inputs that the desktop stores only inside a recognized create/send delegation output envelope. Already loaded envelope-derived user items with stable IDs are retained in the same cached turn while outputs are unavailable. Unknown inputs are not reconstructed, and ordinary native revisions still replace ordinary cached messages. The next read attempts outputs again, allowing full recovery without a permanent per-task suppression. No extra banner is added for a successful fallback.
+
 ## Verification
 
 Focused tests cover bodyless 304, snapshot copy isolation, API instance isolation, mutation invalidation, server authorization before validators, fresh changed content, static cache policy, history failure/retry and exhausted cursor preservation. Browser screenshots and measurements are in `work/codex-probe/history-sync-evidence.json` and `history-{320,390}-*.png`.

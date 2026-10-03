@@ -1,5 +1,17 @@
 # App-server protocol probe
 
+## Desktop history output-hydration failure (2026-10-04)
+
+A GET-only probe reproduced the reported existing desktop task failure through the installed v1.0.2 connector. `read_thread` with `includeOutputs:true` returned JSON-RPC `-32000` (`Codex app tool request failed`); the same task, caller, host and one-turn limit with `includeOutputs:false` returned the expected `schemaVersion/thread/page/turns` shape and exact target identity. Both the saved connector caller and the current desktop caller produced the same result. This establishes a failure in the desktop output-reading path for this task; the generic native error does not identify which individual tool output caused it.
+
+The bridge now makes at most one output-free fallback for a `DESKTOP_REJECTED` read. It preserves all read arguments except `includeOutputs`, validates identity and shape, and never treats mismatches or unrelated protocol/transport faults as successful reads. Successful reads still attempt outputs, preserving recognized delegation envelopes when available. This is not a retry mechanism for mutations. A read that fails in both forms remains an error.
+
+The corrected source was verified against the same real pipe behind an isolated, read-only localhost HTTP server. Three latest pages returned 200 in 865–1000 ms; each retained ten turns, eleven ordinary user items and 487 assistant items. Output-reading rejections took 463–585 ms, without timeouts. An older cursor returned the same task successfully with outputs included, confirming that blanket or permanent output suppression would discard available history. These local measurements support retaining the bounded fallback on each poll; they do not establish timing for other desktop versions or mobile networks.
+
+The separately reported frontend mismatch has a confirmed reachable failure path: the previous API helper converted malformed successful JSON into `{}`, then first-selection identity checking reported a mismatch. No actual cross-task response or malformed body was observed in this live probe. The patch reports malformed data explicitly and validates IDs, turns and 304 validators before cache insertion and transcript merging. Concurrent relay and pipe tests retain per-request identity; the hub backend protocol is unchanged.
+
+Evidence and the reusable GET-only scripts are under ignored `work/thread-switch-fix/`: `probe.json`, `live-readonly-evidence.json`, `live-shape.json` and `live-ui.tap`. They retain protocol shape, identity, counts and timing, with business text and opaque cursors removed. The installed runtime was not replaced during this probe, and paired configuration, preferences, uploads and delivery/creation records were hash-checked unchanged. There were no business messages, new tasks, approvals or other mutations. Full output hydration, authenticated public-browser use and physical-phone use remain outside this source verification.
+
 Probe date: 2026-09-25. Local CLI: `codex-cli 0.156.1`.
 
 ## Evidence collected

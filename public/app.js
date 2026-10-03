@@ -293,6 +293,20 @@ import { createAgentViewer } from "./agent-viewer.js";
     updateControls();
   }
 
+  function handleThreadReadError(error) {
+    // A rejected history or invalid snapshot does not make the device offline.
+    // Reachability faults still block writes until the existing health probe recovers.
+    if (!error.code || ["DESKTOP_UNAVAILABLE", "DEVICE_OFFLINE", "DEVICE_RECONNECTING", "BRIDGE_UNAVAILABLE", "RELAY_TIMEOUT", "LOGIN_REQUIRED", "UNAUTHORIZED", "SESSION_REVOKED"].includes(error.code)) {
+      setConnection(false, null, error);
+    }
+  }
+
+  function validateThreadSnapshot(data, id) {
+    if (data?.thread?.id !== id || !Array.isArray(data.turns)) {
+      throw Object.assign(new Error(t("返回的会话与请求不匹配，已有内容和草稿仍保留。")), { code: "THREAD_MISMATCH" });
+    }
+  }
+
   function connectionIssue(error) {
     if (!error) return null;
     const code = text(error.code, "").toUpperCase();
@@ -2052,9 +2066,9 @@ import { createAgentViewer } from "./agent-viewer.js";
     return Date.parse(stringValue) || 0;
   }
 
-  function mergeTurns(turns, latest = true) {
+  function mergeTurns(turns, latest = true, outputsAvailable = true) {
     if (!Array.isArray(turns)) return false;
-    const merged = mergeTranscriptTurns([...state.turns.values()], turns, { latest });
+    const merged = mergeTranscriptTurns([...state.turns.values()], turns, { latest, outputsAvailable });
     const changed = JSON.stringify([...state.turns.values()]) !== JSON.stringify(merged);
     state.turns = new Map(merged.map(turn => [text(turn.id), turn]));
     return changed;
@@ -2137,6 +2151,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     try {
       let data = prefetchedData || await api(`/api/threads/${encodeURIComponent(id)}${query}`, { signal: controller.signal });
       if (controller.signal.aborted || token !== state.switching || id !== state.selectedId) return;
+      validateThreadSnapshot(data, id);
       if (delegatedThread(data.thread)) {
         rememberAgents([data.thread]);
         state.selectedId = null;
@@ -2163,7 +2178,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       state.canSend = typeof data.canSend === "boolean" ? data.canSend : !!data.thread?.canSend;
       state.sendMode = data.sendMode || data.thread?.sendMode || "message";
       state.sendDisabledReason = text(data.sendDisabledReason ?? data.thread?.sendDisabledReason);
-      let contentChanged = mergeTurns(data.turns, mode === "latest");
+      let contentChanged = mergeTurns(data.turns, mode === "latest", data.outputsAvailable !== false);
       if (contentChanged) state.changeRevision += 1;
       const priorPendingCount = state.pendingMessages.length;
       reconcilePendingMessages(id);
@@ -2175,7 +2190,8 @@ import { createAgentViewer } from "./agent-viewer.js";
         while (wasPaged && knownTurnIds.size && !overlap && state.hasMore && state.cursor != null && gapPages < 3) {
           const older = await api(`/api/threads/${encodeURIComponent(id)}?cursor=${encodeURIComponent(state.cursor)}`, { signal: controller.signal });
           if (controller.signal.aborted || token !== state.switching || id !== state.selectedId) return;
-          contentChanged = mergeTurns(older.turns, false) || contentChanged;
+          validateThreadSnapshot(older, id);
+          contentChanged = mergeTurns(older.turns, false, older.outputsAvailable !== false) || contentChanged;
           reconcilePendingMessages(id);
           overlap = (older.turns || []).some(turn => knownTurnIds.has(text(turn.id)));
           updatePaging(older.page || {});
@@ -2213,7 +2229,7 @@ import { createAgentViewer } from "./agent-viewer.js";
         updateHistoryControl();
         return false;
       }
-      setConnection(false, null, error);
+      handleThreadReadError(error);
       updateControls();
       setThreadLoading(t("无法更新会话。最近读取的内容已保留。"), true);
       if (isUnknown(id)) showUnknownNotice(id);
@@ -2248,7 +2264,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       try { prefetchedData = await api(`/api/threads/${encodeURIComponent(id)}`, { signal: controller.signal }); }
       catch (error) {
         if (selectionRequest !== state.selecting || controller.signal.aborted || error.name === "AbortError") return;
-        setConnection(false, null, error);
+        handleThreadReadError(error);
         showNotice(t`暂时无法读取会话：${t(error.message)}。已有内容和草稿仍保留。`, "error", 0, "connection");
         return;
       } finally { if (state.selectionController === controller) { state.selectionController = null; updateControls(); } }

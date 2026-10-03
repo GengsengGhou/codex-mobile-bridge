@@ -56,6 +56,32 @@ test('unsupported connector route is rejected per request and leaves the connect
   assert.equal(response.status, 200); assert.equal(await response.text(), 'supported');
 });
 
+test('concurrent thread reads finish out of order without crossing IDs, validators or reconnecting on desktop rejection', async t => {
+  const other = '22222222-2222-4222-8222-222222222222';
+  let release, started;
+  const slow = new Promise(resolve => { release = resolve; });
+  const entered = new Promise(resolve => { started = resolve; });
+  const { origin, connector, relay } = await fixture(t, async (req, res) => {
+    if (req.url === `/api/threads/${thread}`) { started(); await slow; }
+    if (req.url.endsWith('?reject=1')) { res.writeHead(502, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ code: 'DESKTOP_REJECTED' })); return; }
+    const id = req.url.includes(other) ? other : thread;
+    const etag = `"${id}"`; res.setHeader('ETag', etag);
+    if (req.headers['if-none-match'] === etag) { res.writeHead(304); res.end(); return; }
+    res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ thread: { id }, turns: [] }));
+  });
+  const connection = relay.devices.get('desktop');
+  const first = fetch(`${origin}/api/threads/${thread}`); await entered;
+  const fast = await fetch(`${origin}/api/threads/${other}`);
+  assert.equal((await fast.json()).thread.id, other); assert.equal(fast.headers.get('etag'), `"${other}"`);
+  release(); const original = await first;
+  assert.equal((await original.json()).thread.id, thread); assert.equal(original.headers.get('etag'), `"${thread}"`);
+  const validated = await fetch(`${origin}/api/threads/${other}`, { headers: { 'If-None-Match': `"${other}"` } });
+  assert.equal(validated.status, 304); assert.equal(await validated.text(), '');
+  const rejected = await fetch(`${origin}/api/threads/${other}?reject=1`);
+  assert.equal(rejected.status, 502); assert.equal((await rejected.json()).code, 'DESKTOP_REJECTED');
+  assert.equal(connector.status().connected, true); assert.equal(relay.devices.get('desktop'), connection);
+});
+
 test('connector capacity rejects only the excess request and recovers after completion', async t => {
   let release, entered;
   const blocked = new Promise(resolve => { release = resolve; });

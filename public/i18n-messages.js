@@ -1,5 +1,6 @@
 // Built-in interface copy only. Never translate user messages, code, paths or names.
 export const messages = {
+  "电脑返回的数据不完整，请刷新重试": "The computer returned incomplete data. Refresh to try again.",
   "归档当前会话": "Archive conversation",
   "界面语言": "Interface language",
   "登录已过期，草稿已保留。": "Your login expired. Your drafts are saved.",

@@ -103,6 +103,20 @@ export function createApi({ fetchImpl = fetch, headers = {}, onSnapshot = () => 
     }
   }
 
+  function invalidResponse(method, code = "RESPONSE_INVALID", message = "电脑返回的数据不完整，请刷新重试") {
+    return Object.assign(new Error(method === "GET" ? message : "提交结果尚未确认，请先核对送达回执"), {
+      code: method === "GET" ? code : "DELIVERY_UNKNOWN", status: method === "GET" ? 502 : 409
+    });
+  }
+  function validateBody(path, body, method) {
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw invalidResponse(method);
+    const match = /^\/api\/threads\/([0-9a-f-]+)(?:\?|$)/i.exec(path);
+    if (method === "GET" && match) {
+      if (body.thread?.id !== match[1]) throw invalidResponse(method, "THREAD_MISMATCH", "返回的会话与请求不匹配，已有内容和草稿仍保留。");
+      if (!Array.isArray(body.turns)) throw invalidResponse(method);
+    }
+  }
+
   async function send(path, options) {
     return fetchImpl(path, {
       ...options,
@@ -148,10 +162,18 @@ export function createApi({ fetchImpl = fetch, headers = {}, onSnapshot = () => 
       error.status = 409;
       throw error;
     }
-    if (response.status === 304 && cached && snapshotGeneration === cacheGeneration) { const body = structuredClone(cached.body); onSnapshot(path, body); return body; }
+    if (response.status === 304 && cached && snapshotGeneration === cacheGeneration) {
+      const etag = response.headers?.get?.("etag");
+      if (etag && etag !== cached.etag) throw invalidResponse(method);
+      const body = structuredClone(cached.body); validateBody(path, body, method); onSnapshot(path, body); return body;
+    }
     if (response.status === 304) response = await send(path, options);
     let body;
-    try { body = await response.json(); } catch { body = {}; }
+    try { body = await response.json(); } catch (error) {
+      if (error.name === "AbortError" || options.signal?.aborted) throw error;
+      if (response.ok || response.status === 304) throw invalidResponse(method);
+      body = {};
+    }
     if (response.status === 401 && body.code === "LOGIN_REQUIRED") {
       clearSnapshots();
       loginRequired = true;
@@ -160,7 +182,11 @@ export function createApi({ fetchImpl = fetch, headers = {}, onSnapshot = () => 
       clearSnapshots();
       if (generation === sessionGeneration) await refreshSession();
       response = await send(path, options);
-      try { body = await response.json(); } catch { body = {}; }
+      try { body = await response.json(); } catch (error) {
+        if (error.name === "AbortError" || options.signal?.aborted) throw error;
+        if (response.ok || response.status === 304) throw invalidResponse(method);
+        body = {};
+      }
       if (response.status === 401 && body.code === "LOGIN_REQUIRED") { loginRequired = true; onLoginRequired(); }
     }
     if (!response.ok) {
@@ -181,6 +207,7 @@ export function createApi({ fetchImpl = fetch, headers = {}, onSnapshot = () => 
       error.status = response.status;
       throw error;
     }
+    validateBody(path, body, method);
     if (conditional && snapshotGeneration === cacheGeneration) saveSnapshot(path, response.headers?.get?.("etag"), body);
     if (method === "GET") onSnapshot(path, body);
     return body;

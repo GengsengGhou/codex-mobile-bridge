@@ -122,9 +122,19 @@ export class DesktopBridge {
     // Read it here, but normalizeThread only forwards the recognized input, never arbitrary outputs.
     const args = { threadId: id, hostId: 'local', turnLimit, includeOutputs: true, maxOutputCharsPerItem: 20000 };
     if (cursor) args.cursor = cursor;
-    const data = await this.call('read_thread', args);
-    if (data.thread?.id !== id || !Array.isArray(data.turns)) throw new BridgeError('桌面返回了不匹配的任务', 'PROTOCOL_ERROR', 502);
+    let data, outputsAvailable = true;
+    try { data = await this.call('read_thread', args); }
+    catch (error) {
+      // Some desktop histories fail only while hydrating raw tool outputs.
+      // Retry this read once without outputs; never relax identity/shape checks,
+      // retry protocol faults, or use this path for mutations.
+      if (error.code !== 'DESKTOP_REJECTED') throw error;
+      data = await this.call('read_thread', { ...args, includeOutputs: false });
+      outputsAvailable = false;
+    }
+    if (data?.thread?.id !== id || !Array.isArray(data.turns)) throw new BridgeError('桌面返回了不匹配的任务', 'PROTOCOL_ERROR', 502);
     const normalized = normalizeThread(data);
+    if (!outputsAvailable) normalized.outputsAvailable = false;
     const project = projectForThread(data.thread, await this.sidebarMetadata());
     // A singleton read cannot rank the complete sidebar. Keep the fresh list's
     // computed ranks when the frontend merges transcript metadata into it.
@@ -136,7 +146,7 @@ export class DesktopBridge {
     // Eligibility and connection probes need fresh native thread metadata, not
     // transcript/tool output hydration. Preserve the same identity checks.
     const data = await this.call('read_thread', { threadId: id, hostId: 'local', turnLimit: 1, includeOutputs: false });
-    if (data.thread?.id !== id || !Array.isArray(data.turns)) throw new BridgeError('桌面返回了不匹配的任务', 'PROTOCOL_ERROR', 502);
+    if (data?.thread?.id !== id || !Array.isArray(data.turns)) throw new BridgeError('桌面返回了不匹配的任务', 'PROTOCOL_ERROR', 502);
     const normalized = normalizeThread({ thread: data.thread, turns: [] });
     const project = projectForThread(data.thread, await this.sidebarMetadata());
     delete project.projectThreadOrder; delete project.projectOrder;

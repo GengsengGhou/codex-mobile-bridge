@@ -362,6 +362,7 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
         const cursor = url.searchParams.get('cursor');
         if (cursor?.length > 4096) throw new BridgeError('分页参数过长', 'INVALID_REQUEST', 400);
         const data = await bridge.read(id, cursor);
+        if (data?.thread?.id !== id || !Array.isArray(data.turns)) throw new BridgeError('桌面返回了不匹配的任务', 'PROTOCOL_ERROR', 502);
         json(res, 200, { ...data, ...sendAccess(data.thread), ...managementAccess(data.thread) }); return;
       }
       if (req.method !== 'POST' || !match[2] || match[3]) throw new BridgeError('不支持的操作', 'METHOD_NOT_ALLOWED', 405);

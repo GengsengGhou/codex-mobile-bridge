@@ -76,16 +76,23 @@ export function reconcileOptimisticMessages(pending, turns) {
   });
 }
 
-export function mergeTranscriptTurns(previous, incoming, { latest = true } = {}) {
+export function mergeTranscriptTurns(previous, incoming, { latest = true, outputsAvailable = true } = {}) {
   const turns = new Map((Array.isArray(previous) ? previous : []).map(turn => [String(turn.id), turn]));
   const owners = new Map();
   for (const turn of turns.values()) for (const item of turn.items || []) {
     if (item.type === "userMessage" && item.id != null && String(item.id)) owners.set(String(item.id), String(turn.id));
   }
   const updates = (Array.isArray(incoming) ? incoming : []).filter(turn => turn?.id != null);
-  for (const turn of updates) {
+  for (let turn of updates) {
     const id = String(turn.id);
     if (!latest && turns.has(id)) continue;
+    if (!outputsAvailable && turns.has(id)) {
+      const items = turn.items || [];
+      const present = new Set(items.map(item => item.id));
+      const retained = (turns.get(id).items || []).filter(item => item.type === "userMessage" && item.source === "desktop-bridge"
+        && item.id != null && !present.has(item.id));
+      if (retained.length) turn = { ...turn, items: [...retained, ...items] };
+    }
     for (const item of turn.items || []) {
       if (item.type === "userMessage" && item.id != null && String(item.id) && (latest || !owners.has(String(item.id)))) owners.set(String(item.id), id);
     }

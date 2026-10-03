@@ -2,6 +2,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { reconcileOptimisticMessages, mergeTranscriptTurns } from "../public/conversation-state.js";
 
+test('only known injected user items survive an output-free snapshot, while normal messages follow native revisions', () => {
+  const injected = { id: 'injected', type: 'userMessage', source: 'desktop-bridge', text: 'Known input' };
+  const old = [{ id: 'turn', items: [injected, { id: 'normal', type: 'userMessage', text: 'Removed native input' }, { id: 'reply', type: 'agentMessage', text: 'Old reply' }] }];
+  const incoming = [{ id: 'turn', items: [{ id: 'reply', type: 'agentMessage', text: 'Fresh reply' }] }];
+  const reduced = mergeTranscriptTurns(old, incoming, { outputsAvailable: false });
+  assert.deepEqual(reduced[0].items, [injected, incoming[0].items[0]]);
+  assert.deepEqual(mergeTranscriptTurns(old, incoming)[0].items, incoming[0].items);
+  const moved = mergeTranscriptTurns(old, [...incoming, { id: 'new', items: [injected] }], { outputsAvailable: false });
+  assert.equal(moved.flatMap(turn => turn.items).filter(item => item.id === 'injected').length, 1);
+  assert.equal(moved[1].items[0].id, 'injected');
+  assert.deepEqual(mergeTranscriptTurns([], incoming, { outputsAvailable: false }), incoming);
+});
+
 test("optimistic messages clear only when a new matching desktop user item appears", () => {
   const pending = [
     { requestId: "one", prompt: "same text", baselineKeys: ["old\u001fprevious"] },
