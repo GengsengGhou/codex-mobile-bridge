@@ -20,6 +20,7 @@
 - [远程使用条件](remote-readiness.md)：电脑状态、连接恢复和各项能力的验证状态。
 - [会话上下文与权限](thread-context-permissions.md)：上下文展示及下一轮权限覆盖。
 - [历史与会话同步](history-sync.md)、[侧栏排序](desktop-sidebar-order.md)：会话列表与历史行为。
+- [上传存储](upload-storage.md)：按工作目录配置附件位置、迁移与文件访问边界。
 - [Hub 前端](hub-frontend.md)：服务页面结构。
 - [Codex App Server 协议记录](protocol-notes.md)：已安装 CLI 的只读协议探查及其局限。
 

@@ -33,6 +33,25 @@ test('uploads raw bytes without sending and builds an explicit attachment-only p
   assert.match(ui.uploads.snapshot(A, '').prompt, /请查看这些附件。.*附件：/s);
   assert.match(ui.uploads.snapshot(A, '').prompt, /\[note.txt\]\(<E:\/project\/mobile-uploads\//);
 });
+
+test('configured workspace receipts retain logical IDs and build the physical attachment link', async t => {
+  const ui = setup(t, path => {
+    const value = receipt(path);
+    return respond({ ...value, workspacePath: `project/${value.path}`, absolutePath: `E:/project/project/${value.path}` });
+  });
+  await ui.uploads.add([file()]); await settle(() => ui.uploads.getItems(A)[0]?.state === 'ready');
+  assert.match(ui.uploads.snapshot(A, 'draft').prompt, /E:\/project\/project\/mobile-uploads\//);
+});
+
+test('configured receipts reject workspace escape, absolute paths, wrong suffix and forged physical paths', async t => {
+  for (const directory of ['../project', '/project', 'C:/outside', 'nested/../project', 'nested\\project', '']) {
+    const ui = setup(t, path => { const value = receipt(path); return respond({ ...value, workspacePath: `${directory}/${value.path}`, absolutePath: `E:/project/${directory}/${value.path}` }); });
+    await ui.uploads.add([file()]); await settle(() => ui.uploads.getItems(A)[0]?.state === 'unknown');
+    assert.equal(ui.uploads.snapshot(A, 'draft'), null);
+  }
+  const ui = setup(t, path => { const value = receipt(path); return respond({ ...value, workspacePath: `project/${value.path}`, absolutePath: `E:/outside/project/${value.path}` }); });
+  await ui.uploads.add([file()]); await settle(() => ui.uploads.getItems(A)[0]?.state === 'unknown');
+});
 test('late uploads stay in the original thread and captured removals preserve newer files', async t => {
   let finish;
   const ui = setup(t, path => new Promise(resolve => { finish = () => resolve(respond(receipt(path))); }));

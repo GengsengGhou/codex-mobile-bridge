@@ -9,6 +9,13 @@ export const UPLOAD_LIMIT = 20 * 1024 * 1024;
 const fail = (message, code = 'UPLOAD_FORBIDDEN', status = 403) => { throw new BridgeError(message, code, status); };
 const unavailable = () => new BridgeError('上传记录无法安全读取或保存', 'UPLOAD_STORE_UNAVAILABLE', 503);
 const inside = (root, candidate) => { const relative = path.relative(root, candidate); return !relative || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`)); };
+const storageFor = entry => entry.storagePath ?? path.join(entry.cwd, 'mobile-uploads');
+const workspacePathFor = entry => path.relative(entry.cwd, path.join(storageFor(entry), entry.uploadId, entry.name)).split(path.sep).join('/');
+function validStorage(cwd, storage) {
+  if (typeof storage !== 'string' || !path.isAbsolute(storage) || storage !== path.resolve(storage) || storage === cwd || !inside(cwd, storage) || path.basename(storage) !== 'mobile-uploads') return false;
+  try { for (const segment of path.relative(cwd, storage).split(path.sep)) safeName(segment); } catch { return false; }
+  return true;
+}
 function safeName(name) {
   if (typeof name !== 'string' || !name || name.length > 180 || Buffer.byteLength(name) > 240 || /[\x00-\x1f\x7f\\/:<>"|?*]/.test(name) || /^[. ]|[. ]$/.test(name) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name) || /^(?:credentials|secrets?|id_(?:rsa|dsa|ecdsa|ed25519))(?:\.|$)/i.test(name) || /^(?:node_modules|system volume information|\$recycle\.bin)$/i.test(name) || /\.(?:pem|key|p12|pfx|keystore)$/i.test(name)) fail('文件名无效或不允许上传', 'INVALID_UPLOAD', 400);
   return name;
@@ -27,8 +34,9 @@ function validateJournal(data) {
   for (const e of data.uploads) {
     if (!e || !UUID.test(e.uploadId ?? '') || !UUID.test(e.threadId ?? '') || entries.has(e.uploadId) || !['pending', 'uploaded'].includes(e.state) || !path.isAbsolute(e.cwd ?? '') || !path.isAbsolute(e.rootReal ?? '') || !Number.isInteger(e.size) || e.size < 0 || e.size > UPLOAD_LIMIT || !/^[a-f0-9]{64}$/.test(e.sha256 ?? '') || !Number.isFinite(Date.parse(e.createdAt))) throw unavailable();
     try { safeName(e.name); } catch { throw unavailable(); }
+    if (e.storagePath !== undefined && !validStorage(e.cwd, e.storagePath)) throw unavailable();
     if (e.directoryIdentity != null && (typeof e.directoryIdentity !== 'string' || !/^\d+$/.test(e.directoryIdentity))) throw unavailable();
-    if (e.state === 'uploaded' && (e.receipt?.uploaded !== true || e.receipt.uploadId !== e.uploadId || e.receipt.threadId !== e.threadId || e.receipt.name !== e.name || e.receipt.size !== e.size || e.receipt.sha256 !== e.sha256 || e.receipt.path !== `mobile-uploads/${e.uploadId}/${e.name}` || e.receipt.absolutePath !== path.join(e.cwd, 'mobile-uploads', e.uploadId, e.name) || !Number.isFinite(Date.parse(e.receipt.uploadedAt)))) throw unavailable();
+    if (e.state === 'uploaded' && (e.receipt?.uploaded !== true || e.receipt.uploadId !== e.uploadId || e.receipt.threadId !== e.threadId || e.receipt.name !== e.name || e.receipt.size !== e.size || e.receipt.sha256 !== e.sha256 || e.receipt.path !== `mobile-uploads/${e.uploadId}/${e.name}` || e.receipt.absolutePath !== path.join(storageFor(e), e.uploadId, e.name) || (e.receipt.workspacePath !== undefined && e.receipt.workspacePath !== workspacePathFor(e)) || (e.storagePath && workspacePathFor(e) !== e.receipt.path && e.receipt.workspacePath !== workspacePathFor(e)) || !Number.isFinite(Date.parse(e.receipt.uploadedAt)))) throw unavailable();
     entries.set(e.uploadId, structuredClone(e)); total += e.size;
   }
   if (total > 1024 * 1024 * 1024) throw unavailable();
@@ -83,12 +91,41 @@ async function workspace(thread) {
   if (!stat.isDirectory() || stat.isSymbolicLink()) fail('工作目录不允许上传');
   return { cwd, rootReal: await realpath(cwd) };
 }
+// Local-only configuration; it never changes the conversation's actual workspace.
+async function configuredStorage(current, store) {
+  if (!store.path) return path.join(current.cwd, 'mobile-uploads');
+  const configPath = path.join(path.dirname(store.path), 'upload-locations.json');
+  let config;
+  try {
+    const stat = await lstat(configPath);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw unavailable();
+    config = JSON.parse(await readFile(configPath, 'utf8'));
+  } catch (error) { if (error.code === 'ENOENT') return path.join(current.cwd, 'mobile-uploads'); throw unavailable(); }
+  if (config?.version !== 1 || !Array.isArray(config.locations) || config.locations.length > 100) throw unavailable();
+  const seen = new Set(); let storage = path.join(current.cwd, 'mobile-uploads');
+  for (const location of config.locations) {
+    if (!location || !path.isAbsolute(location.cwd ?? '') || location.cwd !== path.resolve(location.cwd) || seen.has(location.cwd) || typeof location.directory !== 'string' || !location.directory || location.directory.includes('\\') || location.directory.split('/').some(segment => !segment || segment === '.' || segment === '..' || /[\x00-\x1f\x7f:<>"|?*]/.test(segment))) throw unavailable();
+    seen.add(location.cwd);
+    const candidate = path.resolve(location.cwd, location.directory);
+    if (!validStorage(location.cwd, candidate)) throw unavailable();
+    if (location.cwd === current.cwd) storage = candidate;
+  }
+  return storage;
+}
 async function directory(entry, create = false, store) {
   const current = await workspace({ kind: 'codex', hostId: 'local', cwd: entry.cwd });
   if (current.rootReal !== entry.rootReal) fail('会话工作目录已改变', 'UPLOAD_WORKSPACE_CHANGED', 409);
-  const parent = path.join(entry.cwd, 'mobile-uploads'), destination = path.join(parent, entry.uploadId);
-  if (create) {
-    try { await mkdir(parent); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+  const parent = storageFor(entry), destination = path.join(parent, entry.uploadId);
+  if (!validStorage(entry.cwd, parent)) fail('上传目录不允许访问');
+  let ancestor = entry.cwd;
+  // Check each ancestor, not just the final parent: an internal junction is also forbidden.
+  for (const segment of path.relative(entry.cwd, parent).split(path.sep)) {
+    ancestor = path.join(ancestor, segment);
+    if (create) {
+      try { await mkdir(ancestor); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+    }
+    const stat = await lstat(ancestor);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !inside(entry.rootReal, await realpath(ancestor))) fail('上传目录不允许访问');
   }
   const parentStat = await lstat(parent);
   if (!parentStat.isDirectory() || parentStat.isSymbolicLink() || !inside(entry.rootReal, await realpath(parent))) fail('上传目录不允许访问');
@@ -119,10 +156,26 @@ async function finalState(entry, file) {
   } finally { await handle.close(); }
 }
 function receiptFor(entry) {
-  return { uploaded: true, uploadId: entry.uploadId, threadId: entry.threadId, name: entry.name, size: entry.size, sha256: entry.sha256, path: `mobile-uploads/${entry.uploadId}/${entry.name}`, absolutePath: path.join(entry.cwd, 'mobile-uploads', entry.uploadId, entry.name), uploadedAt: entry.createdAt };
+  const logical = `mobile-uploads/${entry.uploadId}/${entry.name}`, workspacePath = workspacePathFor(entry);
+  return { uploaded: true, uploadId: entry.uploadId, threadId: entry.threadId, name: entry.name, size: entry.size, sha256: entry.sha256, path: logical, ...(workspacePath !== logical ? { workspacePath } : {}), absolutePath: path.join(storageFor(entry), entry.uploadId, entry.name), uploadedAt: entry.createdAt };
 }
 export class UploadManager {
   constructor(store) { this.store = store; this.busy = new Set(); }
+  mayResolveFilePath(input) {
+    return typeof input === 'string' && /(?:^|[\\/])mobile-uploads[\\/][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[\\/][^\\/]+(?::\d+(?::\d+)?)?$/i.test(input);
+  }
+  async resolveFilePath(thread, input) {
+    if (typeof input !== 'string' || /[\x00-\x1f]|(^|[\\/])\.\.([\\/]|$)/.test(input)) return input;
+    input = input.replace(/:\d+(?::\d+)?$/, '');
+    const relative = path.isAbsolute(input) ? path.relative(path.resolve(thread.cwd ?? ''), input) : input;
+    const match = relative.replace(/\\/g, '/').match(/^mobile-uploads\/([0-9a-f-]+)\/([^/]+)$/i);
+    if (!match || !UUID.test(match[1])) return input;
+    const entry = await this.store.get(match[1]);
+    if (!entry?.storagePath || entry.threadId !== thread.id || entry.name !== match[2]) return input;
+    // History previews also work for archived threads; file access still verifies the real cwd.
+    const result = await this.lookup({ ...thread, archived: false }, match[1]);
+    return result.state === 'uploaded' ? result.receipt.absolutePath : input;
+  }
   async lookup(thread, uploadId) {
     try {
       const current = await workspace(thread);
@@ -156,7 +209,8 @@ export class UploadManager {
         if (entry.threadId !== thread.id || entry.name !== meta.name || entry.size !== meta.size || entry.sha256 !== meta.sha256) fail('上传 ID 已用于其他文件', 'UPLOAD_CONFLICT', 409);
         if (entry.cwd !== current.cwd || entry.rootReal !== current.rootReal) fail('会话工作目录已改变', 'UPLOAD_WORKSPACE_CHANGED', 409);
       } else {
-        entry = { ...meta, ...current, uploadId, threadId: thread.id, state: 'pending', createdAt: new Date().toISOString(), directoryIdentity: null };
+        const storagePath = await configuredStorage(current, this.store);
+        entry = { ...meta, ...current, storagePath, uploadId, threadId: thread.id, state: 'pending', createdAt: new Date().toISOString(), directoryIdentity: null };
         await this.store.reserve(entry);
       }
       const paths = await directory(entry, true, this.store); entry = paths.entry;

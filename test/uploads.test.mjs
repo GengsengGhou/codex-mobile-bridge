@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, rename } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -24,10 +24,10 @@ async function waitForUploadState(f, uploadId, expected) {
 }
 async function fixture(t, options = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'bridge-upload-')), cwd = path.join(root, 'workspace'); await mkdir(cwd);
-  let thread = { id, kind: 'codex', hostId: 'local', status: 'idle', cwd }, server, base, headers;
+  let thread = { id, kind: 'codex', hostId: 'local', status: 'idle', cwd }, server, base, headers, reads = 0;
   const journal = path.join(root, 'uploads.json');
   const start = async () => {
-    const bridge = { callerThreadId: id, read: async () => ({ thread, turns: [] }), send: () => { throw Error('Uploads must not send chat'); } };
+    const bridge = { callerThreadId: id, read: async () => { reads++; return { thread, turns: [] }; }, send: () => { throw Error('Uploads must not send chat'); } };
     server = createBridgeServer({ bridge, enableSend: true, uploadStore: new UploadStore({ path: journal }), ...options });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${server.address().port}`;
@@ -48,7 +48,7 @@ async function fixture(t, options = {}) {
     request.on('error', reject);
     return { request, done };
   };
-  return { root, cwd, journal, meta, post, get, raw, setThread: value => { thread = value; }, thread, url, get headers() { return headers; }, restart: async () => { await stop(); await start(); } };
+  return { root, cwd, journal, meta, post, get, raw, setThread: value => { thread = value; }, thread, url, get reads() { return reads; }, get headers() { return headers; }, restart: async () => { await stop(); await start(); } };
 }
 test('uploads require authentication, write scope and genuine local writable thread', async t => {
   const f = await fixture(t), bytes = Buffer.from('hello'), uploadId = randomUUID();
@@ -176,4 +176,100 @@ test('upload journal caps reserved IDs and total declared bytes', async () => {
   const ids = new UploadStore({ path: null });
   for (let i = 0; i < 500; i++) await ids.reserve({ ...entry(i), size: 0 });
   await assert.rejects(ids.reserve({ ...entry(500), size: 0 }), error => error.code === 'UPLOAD_LIMIT_REACHED');
+});
+
+test('workspace upload overrides remain inside cwd and durable IDs retain their original location', async t => {
+  const f = await fixture(t), bytes = Buffer.from('override'), uploadId = randomUUID();
+  const config = path.join(f.root, 'upload-locations.json');
+  await writeFile(config, JSON.stringify({ version: 1, locations: [{ cwd: f.cwd, directory: 'project/mobile-uploads' }] }));
+  const response = await f.post(uploadId, bytes); assert.equal(response.status, 200);
+  const receipt = await response.json();
+  assert.equal(receipt.path, `mobile-uploads/${uploadId}/attachment.bin`);
+  assert.equal(receipt.workspacePath, `project/${receipt.path}`);
+  assert.equal(receipt.absolutePath, path.join(f.cwd, 'project', receipt.path));
+  assert.deepEqual(await readdir(f.cwd), ['project']);
+  await writeFile(config, JSON.stringify({ version: 1, locations: [] })); await f.restart();
+  assert.deepEqual((await (await f.get(uploadId)).json()).receipt, receipt);
+  assert.deepEqual(await (await f.post(uploadId, bytes)).json(), receipt);
+  const standard = await (await f.post(randomUUID(), bytes)).json();
+  assert.equal(standard.workspacePath, undefined);
+  assert.equal(standard.absolutePath, path.join(f.cwd, standard.path));
+});
+
+test('ordinary file metadata and download retain their original desktop read counts', async t => {
+  const f = await fixture(t), bytes = Buffer.from('ordinary file');
+  await writeFile(path.join(f.cwd, 'ordinary.txt'), bytes);
+  const endpoint = f.url(randomUUID()).split('/uploads/')[0] + '/file?';
+  const beforeInfo = f.reads;
+  const info = await fetch(endpoint + new URLSearchParams({ path: 'ordinary.txt', mode: 'info' }), { headers: f.headers });
+  assert.equal(info.status, 200); await info.json(); assert.equal(f.reads - beforeInfo, 1);
+  const beforeDownload = f.reads;
+  const download = await fetch(endpoint + new URLSearchParams({ path: 'ordinary.txt', mode: 'download' }), { headers: f.headers });
+  assert.equal(download.status, 200); assert.deepEqual(Buffer.from(await download.arrayBuffer()), bytes);
+  assert.equal(f.reads - beforeDownload, 2); // Original open-time identity recheck.
+});
+
+test('corrupt, escaping and linked upload override paths fail closed', async t => {
+  const f = await fixture(t), config = path.join(f.root, 'upload-locations.json');
+  for (const directory of ['../outside', '/outside', 'project/../mobile-uploads', 'project\\mobile-uploads', 'project//mobile-uploads']) {
+    await writeFile(config, JSON.stringify({ version: 1, locations: [{ cwd: f.cwd, directory }] }));
+    assert.equal((await f.post(randomUUID(), Buffer.from('x'))).status, 503, directory);
+    assert.deepEqual(await readdir(f.cwd), []);
+  }
+  const outside = path.join(f.root, 'outside'); await mkdir(outside);
+  await symlink(outside, path.join(f.cwd, 'project'), 'junction');
+  await writeFile(config, JSON.stringify({ version: 1, locations: [{ cwd: f.cwd, directory: 'project/mobile-uploads' }] }));
+  assert.equal((await f.post(randomUUID(), Buffer.from('x'))).status, 403);
+  assert.deepEqual(await readdir(outside), []);
+});
+
+test('legacy journal relocation preserves identity, retry and old history preview aliases', async t => {
+  const f = await fixture(t), uploadId = randomUUID(), bytes = Buffer.from('historical');
+  const old = await (await f.post(uploadId, bytes)).json();
+  const journal = JSON.parse(await readFile(f.journal, 'utf8'));
+  // An unmodified v1 journal continues to load without the new optional fields.
+  delete journal.uploads[0].storagePath;
+  await writeFile(f.journal, JSON.stringify(journal)); await f.restart();
+  assert.deepEqual((await (await f.get(uploadId)).json()).receipt, old);
+  const parent = path.join(f.cwd, 'project'); await mkdir(parent);
+  const storagePath = path.join(parent, 'mobile-uploads');
+  await rename(path.join(f.cwd, 'mobile-uploads'), storagePath);
+  const entry = journal.uploads[0]; entry.storagePath = storagePath;
+  entry.receipt = { ...old, workspacePath: `project/${old.path}`, absolutePath: path.join(storagePath, uploadId, old.name) };
+  await writeFile(f.journal, JSON.stringify(journal)); await f.restart();
+  assert.deepEqual((await (await f.get(uploadId)).json()).receipt, entry.receipt);
+  assert.deepEqual(await (await f.post(uploadId, bytes)).json(), entry.receipt);
+  for (const input of [old.path, old.absolutePath, `${old.absolutePath}:12:3`, entry.receipt.workspacePath]) {
+    const download = await fetch(f.url(uploadId).split('/uploads/')[0] + `/file?${new URLSearchParams({ path: input, mode: 'download' })}`, { headers: f.headers });
+    assert.equal(download.status, 200); assert.deepEqual(Buffer.from(await download.arrayBuffer()), bytes);
+  }
+  // Only the exact ledger-owned UUID/name/thread combination can alias an old path.
+  for (const input of [old.path.replace(uploadId, randomUUID()), old.path.replace(old.name, 'other.bin'), `prefix/${old.path}`]) {
+    const response = await fetch(f.url(uploadId).split('/uploads/')[0] + `/file?${new URLSearchParams({ path: input, mode: 'download' })}`, { headers: f.headers });
+    assert.notEqual(response.status, 200);
+  }
+  const otherId = randomUUID(); f.setThread({ ...f.thread, id: otherId });
+  const forbiddenAlias = await fetch(f.url(uploadId, {}, otherId).split('/uploads/')[0] + `/file?${new URLSearchParams({ path: old.absolutePath, mode: 'download' })}`, { headers: f.headers });
+  assert.notEqual(forbiddenAlias.status, 200); f.setThread(f.thread);
+  await writeFile(entry.receipt.absolutePath, 'tampered');
+  const changed = await fetch(f.url(uploadId).split('/uploads/')[0] + `/file?${new URLSearchParams({ path: old.absolutePath, mode: 'download' })}`, { headers: f.headers });
+  assert.equal(changed.status, 409);
+  assert.equal((await changed.json()).code, 'UPLOAD_FILE_CHANGED');
+  await writeFile(entry.receipt.absolutePath, bytes);
+  const originalDirectory = path.dirname(entry.receipt.absolutePath);
+  await rename(originalDirectory, `${originalDirectory}-saved`); await mkdir(originalDirectory);
+  await writeFile(entry.receipt.absolutePath, bytes);
+  const replaced = await f.get(uploadId); assert.equal(replaced.status, 409);
+  assert.equal((await replaced.json()).code, 'UPLOAD_UNKNOWN');
+});
+
+test('relocated journal refuses outside storage and mismatched workspace receipt paths', async t => {
+  const f = await fixture(t), bytes = Buffer.from('x');
+  await f.post(randomUUID(), bytes);
+  const original = JSON.parse(await readFile(f.journal, 'utf8'));
+  for (const change of [{ storagePath: f.root }, { receipt: { ...original.uploads[0].receipt, workspacePath: '../mobile-uploads/x' } }]) {
+    const journal = structuredClone(original); Object.assign(journal.uploads[0], change);
+    await writeFile(f.journal, JSON.stringify(journal)); await f.restart();
+    assert.equal((await f.get(journal.uploads[0].uploadId)).status, 503);
+  }
 });

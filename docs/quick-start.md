@@ -15,7 +15,7 @@
 
 ## 下载与校验
 
-稳定版为 v1.0.1。请从 [最新稳定版 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest) 下载所需文件和同一版本的 `SHA256SUMS`：
+稳定版为 v1.0.2。请从 [最新稳定版 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest) 下载所需文件和同一版本的 `SHA256SUMS`：
 
 | 文件 | 用途 |
 | --- | --- |

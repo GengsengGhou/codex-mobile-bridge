@@ -21,7 +21,9 @@ export function createUploads({ document, window, storage = window.sessionStorag
     const normalized = value => value.replace(/\\/g, "/").replace(/\/$/, "");
     const currentCwd = getThread(item.threadId)?.cwd || "";
     if (currentCwd && item.cwd && normalized(currentCwd) !== normalized(item.cwd)) return false;
-    const expected = (currentCwd || item.cwd) && `${normalized(currentCwd || item.cwd)}/${receipt?.path || ""}`;
+    const workspacePath = receipt?.workspacePath ?? receipt?.path;
+    if (typeof workspacePath !== "string" || /[\\\x00-\x1f\x7f:<>"|?*]/.test(workspacePath) || workspacePath.split('/').some(part => !part || part === '.' || part === '..') || (workspacePath !== receipt?.path && !workspacePath.endsWith(`/${receipt?.path}`))) return false;
+    const expected = (currentCwd || item.cwd) && `${normalized(currentCwd || item.cwd)}/${workspacePath}`;
     return receipt && receipt.uploaded === true && receipt.uploadId === item.uploadId && receipt.threadId === item.threadId
       && receipt.name === item.name && receipt.size === item.size && receipt.sha256 === item.sha256
       && receipt.path === `mobile-uploads/${item.uploadId}/${item.name}` && item.name !== ".." && !/[\\\r\n<>]/.test(receipt.path)

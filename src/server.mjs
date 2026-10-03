@@ -190,7 +190,13 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
         const input = url.searchParams.get('path') ?? '';
         if (fileMatch[2] === 'files') json(res, 200, await listThreadFiles(bridge, fileMatch[1], input));
         else {
-          const info = await serveThreadFile(bridge, fileMatch[1], input, url.searchParams.get('mode') ?? 'info', req, res);
+          let resolved = input;
+          if (uploads.mayResolveFilePath(input)) {
+            const { thread } = await bridge.read(fileMatch[1], undefined, { turnLimit: 1 });
+            if (thread?.id !== fileMatch[1]) throw new BridgeError('此会话没有可访问的本机工作目录', 'FILES_UNAVAILABLE', 403);
+            resolved = await uploads.resolveFilePath(thread, input);
+          }
+          const info = await serveThreadFile(bridge, fileMatch[1], resolved, url.searchParams.get('mode') ?? 'info', req, res);
           if (info) json(res, 200, info);
         }
         return;
