@@ -16,6 +16,7 @@
     <button id="settingsButton" class="icon-button" title="设置" aria-label="设置"><img src="../icons/settings.svg" alt=""></button>
   </header>
   <main>
+    <button id="updateNotice" class="secondary update-notice" hidden>发现新版本，可下载并升级。</button>
     <div id="feedback" class="feedback" role="status" hidden></div>
     <section id="pairingView">
       <div class="section-heading"><h1 id="pairingHeading">配对这台电脑</h1><button id="cancelPairing" class="text-button" hidden><img src="../icons/arrow-left.svg" alt="">返回连接</button></div>
@@ -48,6 +49,7 @@
       <div class="section-heading"><h1>设置</h1><button id="backSettings" class="icon-button" title="返回" aria-label="返回"><img src="../icons/arrow-left.svg" alt=""></button></div>
       <div class="settings-section"><label for="language">语言</label><select id="language"><option value="zh-CN">中文</option><option value="en">English</option></select></div>
       <div class="settings-section"><h2>连接</h2><label class="toggle-row" for="autoStart"><span>Windows 登录后自动连接</span><input id="autoStart" type="checkbox" role="switch"></label><button id="changeServer" class="text-button"><img src="../icons/link.svg" alt="">更换服务器</button></div>
+      <div class="settings-section"><h2>应用更新</h2><label class="toggle-row" for="automaticUpdates"><span>自动检查更新</span><input id="automaticUpdates" type="checkbox" role="switch" checked></label><dl class="diagnostics"><div><dt>当前版本</dt><dd id="currentVersion"></dd></div><div><dt>最新版本</dt><dd id="latestVersion"></dd></div><div><dt>上次检查</dt><dd id="lastUpdateCheck"></dd></div></dl><p id="updateMessage" class="muted" role="status"></p><div class="actions secondary-actions"><button id="checkUpdate" class="secondary">检查更新</button><button id="downloadUpdate" hidden>下载并升级</button></div><p class="muted">更新来自 GitHub 官方发布。升级会保留配对和设置。</p></div>
       <div class="settings-section"><div class="section-heading"><h2>诊断</h2><button id="copyDiagnostics" class="text-button"><img src="../icons/clipboard-paste.svg" alt="">复制</button></div><dl id="diagnostics" class="diagnostics"><div><dt>安装目录</dt><dd id="installDirectory"></dd></div><div><dt>WebView2</dt><dd id="webviewVersion"></dd></div><div><dt>连接状态</dt><dd id="diagnosticState"></dd></div></dl></div>
       <div class="settings-section settings-actions"><button id="openFolder" class="secondary"><img src="../icons/external-link.svg" alt="">打开安装目录</button><button id="uninstall" class="danger">卸载</button></div>
     </section>

@@ -5,6 +5,8 @@ using System.Drawing;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
+using System.Globalization;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
@@ -22,6 +24,7 @@ class ConnectorWindow : Form,IConnectorWindow {
     Form recoveryWindow;
     readonly object processLock=new object();readonly List<Process> activeReads=new List<Process>();
     int actionEpoch,uninstallRequests;string statusError,actionWarning;
+    bool updateInFlight,updateAutomatic=true;DateTime nextUpdateCheck=DateTime.MinValue;string notifiedVersion;
     readonly string lifecycleEvidence,statusEvidence,capturePath;readonly int qaDebugPort;
     public ConnectorWindow(string destination,string[] options) {
         root=destination;args=options;uninstallMode=Array.IndexOf(args,"--uninstall")>=0;
@@ -37,7 +40,7 @@ class ConnectorWindow : Form,IConnectorWindow {
         bool isolatedQa=!ConnectorBootstrap.IsDefaultRoot(root)&&Array.Exists(args,item=>item.StartsWith("--qa-",StringComparison.Ordinal));
         bool showTray=lifecycleEvidence!=null||(!isolatedQa&&capturePath==null);
         tray=new NotifyIcon{Icon=Icon,Text="Codex Mobile Bridge",ContextMenuStrip=menu,Visible=showTray};tray.DoubleClick+=(s,e)=>Wake();
-        timer.Interval=3000;timer.Tick+=async(s,e)=>await RefreshStatus();
+        timer.Interval=3000;timer.Tick+=async(s,e)=>{await RefreshStatus();if(!updateInFlight&&DateTime.UtcNow>=nextUpdateCheck)try{await CheckUpdate(false);}catch{}};
         FormClosing+=(s,e)=>{if(e.CloseReason==CloseReason.WindowsShutDown||e.CloseReason==CloseReason.TaskManagerClosing){exiting=true;timer.Stop();tray.Visible=false;return;}if(!exiting){e.Cancel=true;Hide();}};
         FormClosed+=(s,e)=>{timer.Stop();tray.Dispose();browser.Dispose();if(recoveryWindow!=null&&!recoveryWindow.IsDisposed)recoveryWindow.Close();};
         Shown+=async(s,e)=>await InitializeView();
@@ -91,6 +94,30 @@ class ConnectorWindow : Form,IConnectorWindow {
         catch(Exception error){if(epoch==actionEpoch){statusError=DesktopLocale.T("连接状态读取失败：")+error.Message;PublishStatus();}}
         finally {statusReadInFlight=false;if(refreshQueued&&!exiting&&!IsDisposed){refreshQueued=false;BeginInvoke(new Action(async()=>await RefreshStatus()));}}
     }
+    void PublishUpdate(Dictionary<string,object> result) {object state;if(!result.TryGetValue("update",out state)||!(state is Dictionary<string,object>))throw new Exception(DesktopLocale.T("后台响应无效。"));Post(new{type="update",update=state});var data=(Dictionary<string,object>)state;object available,version;if(data.TryGetValue("available",out available)&&available is bool&&(bool)available&&data.TryGetValue("latestVersion",out version)&&version is string&&notifiedVersion!=(string)version){notifiedVersion=(string)version;if(!Visible&&tray.Visible)tray.ShowBalloonTip(8000,Text,DesktopLocale.T("发现新版本，可在设置中下载并升级。"),ToolTipIcon.Info);}}
+    void ScheduleUpdate(Dictionary<string,object> state,bool enabledNow=false) {
+        object raw;updateAutomatic=!state.TryGetValue("automatic",out raw)||!(raw is bool)||(bool)raw;
+        string status=state.TryGetValue("status",out raw)?Convert.ToString(raw):"idle";
+        DateTime attempt;if(!state.TryGetValue("lastAttemptAt",out raw)||!DateTime.TryParse(Convert.ToString(raw),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out attempt))attempt=DateTime.UtcNow;
+        nextUpdateCheck=!updateAutomatic?DateTime.MaxValue:enabledNow?DateTime.UtcNow:attempt.ToUniversalTime().AddHours(status=="error"?1:24);
+        if(updateAutomatic&&status=="idle"&&!state.ContainsKey("lastAttemptAt"))nextUpdateCheck=DateTime.UtcNow;
+        RecordUpdateSchedule(status);
+    }
+    void RecordUpdateSchedule(string status) {string evidence=QaArgument("--qa-update-evidence");if(evidence!=null)File.AppendAllText(evidence,json.Serialize(new{observedAt=DateTime.UtcNow.ToString("o"),nextCheckAt=nextUpdateCheck.ToString("o"),automatic=updateAutomatic,status=status,inFlight=updateInFlight})+Environment.NewLine);}
+    async Task<Dictionary<string,object>> CheckUpdate(bool manual) {if(updateInFlight)throw new Exception(DesktopLocale.T("正在检查或下载更新，请稍后重试。"));updateInFlight=true;nextUpdateCheck=DateTime.MaxValue;RecordUpdateSchedule("checking");try{var result=await Run(new{action="check-update",manual=manual});PublishUpdate(result);ScheduleUpdate((Dictionary<string,object>)result["update"]);return result;}catch(Exception error){nextUpdateCheck=updateAutomatic?DateTime.UtcNow.AddHours(1):DateTime.MaxValue;RecordUpdateSchedule("error");Post(new{type="update",error=DesktopLocale.Diagnostic(error.Message)});throw;}finally{updateInFlight=false;}}
+    void LaunchVerifiedInstaller(Dictionary<string,object> result) {
+        if(busy||initializing||confirmingPair||uninstallPending||exiting)throw new Exception(DesktopLocale.T("正在完成上一操作，请稍后重试。"));
+        object verified;if(!result.TryGetValue("installerVerified",out verified)||!(verified is bool)||!(bool)verified)throw new Exception(DesktopLocale.T("后台响应无效。"));
+        string version=TextField(result,"installerVersion",40),digest=TextField(result,"installerSha256",64),path=TextField(result,"installerPath",4096);
+        object update;var state=result.TryGetValue("update",out update)?update as Dictionary<string,object>:null;object available,latest;if(state==null||!state.TryGetValue("available",out available)||!(available is bool)||!(bool)available||!state.TryGetValue("latestVersion",out latest)||!(latest is string)||(string)latest!=version)throw new Exception(DesktopLocale.T("后台响应无效。"));
+        if(!Regex.IsMatch(version,@"^\d+\.\d+\.\d+$")||!Regex.IsMatch(digest,@"^[a-f0-9]{64}$"))throw new Exception(DesktopLocale.T("安装包路径无效。"));
+        string directory=Path.GetFullPath(Path.Combine(root,".local","updates")),expected=Path.Combine(directory,"CodexMobileConnector-Setup-v"+version+".exe");
+        if(!string.Equals(Path.GetFullPath(path),expected,StringComparison.OrdinalIgnoreCase)||!File.Exists(expected))throw new Exception(DesktopLocale.T("安装包路径无效。"));
+        for(var cursor=new DirectoryInfo(directory);cursor!=null;cursor=cursor.Parent)if(cursor.Exists&&(cursor.Attributes&FileAttributes.ReparsePoint)!=0)throw new Exception(DesktopLocale.T("安装包路径无效。"));
+        if((File.GetAttributes(expected)&FileAttributes.ReparsePoint)!=0)throw new Exception(DesktopLocale.T("安装包路径无效。"));
+        using(var hash=SHA256.Create())using(var file=File.OpenRead(expected)){string actual=BitConverter.ToString(hash.ComputeHash(file)).Replace("-","").ToLowerInvariant();if(actual!=digest)throw new Exception(DesktopLocale.T("安装包校验失败，请重新下载。"));}
+        Process.Start(new ProcessStartInfo(expected,"--install-root \""+root+"\" --language "+DesktopLocale.Language){UseShellExecute=true});
+    }
     void Fields(Dictionary<string,object> fields,params string[] allowed){foreach(string key in fields.Keys)if(Array.IndexOf(allowed,key)<0)throw new Exception(DesktopLocale.T("请求字段无效。"));}
     string TextField(Dictionary<string,object> data,string key,int maximum){object value;if(!data.TryGetValue(key,out value)||!(value is string)||((string)value).Length>maximum)throw new Exception(DesktopLocale.T("请求内容无效。"));return (string)value;}
     bool BoolField(Dictionary<string,object> data,string key){object value;if(!data.TryGetValue(key,out value)||!(value is bool))throw new Exception(DesktopLocale.T("请求内容无效。"));return (bool)value;}
@@ -105,12 +132,16 @@ class ConnectorWindow : Form,IConnectorWindow {
             if(action=="ready") {
                 Fields(payload);if(ready)throw new Exception(DesktopLocale.T("界面已初始化。"));ready=true;result=new{language=DesktopLocale.Language,deviceName=Environment.MachineName,root=root,version=ConnectorBootstrap.Version,webviewVersion=browser.CoreWebView2.Environment.BrowserVersionString};
                 string displayEvidence=QaArgument("--qa-display-evidence");if(displayEvidence!=null)File.WriteAllText(displayEvidence,json.Serialize(new{windowDpi=ConnectorBootstrap.WindowDpi(this),perMonitorV2=ConnectorBootstrap.PerMonitorV2(),clientWidth=ClientSize.Width,clientHeight=ClientSize.Height,browserWidth=browser.ClientSize.Width,browserHeight=browser.ClientSize.Height,trayVisible=tray.Visible,webviewVersion=browser.CoreWebView2.Environment.BrowserVersionString,passwordAutosaveEnabled=browser.CoreWebView2.Settings.IsPasswordAutosaveEnabled,generalAutofillEnabled=browser.CoreWebView2.Settings.IsGeneralAutofillEnabled}));
-                SetBusy(true);Post(new{type="result",id=id,ok=true,result=result});
+                SetBusy(true);Post(new{type="result",id=id,ok=true,result=result});BeginInvoke(new Action(async()=>{try{await CheckUpdate(false);}catch{}}));
                 if(!uninstallMode){bool initialized=true;try{await Run(new{action="initialize",reason="view"});}catch(Exception error){initialized=false;statusError=error.Message;PublishStatus();}finally{initializing=false;SetBusy(false);}await RefreshStatus();if(Array.IndexOf(args,"--tray")>=0&&initialized&&Flag("paired")){try{await Mutate("connect",new Dictionary<string,object>(),"startup");}catch(Exception error){actionWarning=DesktopLocale.T("登录连接未完成，请明确重试连接：")+error.Message;PublishStatus();}await RefreshStatus();}timer.Start();if(Array.IndexOf(args,"--tray")>=0)Hide();}else{initializing=false;SetBusy(false);}
                 if(statusEvidence!=null){File.WriteAllText(statusEvidence,json.Serialize(new{paired=Flag("paired"),paused=Flag("paused"),windowStatus=StateText(),trayStatus=trayStatus.Text,trayTooltip=tray.Text,statusReadSucceeded=statusError==null,connectMenuEnabled=trayConnect.Enabled,retryAvailable=statusError!=null||(Flag("paired")&&!Flag("paused")&&(!Flag("hubConnected")||!Flag("bridgeConnected")))}));exiting=true;Close();}
                 if(lifecycleEvidence!=null)await VerifyLifecycle();return;
             }
             if(action=="set-language"){Fields(payload,"language");string selected=TextField(payload,"language",5);DesktopLocale.Save(root,selected);LocalizeTray();SetTray();result=new{language=DesktopLocale.Language};}
+            else if(action=="check-update"){Fields(payload,"manual");result=await CheckUpdate(BoolField(payload,"manual"));}
+            else if(action=="get-update-state"){Fields(payload);var data=await Run(new{action=action});PublishUpdate(data);ScheduleUpdate((Dictionary<string,object>)data["update"]);result=data;}
+            else if(action=="update-preferences"){Fields(payload,"automatic");bool wasEnabled=updateAutomatic;var data=await Run(new{action=action,automatic=BoolField(payload,"automatic")});PublishUpdate(data);ScheduleUpdate((Dictionary<string,object>)data["update"],!wasEnabled);result=data;}
+            else if(action=="download-update"){Fields(payload);if(updateInFlight)throw new Exception(DesktopLocale.T("正在检查或下载更新，请稍后重试。"));if(busy||initializing||confirmingPair||uninstallPending)throw new Exception(DesktopLocale.T("正在完成上一操作，请稍后重试。"));updateInFlight=true;try{var data=await Run(new{action=action},300000);PublishUpdate(data);var state=(Dictionary<string,object>)data["update"];ScheduleUpdate(state);object verified,error;if(data.TryGetValue("installerVerified",out verified)&&verified is bool&&(bool)verified)LaunchVerifiedInstaller(data);else if(!state.TryGetValue("error",out error)||!(error is string)||string.IsNullOrWhiteSpace((string)error))throw new Exception(DesktopLocale.T("后台响应无效。"));result=data;}finally{updateInFlight=false;}}
             else if(action=="status"){Fields(payload);await RefreshStatus();result=new{refreshed=true};}
             else if(action=="open-web"){Fields(payload,"origin","setup");string origin=ConnectorBootstrap.ValidatedHub(TextField(payload,"origin",2048));OpenExternal(origin+(BoolField(payload,"setup")?"?setup=connector":""));result=new{opened=true};}
             else if(action=="open-codex"){Fields(payload);try{ConnectorBootstrap.Open("codex://");}catch{throw new Exception(DesktopLocale.T("请从 Windows 开始菜单打开 Codex。"));}result=new{opened=true};}
@@ -152,13 +183,13 @@ class ConnectorWindow : Form,IConnectorWindow {
         } finally {if(epoch==actionEpoch){SetBusy(false);if(!exiting&&!IsDisposed)BeginInvoke(new Action(async()=>await RefreshStatus()));}}
     }
     async Task TrayAction(string action,Dictionary<string,object> payload=null){try{await Mutate(action,payload??new Dictionary<string,object>(),"manual");}catch(Exception error){DesktopDialog.Show(this,error.Message,Text,MessageBoxButtons.OK,MessageBoxIcon.Warning);}}
-    async Task<Dictionary<string,object>> Run(object request) {
+    async Task<Dictionary<string,object>> Run(object request,int timeout=30000) {
         return await Task.Run(()=>{
             var start=new ProcessStartInfo(Path.Combine(root,"runtime","node.exe"),"\""+Path.Combine(root,"scripts","connector-gui.mjs")+"\""){WorkingDirectory=root,UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=new UTF8Encoding(false),StandardErrorEncoding=new UTF8Encoding(false)};
             start.EnvironmentVariables.Remove("CODEX_APP_TOOLS_PIPE_PATH");
             ConnectorBootstrap.ClearRuntimeOverrides(start);
             Process child;lock(processLock){if(exiting)throw new Exception(DesktopLocale.T("连接器正在关闭。"));child=Process.Start(start);activeReads.Add(child);}
-            using(var process=child){try{process.StandardInput.Write(ConnectorBootstrap.RequestJson(request));process.StandardInput.Close();var stdout=process.StandardOutput.ReadToEndAsync();var stderr=process.StandardError.ReadToEndAsync();if(!process.WaitForExit(30000)){process.Kill();throw new Exception(DesktopLocale.T("操作超时，请重试并核对连接状态。"));}Task.WaitAll(stdout,stderr);var result=json.Deserialize<Dictionary<string,object>>(stdout.Result.Trim());if(result==null||!result.ContainsKey("ok")||!(result["ok"] is bool)||!(bool)result["ok"])throw new Exception(result!=null&&result.ContainsKey("error")?DesktopLocale.Diagnostic(Convert.ToString(result["error"])):DesktopLocale.T("后台响应无效。"));return result;}finally{lock(processLock)activeReads.Remove(process);}}
+            using(var process=child){try{process.StandardInput.Write(ConnectorBootstrap.RequestJson(request));process.StandardInput.Close();var stdout=process.StandardOutput.ReadToEndAsync();var stderr=process.StandardError.ReadToEndAsync();if(!process.WaitForExit(timeout)){process.Kill();throw new Exception(DesktopLocale.T("操作超时，请重试并核对连接状态。"));}Task.WaitAll(stdout,stderr);var result=json.Deserialize<Dictionary<string,object>>(stdout.Result.Trim());if(result==null||!result.ContainsKey("ok")||!(result["ok"] is bool)||!(bool)result["ok"])throw new Exception(result!=null&&result.ContainsKey("error")?DesktopLocale.Diagnostic(Convert.ToString(result["error"])):DesktopLocale.T("后台响应无效。"));return result;}finally{lock(processLock)activeReads.Remove(process);}}
         });
     }
     async Task VerifyLifecycle() {

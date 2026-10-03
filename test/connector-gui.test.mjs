@@ -26,6 +26,18 @@ const control = {
   completePairing:async()=>({superseded:false,intent:{paused:false,pauseScope:'none',autoStart:true,revision:'fixture'}}),
 };
 const guiCommand = (command,deps={}) => realGuiCommand(command,{control,...deps});
+test('update GUI actions route through independent updater without reading or changing connection state',async()=>{
+  const calls=[];
+  const result={update:{currentVersion:'1.0.0',latestVersion:'1.1.0',available:true,status:'available'}};
+  const deps={read:async()=>{throw Error('must not read pairing');},control:{read:async()=>{throw Error('must not read connection intent');}},
+    updater:{state:async()=>{calls.push('state');return result;},check:async options=>{calls.push(options);return result;},preferences:async automatic=>{calls.push(automatic);return result;},download:async()=>{calls.push('download');return {...result,installerVerified:true,installerPath:'fixture-only'};}}};
+  assert.deepEqual(await guiCommand({action:'get-update-state'},deps),result);
+  assert.deepEqual(await guiCommand({action:'check-update',manual:false},deps),result);
+  assert.deepEqual(await guiCommand({action:'check-update'},deps),result);
+  assert.deepEqual(await guiCommand({action:'update-preferences',automatic:false},deps),result);
+  assert.equal((await guiCommand({action:'download-update',installerPath:'evil.exe',hubOrigin:'https://evil.invalid'},deps)).installerPath,'fixture-only');
+  assert.deepEqual(calls,['state',{manual:false},{manual:true},false,'download']);
+});
 test('unpaired GUI status succeeds without probing a bridge or launching a controller',async()=>{
   let probed=false,launched=false;
   const status=await guiCommand({action:'status'},{read:async()=>null,probe:async()=>{probed=true;},watch:async()=>{launched=true;}});

@@ -1,6 +1,6 @@
 # Windows graphical connector
 
-中文下载与首次配对步骤见 [简易配置教程](quick-start.md#配对-windows-电脑)。v1.0.0 安装包和 SHA-256 清单可从[最新稳定版 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest)下载，无需 GitHub 令牌或桥接账号。下面记录安装器细节与构建验证。
+中文下载与首次配对步骤见 [简易配置教程](quick-start.md#配对-windows-电脑)。v1.0.1 安装包和 SHA-256 清单可从[最新稳定版 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest)下载，无需 GitHub 令牌或桥接账号。下面记录安装器细节与构建验证。
 
 Distribute `dist/CodexMobileConnector-Setup.exe` with its published SHA-256 checksum.
 The Windows x64 installer embeds the application, its `ws` dependency, Node.js,
@@ -80,6 +80,12 @@ HTTP server. Passive polling uses its own read guard and action epoch, never
 disables inputs or replaces drafts, and defers during mutations/confirmation.
 Initialization blocks mutations until intent is read while preserving editable
 inputs and browser handoff. Uninstall is gated centrally during pending mutations.
+
+## 检查更新与原位升级
+
+“设置”提供“自动检查更新”“检查更新”和“下载并升级”。自动检查默认开启，在启动与托盘运行期间按节流策略检查 GitHub 最新稳定版：正常检查间隔为 24 小时，检查失败后的自动重试间隔为 1 小时。手动检查可用于立即重试，即使自动检查已关闭；网络失败不会阻止当前连接器工作。检查版本不会改变配对、连接意图或登录启动设置，也不会自动执行升级。
+
+发现更高版本后，点击“下载并升级”。程序从官方项目 Release 下载 EXE 与校验清单，校验文件后打开原位安装界面，由你确认升级。不要在有待确认操作时开始升级；升级过程保留本机配对、运行配置、语言、登录启动偏好和主动断开状态。下载或校验失败不会启动安装器；仍可从最新 Release 手动下载并校验 EXE。
 
 ## 托盘、退出与登录启动
 

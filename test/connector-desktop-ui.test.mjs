@@ -90,3 +90,15 @@ test('partial enrollment retry remains connect-only until explicit recovery succ
   ui.$('retryButton').click();ui.answer(ui.calls.at(-1),{recoveryCompleted:false,paused:true});await tick();assert.match(ui.$('feedback').textContent,/Pending/);
   ui.$('retryButton').click();ui.answer(ui.calls.at(-1),{recoveryCompleted:true,paused:false});await tick();assert.equal(ui.$('feedback').hidden,true);assert.equal(ui.calls.filter(call=>call.action==='pair').length,0);assert.equal(ui.calls.filter(call=>call.action==='disconnect').length,0);
 });
+test('update failure and download controls remain independent of pairing drafts and connection errors',async t=>{
+  const ui=mount(t,{language:'en'});await tick();ui.send({type:'status',status:online,error:'Status fixture error'});
+  ui.$('settingsButton').click();ui.$('changeServer').click();ui.input('server','draft.example');ui.input('pairingCode','u'.repeat(43));ui.$('settingsButton').click();
+  ui.$('checkUpdate').click();const check=ui.calls.at(-1);assert.equal(check.action,'check-update');assert.equal(check.payload.manual,true);
+  assert.equal(ui.$('server').disabled,false);assert.equal(ui.$('pairButton').disabled,false);
+  ui.answer(check,'Offline update fixture',false);await tick();assert.equal(ui.$('updateMessage').textContent,'Offline update fixture');assert.equal(ui.$('feedback').textContent,'Status fixture error');assert.equal(ui.$('server').value,'draft.example');
+  ui.send({type:'update',update:{currentVersion:'1.0.0',latestVersion:'1.0.1',available:true,automatic:true,status:'available',lastCheckedAt:'2026-10-03T00:00:00Z'}});
+  assert.equal(ui.$('downloadUpdate').hidden,false);ui.$('downloadUpdate').click();const download=ui.calls.at(-1);assert.equal(download.action,'download-update');assert.deepEqual(Object.keys(download.payload),[]);
+  ui.answer(download,{update:{currentVersion:'1.0.0',latestVersion:'1.0.1',available:true,automatic:true,status:'ready'}});await tick();
+  ui.$('automaticUpdates').click();const preference=ui.calls.at(-1);assert.equal(preference.action,'update-preferences');assert.equal(preference.payload.automatic,false);
+  ui.answer(preference,{update:{automatic:false,status:'idle'}});await tick();assert.equal(ui.$('automaticUpdates').checked,false);
+});

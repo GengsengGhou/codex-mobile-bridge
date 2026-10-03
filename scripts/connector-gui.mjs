@@ -6,10 +6,18 @@ import { pairConnector, connectorConfigPath, hubOrigin, parsePairingInformation 
 import { chooseFreePort, probeLocalBridge } from './bootstrap-bridge.mjs';
 import { registerDeferredConnectorLogin, launchConnectorLoginWatcher } from './connector-login.mjs';
 import { createConnectorControl, stopOwnedConnectorProcesses } from './connector-control.mjs';
+import { createConnectorUpdater } from './connector-updates.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 export async function guiCommand(command, deps = {}) {
   const appRoot = deps.root || root;
+  if (['get-update-state', 'check-update', 'update-preferences', 'download-update'].includes(command.action)) {
+    const updater = deps.updater || createConnectorUpdater({ root: appRoot, ...deps.updateOptions });
+    if (command.action === 'get-update-state') return updater.state();
+    if (command.action === 'check-update') return updater.check({ manual: command.manual ?? true });
+    if (command.action === 'update-preferences') return updater.preferences(command.automatic);
+    return updater.download();
+  }
   const control = deps.control || createConnectorControl({ root: appRoot });
   const configPath = deps.configPath || connectorConfigPath;
   const read = deps.read || (async () => { try { return JSON.parse(await readFile(configPath, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; return null; } });

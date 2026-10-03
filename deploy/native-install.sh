@@ -40,7 +40,7 @@ systemctl is-active --quiet caddy
 if grep -RqF -- "$domain" /etc/caddy; then echo 'Domain already appears in Caddy configuration; review required.' >&2; exit 1; fi
 python3 - "$package" <<'PY'
 import sys, tarfile
-allowed = {'package.json', 'package-lock.json', 'README.md', 'hub', 'public', 'src', 'scripts', 'deploy', 'docs', 'node_modules'}
+allowed = {'package.json', 'package-lock.json', 'README.md', 'CHANGELOG.md', 'hub', 'public', 'src', 'scripts', 'deploy', 'docs', 'node_modules'}
 size = 0
 with tarfile.open(sys.argv[1], 'r:gz') as archive:
     for item in archive:
