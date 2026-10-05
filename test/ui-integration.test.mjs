@@ -1204,6 +1204,77 @@ test('available false preserves pending cards and prevents stale submission unti
   assert.equal(ui.requests.filter(call => call.path === `/api/threads/${A}/respond`).length, 0);
   ui.doc.querySelector('#refreshControl').click();
   await until(() => !ui.doc.querySelector('.pending-card'), 'fresh snapshot removes expired request');
+  assert.equal(ui.doc.querySelector('#controlState').hidden, true, 'successful empty snapshot clears the outage banner');
+  assert.equal(ui.doc.querySelector('#controlSummary').textContent, '');
+  assert.deepEqual(ui.errors, []);
+});
+
+test('manual control refresh preserves approvals and both drafts through outage and authentic pending recovery', async t => {
+  let reads = 0;
+  const question = {
+    requestId: 'recovery-question', token: 'recovery-token', kind: 'userInput', turnId: 'turn-1', title: 'Answer', actionable: true,
+    questions: [{ id: 'q1', header: 'Answer', question: 'Choose the next step', options: [], isOther: false, isSecret: false }]
+  };
+  const ui = await mount(t, call => {
+    if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', callerThreadId: A, defaultThreadId: A, executionControl: true });
+    if (call.path === `/api/threads/${A}/control`) {
+      if (++reads === 2) return response({ threadId: A, available: false, reason: 'Desktop control disconnected', pendingRequestCount: 0, pendingRequests: [] });
+      return response({ threadId: A, available: true, canStop: false, pendingRequestCount: 2, pendingRequests: [approvalRequest, question] });
+    }
+  }, { automaticClock: true });
+  await until(() => ui.doc.querySelectorAll('.pending-card').length === 2, 'approval and question');
+  const cards = [...ui.doc.querySelectorAll('.pending-card')];
+  const answer = cards[1].querySelector('textarea');
+  answer.value = 'Keep this answer'; answer.dispatchEvent(new ui.window.Event('input', { bubbles: true }));
+  const message = ui.doc.querySelector('#promptInput');
+  message.value = 'Keep this message'; message.dispatchEvent(new ui.window.Event('input'));
+  ui.doc.querySelector('#refreshControl').click();
+  await until(() => ui.doc.querySelector('#controlSummary').textContent === 'Desktop control disconnected', 'honest outage');
+  assert.equal(reads, 2, 'refresh reads control from the API');
+  assert.ok(cards.every(card => card.isConnected));
+  assert.equal(cards[0].querySelector('.pending-accept').disabled, true);
+  assert.equal(cards[0].querySelector('.pending-decline').disabled, true);
+  assert.equal(cards[1].querySelector('.pending-submit').disabled, true);
+  cards[0].querySelector('.pending-accept').click(); cards[1].querySelector('.pending-submit').click();
+  assert.equal(answer.value, 'Keep this answer'); assert.equal(message.value, 'Keep this message');
+  ui.doc.querySelector('#refreshControl').click();
+  await until(() => !cards[0].querySelector('.pending-accept').disabled, 'pending recovery');
+  assert.equal(reads, 3);
+  assert.ok(cards.every(card => card.isConnected));
+  assert.equal(cards[1].querySelector('.pending-submit').disabled, false);
+  assert.equal(ui.doc.querySelector('#controlState').hidden, false);
+  assert.ok(ui.doc.querySelector('#controlSummary').textContent.includes('2 项待处理交互'));
+  assert.ok(!ui.doc.querySelector('#controlSummary').textContent.includes('disconnected'));
+  assert.equal(answer.value, 'Keep this answer'); assert.equal(message.value, 'Keep this message');
+  assert.equal(ui.requests.filter(call => !['GET', undefined].includes(call.method)).length, 0, 'refresh and disabled replies never mutate');
+  assert.deepEqual(ui.errors, []);
+});
+
+test('late control recovery cannot replace the newly selected conversation or its pending interactions', async t => {
+  const late = deferred(); let alphaReads = 0;
+  const betaApproval = { ...approvalRequest, requestId: 'beta-approval', token: 'beta-token', title: 'Beta approval' };
+  const ui = await mount(t, call => {
+    if (call.path === '/api/status') return response({ connected: true, canSend: true, sendScope: 'all-local', callerThreadId: A, defaultThreadId: A, executionControl: true });
+    if (call.path === `/api/threads/${A}/control`) return ++alphaReads === 1
+      ? response({ threadId: A, available: false, reason: 'Alpha control disconnected', pendingRequestCount: 0 }) : late.promise;
+    if (call.path === `/api/threads/${B}/control`) return response({ threadId: B, available: true, canStop: false, pendingRequestCount: 1, pendingRequests: [betaApproval] });
+  }, { automaticClock: true });
+  await until(() => ui.doc.querySelector('#controlSummary').textContent === 'Alpha control disconnected', 'Alpha outage');
+  ui.doc.querySelector('#refreshControl').click();
+  await until(() => alphaReads === 2, 'Alpha recovery read');
+  [...ui.doc.querySelectorAll('.task-item')].find(row => row.textContent === 'Beta').click();
+  await until(() => ui.doc.querySelector('.pending-card')?.textContent.includes('Beta approval'), 'Beta selected and pending');
+  const message = ui.doc.querySelector('#promptInput');
+  message.value = 'Beta unsent message'; message.dispatchEvent(new ui.window.Event('input'));
+  const card = ui.doc.querySelector('.pending-card'), summary = ui.doc.querySelector('#controlSummary').textContent;
+  late.resolve(response({ threadId: A, available: true, canStop: false, pendingRequestCount: 0, pendingRequests: [] }));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(ui.doc.querySelector('#threadTitle').textContent, 'Beta');
+  assert.equal(ui.window.localStorage.getItem('codex-mobile-selected-thread'), B);
+  assert.equal(ui.doc.querySelector('.pending-card'), card);
+  assert.equal(ui.doc.querySelector('#controlSummary').textContent, summary);
+  assert.equal(message.value, 'Beta unsent message');
+  assert.equal(ui.requests.filter(call => !['GET', undefined].includes(call.method)).length, 0);
   assert.deepEqual(ui.errors, []);
 });
 

@@ -6,12 +6,27 @@ import { DesktopControl, controlFrame, summarizeSnapshot } from '../src/desktop-
 const ID = '00000000-0000-7000-8000-000000000001';
 const OWNER = '11111111-1111-1111-1111-111111111111';
 const CLIENT = '22222222-2222-2222-2222-222222222222';
-function fixture({ current = 'turn-1', mutation = 'success', canonical = false, requests = [], ownerError, snapshotVersion = 11, items = [], owner = OWNER, revision = 8, stateProperties = {} } = {}) {
+// Native receive fixtures encode independently: outbound controlFrame has a
+// deliberately smaller limit than desktop conversation snapshots.
+function nativeFrame(message, size) {
+  const payload = Buffer.from(typeof message === 'string' ? message : JSON.stringify(message));
+  const length = size ?? payload.length;
+  assert.ok(length >= payload.length);
+  const frame = Buffer.alloc(length + 4, 0x20);
+  frame.writeUInt32LE(length); payload.copy(frame, 4);
+  return frame;
+}
+function fixture({ current = 'turn-1', mutation = 'success', canonical = false, requests = [], ownerError, snapshotVersion = 11, items = [], owner = OWNER, revision = 8, stateProperties = {}, incoming = (_message, frame) => [frame], timeoutMs = 100 } = {}) {
   const messages = [], sockets = [];
   const connect = () => {
     const socket = new EventEmitter(); socket.destroyed = false; sockets.push(socket);
     socket.destroy = () => { if (!socket.destroyed) { socket.destroyed = true; queueMicrotask(() => socket.emit('close')); } };
-    const deliver = message => queueMicrotask(() => { if (!socket.destroyed) socket.emit('data', controlFrame(message)); });
+    const deliver = message => queueMicrotask(() => {
+      for (const chunk of incoming(message, nativeFrame(message))) {
+        if (socket.destroyed) break;
+        socket.emit('data', chunk);
+      }
+    });
     socket.write = frame => {
       const message = JSON.parse(frame.subarray(4)); messages.push(message);
       const response = result => deliver({ type: 'response', requestId: message.requestId, method: message.method, resultType: 'success', handledByClientId: typeof owner === 'function' ? owner() : owner, result });
@@ -32,8 +47,83 @@ function fixture({ current = 'turn-1', mutation = 'success', canonical = false, 
     };
     queueMicrotask(() => socket.emit('connect')); return socket;
   };
-  return { control: new DesktopControl({ connect, timeoutMs: 100 }), messages, sockets };
+  return { control: new DesktopControl({ connect, timeoutMs }), messages, sockets };
 }
+
+test('long native conversation frames recover the authentic turn and approval across fragmented and coalesced reads', async () => {
+  const privateHistory = 'private-history-'.repeat(650000);
+  const request = { id: 27, method: 'item/commandExecution/requestApproval', params: { threadId: ID, turnId: 'turn-1', command: 'npm test', cwd: 'E:/workspace' } };
+  let receivedBytes = 0;
+  const f = fixture({ items: [{ id: 'long-history', type: 'agentMessage', text: privateHistory }], requests: [request], timeoutMs: 1000,
+    incoming: (message, frame) => {
+      if (message.type !== 'broadcast') return [frame.subarray(0, 1), frame.subarray(1, 3), frame.subarray(3)];
+      receivedBytes = frame.readUInt32LE(0);
+      // Unrelated frames in the same read must not disturb owner validation.
+      const unrelated = nativeFrame({ type: 'broadcast', method: 'unrelated', params: {} });
+      const wrongOwner = nativeFrame({ ...message, sourceClientId: CLIENT });
+      const chunks = [Buffer.concat([unrelated, wrongOwner.subarray(0, 2)]), wrongOwner.subarray(2), frame.subarray(0, 1), frame.subarray(1, 3)];
+      for (let offset = 3; offset < frame.length; offset += 65537) chunks.push(frame.subarray(offset, offset + 65537));
+      chunks[chunks.length - 1] = Buffer.concat([chunks.at(-1), unrelated]);
+      return chunks;
+    }
+  });
+  const result = await f.control.snapshot(ID);
+  assert.ok(receivedBytes > 8 * 1024 * 1024 && receivedBytes < 32 * 1024 * 1024);
+  assert.equal(result.currentTurnId, 'turn-1'); assert.equal(result.ownerClientId, OWNER);
+  assert.equal(result.pendingRequests.length, 1); assert.equal(result.pendingRequests[0].requestId, 27);
+  assert.equal(result.pendingRequests[0].command, 'npm test'); assert.equal(result.pendingRequests[0].actionable, true);
+  assert.ok(!JSON.stringify(result).includes('private-history'));
+  assert.equal(f.messages.some(message => message.method.startsWith('thread-follower-')), false);
+  assert.ok(f.sockets.every(socket => socket.destroyed));
+});
+
+test('the inclusive native receive limit accepts a complete 32 MiB JSON frame', async () => {
+  const f = fixture({ timeoutMs: 2000, incoming: (message, frame) => message.type === 'broadcast'
+    ? [nativeFrame(message, 32 * 1024 * 1024)] : [frame] });
+  const result = await f.control.snapshot(ID);
+  assert.equal(result.currentTurnId, 'turn-1'); assert.equal(result.status, 'inProgress');
+  assert.ok(f.sockets.every(socket => socket.destroyed));
+});
+
+test('oversized headers, zero lengths and malformed frames fail safely and a fresh read can recover', async () => {
+  for (const [kind, code, reason] of [['oversize', 'CONTROL_FRAME_TOO_LARGE', 'frame-too-large'], ['zero', 'CONTROL_FRAME_INVALID', 'invalid-frame'], ['json', 'CONTROL_FRAME_INVALID', 'invalid-frame']]) {
+    let failOnce = true;
+    const f = fixture({ incoming: (message, frame) => {
+      if (message.type !== 'broadcast' || !failOnce) return [frame];
+      failOnce = false;
+      if (kind === 'json') return [nativeFrame('{private transcript and token')];
+      const header = Buffer.alloc(4); header.writeUInt32LE(kind === 'oversize' ? 32 * 1024 * 1024 + 1 : 0);
+      // No body follows: a rejected length must fail on the header alone.
+      return [header.subarray(0, 2), header.subarray(2)];
+    } });
+    await assert.rejects(f.control.snapshot(ID), error => {
+      assert.equal(error.code, code); assert.equal(error.status, 502);
+      assert.equal(error.controlDiagnostic.reason, reason); assert.equal(error.controlDiagnostic.phase, 'receive');
+      assert.doesNotMatch(JSON.stringify(error.controlDiagnostic), /private|transcript|token/);
+      return true;
+    });
+    assert.equal(f.sockets[0].destroyed, true);
+    assert.equal((await f.control.snapshot(ID)).currentTurnId, 'turn-1');
+    assert.equal(f.sockets.length, 2);
+    assert.equal(f.messages.some(message => message.method.startsWith('thread-follower-')), false);
+  }
+});
+
+test('a malformed reply after native mutation remains unknown delivery and is never retried', async () => {
+  const f = fixture({ incoming: (message, frame) => message.method === 'thread-follower-interrupt-turn'
+    ? [nativeFrame('{private malformed reply')] : [frame] });
+  await assert.rejects(f.control.stop(ID, 'turn-1'), { code: 'DELIVERY_UNKNOWN', status: 409 });
+  assert.equal(f.messages.filter(message => message.method === 'thread-follower-interrupt-turn').length, 1);
+  assert.equal(f.sockets.length, 1); assert.equal(f.sockets[0].destroyed, true);
+});
+
+test('outgoing requests retain their independent 8 MiB size bound', () => {
+  const limit = 8 * 1024 * 1024;
+  const prefixBytes = Buffer.byteLength(JSON.stringify({ text: '' }));
+  const accepted = controlFrame({ text: 'x'.repeat(limit - prefixBytes) });
+  assert.equal(accepted.readUInt32LE(0), limit);
+  assert.throws(() => controlFrame({ text: 'x'.repeat(limit - prefixBytes + 1) }), { code: 'INVALID_REQUEST', status: 400 });
+});
 
 test('continued async siblings move out of pending and cannot be submitted; native requests remain pending', async () => {
   const group = (id, count) => ({ type: 'agentMessage', id, questions: Array.from({ length: count }, () => ({ title: 'Choose', options: ['A'] })) });

@@ -15,6 +15,7 @@ async function fixture(t, { enableSend = true, sendScope = 'single', properties 
   let stops = 0, responses = 0;
   const control = {
     snapshot: async id => { if (controlError) throw Object.assign(new BridgeError('internal diagnostic', controlError, 503), { controlDiagnostic }); return { threadId: id, currentTurnId: 'turn-1', ownerClientId: 'private-owner', pendingRequests: [pending], historicalQuestions }; },
+    context: async id => control.snapshot(id),
     respond: async (id, body, { beforeDispatch }) => {
       if (body.token !== pending.token) throw new BridgeError('Changed request', 'REQUEST_CHANGED', 409);
       if (!body.answers) throw new BridgeError('Invalid answer', 'INVALID_REQUEST', 400);
@@ -32,6 +33,7 @@ async function fixture(t, { enableSend = true, sendScope = 'single', properties 
   const cookie = (await fetch(base)).headers.get('set-cookie').split(';')[0];
   const headers = { Cookie: cookie, 'X-Bridge-Client': 'mobile-v1', 'Content-Type': 'application/json' };
   return { stops: () => stops, responses: () => responses, read: id => fetch(`${base}/api/threads/${id}/control`, { headers }), readThread: id => fetch(`${base}/api/threads/${id}`, { headers }),
+    readContext: id => fetch(`${base}/api/threads/${id}/context`, { headers }),
     respond: (id = ID, body = { requestId: pending.requestId, token: pending.token, answers: { q: { answers: ['private answer'] } } }, extraHeaders = {}) => fetch(`${base}/api/threads/${id}/respond`, { method: 'POST', headers: { ...headers, ...extraHeaders }, body: JSON.stringify(body) }),
     stop: (id, body = { turnId: 'turn-1' }, extraHeaders = {}) => fetch(`${base}/api/threads/${id}/stop`, { method: 'POST', headers: { ...headers, ...extraHeaders }, body: JSON.stringify(body) }) };
 }
@@ -140,6 +142,29 @@ test('control compatibility and unloaded-owner failures leave conversation reads
     assert.equal(thread.thread.id, ID);
     assert.equal(thread.canSend, true);
     assert.equal(f.stops(), 0);
+  }
+});
+
+test('native frame failures expose honest bounded diagnostics while conversation reads remain available', async t => {
+  for (const [controlError, nativeReason, wording] of [
+    ['CONTROL_FRAME_TOO_LARGE', 'frame-too-large', /超过读取上限/],
+    ['CONTROL_FRAME_INVALID', 'invalid-frame', /数据格式无效/]
+  ]) {
+    const f = await fixture(t, { controlError, controlDiagnostic: {
+      reason: nativeReason, phase: 'receive', bytes: 33554433, limit: 33554432,
+      payload: 'private transcript and credential', method: 'private native method'
+    } });
+    for (const read of [f.read, f.readContext]) {
+      const result = await read(ID); assert.equal(result.status, 200);
+      const body = await result.json();
+      assert.equal(body.available, false); assert.equal(body.code, controlError); assert.equal(body.nativeReason, nativeReason);
+      assert.match(body.reason, wording); assert.equal(body.standby, undefined);
+      assert.equal(body.canStop === true, false);
+      assert.doesNotMatch(JSON.stringify(body), /private|credential|internal diagnostic|33554433|33554432/);
+    }
+    const thread = await (await f.readThread(ID)).json();
+    assert.equal(thread.thread.id, ID); assert.equal(thread.canSend, true);
+    assert.equal(f.stops(), 0); assert.equal(f.responses(), 0);
   }
 });
 

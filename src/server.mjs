@@ -28,8 +28,12 @@ function ownerStandby(error, thread) {
 }
 function controlReadDiagnostic(error) {
   const reason = error.controlDiagnostic?.reason;
-  const known = ['no-client-found', 'client-disconnected', 'server-closed', 'request-timeout', 'request-version-mismatch', 'no-handler-for-request', 'unknown-desktop-error'];
+  const known = ['no-client-found', 'client-disconnected', 'server-closed', 'request-timeout', 'request-version-mismatch', 'no-handler-for-request', 'unknown-desktop-error', 'frame-too-large', 'invalid-frame'];
   return typeof reason === 'string' ? { nativeReason: known.includes(reason) ? reason : 'unknown-desktop-error' } : {};
+}
+function controlFrameReadReason(code, subject) {
+  return code === 'CONTROL_FRAME_TOO_LARGE' ? `${subject}数据超过读取上限，无法安全读取`
+    : code === 'CONTROL_FRAME_INVALID' ? `${subject}数据格式无效，可刷新重试` : null;
 }
 function ownerReadReason(error, subject, canSend, thread) {
   const reason = error.controlDiagnostic?.reason;
@@ -321,8 +325,8 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
           json(res, 200, { threadId: id, available: true, permissions: { supported: context.permissions.supported && typeof control.send === 'function', current: context.permissions.current, canOverride, options: context.permissions.options,
             ...(!canOverride ? { reason: snapshot.permissionActive ? '正在运行，权限选择将在下一轮发送时生效' : '此会话当前不能覆盖权限' } : {}) }, git, agents, sources: context.sources });
         } catch (error) {
-          const code = ['PROTOCOL_ERROR', 'PROTOCOL_INCOMPATIBLE', 'OWNER_UNAVAILABLE', 'UNSUPPORTED_THREAD'].includes(error.code) ? error.code : 'CONTROL_UNAVAILABLE';
-          const reason = code === 'OWNER_UNAVAILABLE' ? ownerReadReason(error, '会话权限与运行状态', sendAccess(thread).canSend, thread) : '暂时无法读取会话信息，可刷新重试';
+          const code = ['PROTOCOL_ERROR', 'PROTOCOL_INCOMPATIBLE', 'OWNER_UNAVAILABLE', 'UNSUPPORTED_THREAD', 'CONTROL_FRAME_TOO_LARGE', 'CONTROL_FRAME_INVALID'].includes(error.code) ? error.code : 'CONTROL_UNAVAILABLE';
+          const reason = controlFrameReadReason(code, '会话信息') || (code === 'OWNER_UNAVAILABLE' ? ownerReadReason(error, '会话权限与运行状态', sendAccess(thread).canSend, thread) : '暂时无法读取会话信息，可刷新重试');
           json(res, 200, { threadId: id, available: false, code, reason, ...controlReadDiagnostic(error), ...(ownerStandby(error, thread) ? { standby: true } : {}), permissions: { supported: false, current: 'unknown', canOverride: false, options: [] }, git: await readGitContext(thread.cwd), agents: unavailable(reason), sources: unavailable(reason) });
         }
         return;
@@ -344,11 +348,11 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
             pendingRequestCount: pendingRequests.length, pendingRequests,
             ...(snapshot.historicalQuestions?.length ? { historicalQuestions: snapshot.historicalQuestions.map(publicPendingRequest) } : {}) });
         } catch (error) {
-          const code = ['PROTOCOL_ERROR', 'PROTOCOL_INCOMPATIBLE', 'OWNER_UNAVAILABLE', 'UNSUPPORTED_THREAD'].includes(error.code) ? error.code : 'CONTROL_UNAVAILABLE';
-          const reason = ['PROTOCOL_ERROR', 'PROTOCOL_INCOMPATIBLE'].includes(code) ? '当前桌面版本的运行控制不兼容，会话读写仍可使用'
+          const code = ['PROTOCOL_ERROR', 'PROTOCOL_INCOMPATIBLE', 'OWNER_UNAVAILABLE', 'UNSUPPORTED_THREAD', 'CONTROL_FRAME_TOO_LARGE', 'CONTROL_FRAME_INVALID'].includes(error.code) ? error.code : 'CONTROL_UNAVAILABLE';
+          const reason = controlFrameReadReason(code, '运行状态') || (['PROTOCOL_ERROR', 'PROTOCOL_INCOMPATIBLE'].includes(code) ? '当前桌面版本的运行控制不兼容，会话读写仍可使用'
             : code === 'OWNER_UNAVAILABLE' ? ownerReadReason(error, '运行状态', sendAccess(thread).canSend, thread)
               : code === 'UNSUPPORTED_THREAD' ? '此类会话暂不支持网页运行控制'
-                : '暂时无法读取运行状态，可刷新重试';
+                : '暂时无法读取运行状态，可刷新重试');
           json(res, 200, { available: false, canStop: false, threadId: id, code, reason, ...controlReadDiagnostic(error), ...(ownerStandby(error, thread) ? { standby: true } : {}) });
         }
         return;

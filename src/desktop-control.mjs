@@ -8,6 +8,9 @@ import { summarizeThreadContext, isDelegatedThread } from './thread-context.mjs'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PIPE = '\\\\.\\pipe\\codex-ipc';
 const MAX_FRAME = 8 * 1024 * 1024;
+// Native snapshots include full conversation history and can exceed the
+// outgoing request limit. Keep both directions bounded independently.
+const MAX_INBOUND_FRAME = 32 * 1024 * 1024;
 // Both inspected 26.924.1866 and 26.924.2738 builds use this contract.
 // Their initialize response has no method-version negotiation payload.
 export const CONTROL_PROTOCOL = Object.freeze({ initialize: 0, owner: 1, following: 1, snapshot: 11, interrupt: 4, response: 1, start: 2, steer: 1 });
@@ -50,6 +53,7 @@ class ControlPeer {
     this.pipePath = pipePath; this.connectSocket = connect; this.timeoutMs = timeoutMs;
     this.tokenKey = tokenKey;
     this.clientId = 'initializing-client'; this.pending = new Map(); this.buffer = Buffer.alloc(0);
+    this.frame = null; this.frameUsed = 0;
   }
   async open() {
     await new Promise((resolve, reject) => {
@@ -79,12 +83,33 @@ class ControlPeer {
   }
   onData(chunk) {
     try {
-      this.buffer = Buffer.concat([this.buffer, chunk]);
-      while (this.buffer.length >= 4) {
-        const size = this.buffer.readUInt32LE(0);
-        if (!size || size > MAX_FRAME) throw new Error('frame');
-        if (this.buffer.length < size + 4) return;
-        const message = JSON.parse(this.buffer.subarray(4, size + 4)); this.buffer = this.buffer.subarray(size + 4);
+      let offset = 0;
+      while (offset < chunk.length) {
+        if (!this.frame) {
+          const count = Math.min(4 - this.buffer.length, chunk.length - offset);
+          this.buffer = Buffer.concat([this.buffer, chunk.subarray(offset, offset + count)]); offset += count;
+          if (this.buffer.length < 4) return;
+          const size = this.buffer.readUInt32LE(0); this.buffer = Buffer.alloc(0);
+          if (!size || size > MAX_INBOUND_FRAME) {
+            const error = fail('Desktop control frame is outside the receive limit', size ? 'CONTROL_FRAME_TOO_LARGE' : 'CONTROL_FRAME_INVALID', 502);
+            error.controlDiagnostic = { phase: 'receive', reason: size ? 'frame-too-large' : 'invalid-frame', bytes: size, limit: MAX_INBOUND_FRAME };
+            throw error;
+          }
+          this.frame = Buffer.allocUnsafe(size); this.frameUsed = 0;
+        }
+        const count = Math.min(this.frame.length - this.frameUsed, chunk.length - offset);
+        chunk.copy(this.frame, this.frameUsed, offset, offset + count); this.frameUsed += count; offset += count;
+        if (this.frameUsed < this.frame.length) continue;
+        const payload = this.frame; this.frame = null; this.frameUsed = 0;
+        let message;
+        try {
+          message = JSON.parse(payload.toString('utf8'));
+          if (!message || typeof message !== 'object' || Array.isArray(message)) throw new Error('shape');
+        }
+        catch {
+          const error = fail('Desktop control frame is not valid JSON', 'CONTROL_FRAME_INVALID', 502);
+          error.controlDiagnostic = { phase: 'receive', reason: 'invalid-frame' }; throw error;
+        }
         if (message.type === 'client-discovery-request') {
           this.write({ type: 'client-discovery-response', requestId: message.requestId, response: { canHandle: false } });
         } else if (message.type === 'response') {
@@ -95,13 +120,14 @@ class ControlPeer {
           else pending.resolve(message);
         } else if (message.type === 'broadcast') this.onBroadcast?.(message);
       }
-    } catch { this.disconnect(); this.close(); }
+    } catch (error) { this.disconnect(error instanceof BridgeError ? error : undefined); this.close(); }
   }
-  disconnect() {
+  disconnect(error) {
+    this.buffer = Buffer.alloc(0); this.frame = null; this.frameUsed = 0;
     for (const p of this.pending.values()) {
-      clearTimeout(p.timer); p.reject(fail(p.mutation ? 'Control delivery unknown; inspect desktop before retrying' : 'Desktop control disconnected', p.mutation ? 'DELIVERY_UNKNOWN' : 'CONTROL_UNAVAILABLE', p.mutation ? 409 : 503));
+      clearTimeout(p.timer); p.reject(p.mutation || !error ? fail(p.mutation ? 'Control delivery unknown; inspect desktop before retrying' : 'Desktop control disconnected', p.mutation ? 'DELIVERY_UNKNOWN' : 'CONTROL_UNAVAILABLE', p.mutation ? 409 : 503) : error);
     }
-    this.pending.clear(); this.onDisconnect?.();
+    this.pending.clear(); this.onDisconnect?.(error);
   }
   close() { this.socket?.destroy(); }
   async owner(id) {
@@ -117,7 +143,7 @@ class ControlPeer {
         error ? reject(error) : resolve(value);
       };
       const timer = setTimeout(() => finish(fail('Desktop snapshot timed out')), this.timeoutMs);
-      this.onDisconnect = () => finish(fail('Desktop snapshot disconnected'));
+      this.onDisconnect = error => finish(error || fail('Desktop snapshot disconnected'));
       this.onBroadcast = message => {
         const p = message.params;
         if (message.method !== 'thread-stream-state-changed' || message.sourceClientId !== ownerClientId || p?.conversationId !== id || p.hostId !== 'local') return;

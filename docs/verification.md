@@ -1,5 +1,7 @@
 # 验收记录
 
+v1.0.5 正式发行包含下述运行状态大快照修复。此前已在版本 1.0.4 的当前电脑完成两文件热补与只读长候选验证；本次发行不再次升级或重启真实连接器，不修改 VPS 或业务状态。完整发行测试、软件包源码一致性与隐私审计、从真实 v1.0.4 安装器的隔离升级/回滚/配置保留，以及四资产公开下载校验的记录保存在忽略目录 `work/publication/` 与 `work/verification/desktop-v105/`。此前热补证据保留原版本与范围；未声称验证用户具体手机失败页面。
+
 2026-10-05 的 Mermaid 源码候选保持版本 1.0.3，源码验收阶段未部署或发布。完整测试 596 通过、0 失败、1 项既有真实 shape opt-in 默认跳过。新增六项针对性测试覆盖支持类型与边界、合法 Style/Click 节点标签、主动 SVG 内容及资源拒绝、普通代码与源码回退、隐藏/折叠懒加载、串行绘制、异步源码选择、迟到隐藏失败、移除后 URL 回收及页面生命周期恢复。固定 Mermaid 12.1.0 / esbuild 0.28.2 的 vendor 重建字节一致；本机 server、gateway 与鉴权 Hub 的实际静态字节、MIME 和未知路径拒绝测试通过。
 
 真实本地 bundle、未改写的页面源码及完整现有 CSP 通过隔离 Chrome 验收：中文思维导图、流程图、时序图均显示；普通冷会话和折叠工作不请求 Mermaid；重复展开不产生重复图；源码复制精确，键盘操作和延迟完成保留源码选择；切换期间的迟到加载不绘制旧会话，返回后正常恢复。支持语法错误、超限、配置/主题注入、HTML/JavaScript/URL、不支持类型和 vendor 请求失败的可读回退。最终 SVG 无 style/script/foreignObject，生成 CSS 的网络、导入、表达式及转义拒绝测试通过；Cytoscape 固定样式改用本地 CSS，CSP 未放宽，最终没有页面脚本错误或 CSP 违反。
@@ -59,5 +61,9 @@
 2026-10-05 的 favicon 修补复用 Windows 连接器的绿色手机图标：SVG 直接复用 `deploy/windows/icons/connector.svg`，PNG 来自现有 ICO 的 32px PNG 帧，原图标和 ISC 许可文件 `deploy/windows/icons/LICENSE` 保持不变。Hub 登录页和设备页均引用绝对根路径 `/favicon.png`、`/favicon.svg`；Hub 只为这两个固定 GET 路径增加匿名响应，设备资源仍保留账户与设备归属校验，CSP 保持不变。最终四组相关测试 51 通过、0 失败、0 跳过；实际服务器的隔离 HTTP 验证通过 14 项检查，三个页面共 12 次 SVG/PNG 的 16/32px 解码，没有 CSP 或页面错误。图标预览已目视检查；headless Chrome 没有可见标签栏，因此不声称已观察真实标签栏图标。ICO 在该隔离浏览器中的解码原因未确定，网页采用已验证的 PNG/SVG。
 
 该六文件补丁已完成同版本试部署到已安装 Windows 连接器与两个 VPS。备份后逐文件原子替换，保留既有文件 ACL 或 owner/mode，只刷新本机专用 bridge child 和两个 Hub 服务。部署前回执在 2.5 秒窗口内稳定且未完成数为 0；总体 inflight 控制计数不可观察。最终磁盘哈希、三个入口的匿名图标 200/MIME/正文及 HTML 根路径引用均匹配，两个公网健康检查为 200，其他共享资源匿名请求仍为 401；连接器恢复在线，supervisor、connector、Caddy 及配置保持原状，原有应用和 Mermaid 渲染资源哈希保持一致。仓库与已安装版本仍为 1.0.3，VPS 包版本仍为 1.0.0，没有提交、发布或重新构建安装器；本轮未访问生产数据库内容、用户 cookie 或业务会话。证据见忽略目录 `work/favicon/`。
+
+2026-10-05 的运行状态刷新排查在一个获授权的长会话候选中复现了持续 `CONTROL_UNAVAILABLE`：原生 owner 发现成功，但完整快照帧为 9,489,758 字节，超过桥接把出站请求限制也用于入站快照的 8 MiB 上限，接收器主动断开后每次刷新均再次失败。该候选不是用户尚未提供地址的本次实际失败目标。修补保留出站 8 MiB 限制，独立采用入站 32 MiB 上限；只积累四字节帧头，然后预分配一个有界载荷并按块拷贝，完整保留版本、owner、会话 ID、revision 与审批 token 校验。超限和非法帧分别返回固定安全 code/nativeReason 与可区分的用户提示，不转发正文或任意原生错误；已发 mutation 的坏帧仍为 `DELIVERY_UNKNOWN`，不会自动重发。
+
+针对性控制、HTTP 和网页回归共 130 通过、0 失败、1 项既有可选 live-shape 跳过，验证大快照的分块/合并接收、32 MiB 边界、超限或坏帧失败后新读取恢复、8 MiB 出站边界，以及刷新后错误提示清除、真实审批与回答/消息草稿保留、迟到快照不覆盖新选会话、零业务提交。已备份并原子替换当前已安装连接器的 `src/desktop-control.mjs` 与 `src/server.mjs`，仅刷新专用 bridge child。真实长候选 `/control` 从不可用恢复到 200/available:true（313 ms），原会话仍可读取其运行与待处理状态；连接器恢复在线，supervisor/connector PID、用户配对/配置、网页与 Mermaid 资源哈希保持一致。仓库和已安装版本仍为 1.0.4，没有 VPS 操作、打包、提交或发布。当前电脑可直接更新本地 runtime；其他安装用户仍需后续包含该本地修补的安装包，单独更新公网 Hub 不足以解决。证据位于忽略目录 `work/runtime-control-refresh/`；未声称覆盖尚未提供的具体失败页面或实体手机。
 
 详细本机日志、截图、临时路径、会话标识和部署记录保存在忽略版本控制的 work/ 与 docs/verification/ 中。模型设置说明见 [model-settings.md](model-settings.md)，运行条件见 [remote-readiness.md](remote-readiness.md)，部署与设备配对见 [vps-device-hub.md](vps-device-hub.md)。
