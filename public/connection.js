@@ -1,4 +1,12 @@
 const DEVICE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// If-None-Match uses weak comparison for GET (RFC 9110, 8.8.3.2).
+// Only the weakness marker may differ; opaque values, including encoding
+// suffixes introduced by a proxy, are never assumed interchangeable.
+function weakEtagMatch(left, right) {
+  const opaque = value => typeof value === "string" ? /^(?:W\/)?("[\x21\x23-\x7e\x80-\xff]*")$/.exec(value.trim())?.[1] : null;
+  const tag = opaque(left);
+  return tag != null && tag === opaque(right);
+}
 export function deviceIdFromPath(pathname) {
   const match = /^\/devices\/([^/]+)\/$/.exec(pathname);
   if (!match) { if (pathname.startsWith("/devices/")) throw new Error("设备地址无效"); return null; }
@@ -93,35 +101,38 @@ export function createApi({ fetchImpl = fetch, headers = {}, onSnapshot = () => 
   let cacheGeneration = 0;
   const conditionalPath = path => /^\/api\/(?:status|threads(?:\/[0-9a-f-]+(?:\/control)?)?)(?:\?|$)/i.test(path);
   function clearSnapshots() { snapshots.clear(); cacheBytes = 0; cacheGeneration += 1; }
-  function saveSnapshot(path, etag, body) {
+  function saveSnapshot(path, etag, body, conditionalRetryAt = 0) {
     const bytes = JSON.stringify(body).length * 2;
-    if (!etag || bytes > 1024 * 1024) return;
     if (snapshots.has(path)) { cacheBytes -= snapshots.get(path).bytes; snapshots.delete(path); }
-    snapshots.set(path, { etag, body: structuredClone(body), bytes }); cacheBytes += bytes;
+    if (!weakEtagMatch(etag, etag) || bytes > 1024 * 1024) return;
+    snapshots.set(path, { etag, body: structuredClone(body), bytes, conditionalRetryAt }); cacheBytes += bytes;
     while (snapshots.size > 32 || cacheBytes > 4 * 1024 * 1024) {
       const key = snapshots.keys().next().value; cacheBytes -= snapshots.get(key).bytes; snapshots.delete(key);
     }
   }
 
-  function invalidResponse(method, code = "RESPONSE_INVALID", message = "电脑返回的数据不完整，请刷新重试") {
+  function invalidResponse(method, reason, stage, code = "RESPONSE_INVALID", message = "电脑返回的数据不完整，请刷新重试") {
     return Object.assign(new Error(method === "GET" ? message : "提交结果尚未确认，请先核对送达回执"), {
-      code: method === "GET" ? code : "DELIVERY_UNKNOWN", status: method === "GET" ? 502 : 409
+      code: method === "GET" ? code : "DELIVERY_UNKNOWN", status: method === "GET" ? 502 : 409, reason, stage
     });
   }
-  function validateBody(path, body, method) {
-    if (!body || typeof body !== "object" || Array.isArray(body)) throw invalidResponse(method);
+  function validateBody(path, body, method, stage) {
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw invalidResponse(method, "json-shape", stage);
     const match = /^\/api\/threads\/([0-9a-f-]+)(?:\?|$)/i.exec(path);
     if (method === "GET" && match) {
-      if (body.thread?.id !== match[1]) throw invalidResponse(method, "THREAD_MISMATCH", "返回的会话与请求不匹配，已有内容和草稿仍保留。");
-      if (!Array.isArray(body.turns)) throw invalidResponse(method);
+      if (body.thread?.id !== match[1]) throw invalidResponse(method, "thread-identity", stage, "THREAD_MISMATCH", "返回的会话与请求不匹配，已有内容和草稿仍保留。");
+      if (!Array.isArray(body.turns)) throw invalidResponse(method, "thread-turns-shape", stage);
     }
   }
 
-  async function send(path, options) {
+  async function send(path, options, unconditional = false) {
+    const requestHeaders = { ...headers, ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) };
+    if (unconditional) for (const key of Object.keys(requestHeaders)) if (key.toLowerCase() === "if-none-match") delete requestHeaders[key];
     return fetchImpl(path, {
       ...options,
       credentials: "same-origin",
-      headers: { ...headers, ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) }
+      ...(unconditional ? { cache: "no-store" } : {}),
+      headers: requestHeaders
     });
   }
 
@@ -154,24 +165,37 @@ export function createApi({ fetchImpl = fetch, headers = {}, onSnapshot = () => 
     const generation = sessionGeneration;
     const snapshotGeneration = cacheGeneration;
     const cached = conditional ? snapshots.get(path) : null;
-    const conditionalOptions = cached ? { ...options, headers: { ...options.headers, "If-None-Match": cached.etag } } : options;
-    let response = await send(path, conditionalOptions);
+    let conditionalRetryAt = cached?.conditionalRetryAt || 0, stage = "response";
+    const validator = cached && Date.now() >= conditionalRetryAt ? cached.etag : null;
+    const conditionalOptions = validator ? { ...options, headers: { ...options.headers, "If-None-Match": validator } } : options;
+    let response = await send(path, conditionalOptions, conditionalRetryAt > Date.now());
     if (response.status === 304 && method !== "GET") {
       const error = new Error("提交结果尚未确认，请先核对送达回执");
       error.code = "DELIVERY_UNKNOWN";
       error.status = 409;
+      error.reason = "mutation-not-modified"; error.stage = stage;
       throw error;
     }
-    if (response.status === 304 && cached && snapshotGeneration === cacheGeneration) {
+    if (response.status === 304 && validator && snapshotGeneration === cacheGeneration) {
       const etag = response.headers?.get?.("etag");
-      if (etag && etag !== cached.etag) throw invalidResponse(method);
-      const body = structuredClone(cached.body); validateBody(path, body, method); onSnapshot(path, body); return body;
+      if (!etag || weakEtagMatch(etag, validator)) {
+        const body = structuredClone(cached.body); validateBody(path, body, method, "conditional-cache"); onSnapshot(path, body); return body;
+      }
+      // A compression proxy may return a different representation validator
+      // on its bodyless 304. Obtain an independently validated full response.
+      // Pause conditional reads for this bounded cache entry for 30 seconds,
+      // then try again; never strip an arbitrary opaque encoding suffix.
+      conditionalRetryAt = Date.now() + 30000;
     }
-    if (response.status === 304) response = await send(path, options);
+    if (response.status === 304) {
+      stage = "conditional-recovery";
+      response = await send(path, options, true);
+      if (response.status === 304) throw invalidResponse(method, "unexpected-not-modified", stage);
+    }
     let body;
     try { body = await response.json(); } catch (error) {
       if (error.name === "AbortError" || options.signal?.aborted) throw error;
-      if (response.ok || response.status === 304) throw invalidResponse(method);
+      if (response.ok) throw invalidResponse(method, "json-parse", stage);
       body = {};
     }
     if (response.status === 401 && body.code === "LOGIN_REQUIRED") {
@@ -181,10 +205,12 @@ export function createApi({ fetchImpl = fetch, headers = {}, onSnapshot = () => 
     } else if (response.status === 401 && method === "GET") {
       clearSnapshots();
       if (generation === sessionGeneration) await refreshSession();
-      response = await send(path, options);
+      stage = "session-refresh-read";
+      response = await send(path, options, true);
+      if (response.status === 304) throw invalidResponse(method, "unexpected-not-modified", stage);
       try { body = await response.json(); } catch (error) {
         if (error.name === "AbortError" || options.signal?.aborted) throw error;
-        if (response.ok || response.status === 304) throw invalidResponse(method);
+        if (response.ok) throw invalidResponse(method, "json-parse", stage);
         body = {};
       }
       if (response.status === 401 && body.code === "LOGIN_REQUIRED") { loginRequired = true; onLoginRequired(); }
@@ -207,8 +233,8 @@ export function createApi({ fetchImpl = fetch, headers = {}, onSnapshot = () => 
       error.status = response.status;
       throw error;
     }
-    validateBody(path, body, method);
-    if (conditional && snapshotGeneration === cacheGeneration) saveSnapshot(path, response.headers?.get?.("etag"), body);
+    validateBody(path, body, method, stage);
+    if (conditional && snapshotGeneration === cacheGeneration) saveSnapshot(path, response.headers?.get?.("etag"), body, conditionalRetryAt);
     if (method === "GET") onSnapshot(path, body);
     return body;
   };

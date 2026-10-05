@@ -143,7 +143,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     sending: false, listLoading: false, noticeTimer: null, pollTimer: null, polling: false, forcePoll: false, idlePolls: 0, changeRevision: 0, historyError: false, threadFingerprint: "",
     callerThreadId: null, pagingInitialized: false, drafts: new Map(), unknownSends: new Set(), statusSnapshot: null,
     pinnedOverrides: readPinnedOverrides(), expandedProjects: readExpandedProjects(), openDetails: new Map(), taskDetailsOpen: new Map(), taskListFingerprint: "",
-    sendDisabledReason: "", sendMode: "message", pendingMessages: [], pendingByThread: new Map(), readController: null, selectionController: null,
+    sendDisabledReason: "", sendMode: "message", pendingMessages: [], pendingByThread: new Map(), readController: null, selectionController: null, selectionThreadId: null,
     threadCache: createThreadSnapshotCache({ maxEntries: 20, maxTurns: 1000 }), cachedTurnIds: new Set(),
     lastStatusAt: 0, lastListAt: 0, sidebarOrder: { revision: 0, order: { projects: [], threads: {} } },
     orderLoaded: false, orderConfigured: false, orderSaving: false, orderDirty: false, sorting: false, dragging: null,
@@ -333,6 +333,15 @@ import { createAgentViewer } from "./agent-viewer.js";
   }
 
   function updateControls() {
+    for (const row of ui.taskList.querySelectorAll(".task-row")) {
+      const busy = !!state.selectionController && row.dataset.orderId === state.selectionThreadId;
+      row.querySelector(".task-item")?.setAttribute("aria-busy", String(busy));
+      const loading = row.querySelector(".task-read-state");
+      if (loading) {
+        loading.hidden = !busy;
+        i18n.text(loading, () => busy ? t("读取中…") : "");
+      }
+    }
     renderModelSettings();
     contextPanel.setState({ status: state.statusSnapshot, thread: state.thread, connected: state.connected, sending: state.sending, sendMode: state.sendMode });
     const unknownPending = !!state.selectedId && isUnknown(state.selectedId);
@@ -1522,6 +1531,12 @@ import { createAgentViewer } from "./agent-viewer.js";
       select.append(dot);
     }
     select.append(title);
+    const loading = document.createElement("small");
+    loading.className = "task-read-state muted";
+    loading.hidden = !state.selectionController || thread.id !== state.selectionThreadId;
+    select.setAttribute("aria-busy", String(!loading.hidden));
+    i18n.text(loading, () => !loading.hidden ? t("读取中…") : "");
+    select.append(loading);
     select.addEventListener("click", () => selectThread(thread.id));
 
     const menu = document.createElement("details");
@@ -1959,7 +1974,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     if (detailText) {
       const details = document.createElement("details");
       details.className = "activity-details";
-      restoreDetailsState(details, `item:${state.selectedId}:${item.id}`);
+      restoreDetailsState(details, `item:${options.threadId || state.selectedId}:${item.id}`);
       const detailSummary = document.createElement("summary");
       i18n.text(detailSummary, () => t("查看详情"));
       const body = document.createElement("pre");
@@ -1978,6 +1993,7 @@ import { createAgentViewer } from "./agent-viewer.js";
   }
 
   function renderTurn(turn) {
+    const threadId = state.selectedId;
     const section = document.createElement("section");
     section.className = "turn";
     section.dataset.turnId = text(turn.id);
@@ -1986,7 +2002,7 @@ import { createAgentViewer } from "./agent-viewer.js";
       if (block.type === "user") section.append(elementFromItem(block.item));
       else if (block.type === "final") section.append(elementFromItem(block.item));
       else if (block.type === "work") {
-        const key = `work:${state.selectedId}:${turn.id}:${workIndex++}`;
+        const key = `work:${threadId}:${turn.id}:${workIndex++}`;
         const details = document.createElement("details");
         details.className = "work-process";
         details.dataset.turnId = text(turn.id);
@@ -1996,9 +2012,19 @@ import { createAgentViewer } from "./agent-viewer.js";
         i18n.text(summary, () => formatWorkSummary(turn, block, t));
         const content = document.createElement("div");
         content.className = "work-process-content";
-        for (const item of block.items) {
-          content.append(elementFromItem(item, { commentary: item.type === "agentMessage" }));
-        }
+        let rendered = false;
+        const renderContent = () => {
+          if (rendered) return;
+          rendered = true;
+          for (const item of block.items) {
+            content.append(elementFromItem(item, { commentary: item.type === "agentMessage", threadId }));
+          }
+        };
+        // Closed work can contain hundreds of Markdown/tool items. Build it when needed.
+        if (details.open) renderContent();
+        details.addEventListener("toggle", () => {
+          if (details.open && details.isConnected && state.selectedId === threadId) renderContent();
+        });
         details.append(summary, content);
         section.append(details);
       }
@@ -2243,6 +2269,7 @@ import { createAgentViewer } from "./agent-viewer.js";
     if (id !== state.selectedId || pendingSelection) clearFollowupDraft();
     pendingSelection?.abort();
     state.selectionController = null;
+    state.selectionThreadId = null;
     if (pendingSelection) updateControls();
     if (!id || id === state.selectedId) {
       setDrawer(false);
@@ -2261,13 +2288,15 @@ import { createAgentViewer } from "./agent-viewer.js";
     if (!state.ordinaryIds.has(id.toLowerCase())) {
       const controller = new AbortController();
       state.selectionController = controller;
+      state.selectionThreadId = id;
+      updateControls();
       try { prefetchedData = await api(`/api/threads/${encodeURIComponent(id)}`, { signal: controller.signal }); }
       catch (error) {
         if (selectionRequest !== state.selecting || controller.signal.aborted || error.name === "AbortError") return;
         handleThreadReadError(error);
         showNotice(t`暂时无法读取会话：${t(error.message)}。已有内容和草稿仍保留。`, "error", 0, "connection");
         return;
-      } finally { if (state.selectionController === controller) { state.selectionController = null; updateControls(); } }
+      } finally { if (state.selectionController === controller) { state.selectionController = null; state.selectionThreadId = null; updateControls(); } }
       if (selectionRequest !== state.selecting || controller.signal.aborted) return;
       if (prefetchedData.thread?.id !== id) {
         showNotice(t("返回的会话与请求不匹配，已有内容和草稿仍保留。"), "error");

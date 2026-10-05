@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, writeFile, rm, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, access, rename } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -146,6 +146,8 @@ try {
   await mkdir(linkedExternal);
   await writeFile(join(linkedExternal, 'sentinel.txt'), 'outside-installation');
   const junction = join(linkedRoot, '.local');
+  // Cold installs may already save a language preference; keep it before creating this linked-path fixture.
+  try { await rename(junction, join(linkedRoot, '.local-original')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const create = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `New-Item -ItemType Junction -Path ${psLiteral(junction)} -Target ${psLiteral(linkedExternal)} | Out-Null`], 10000);
   assert.equal(create.status, 0, create.stderr);
   assert.equal(run(setup, ['--install-root', linkedRoot, '--install','--language','zh-CN']).status, 1);

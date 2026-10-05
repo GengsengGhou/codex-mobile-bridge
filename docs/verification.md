@@ -1,6 +1,32 @@
 # 验收记录
 
+2026-10-05 的 Mermaid 源码候选保持版本 1.0.3，源码验收阶段未部署或发布。完整测试 596 通过、0 失败、1 项既有真实 shape opt-in 默认跳过。新增六项针对性测试覆盖支持类型与边界、合法 Style/Click 节点标签、主动 SVG 内容及资源拒绝、普通代码与源码回退、隐藏/折叠懒加载、串行绘制、异步源码选择、迟到隐藏失败、移除后 URL 回收及页面生命周期恢复。固定 Mermaid 12.1.0 / esbuild 0.28.2 的 vendor 重建字节一致；本机 server、gateway 与鉴权 Hub 的实际静态字节、MIME 和未知路径拒绝测试通过。
+
+真实本地 bundle、未改写的页面源码及完整现有 CSP 通过隔离 Chrome 验收：中文思维导图、流程图、时序图均显示；普通冷会话和折叠工作不请求 Mermaid；重复展开不产生重复图；源码复制精确，键盘操作和延迟完成保留源码选择；切换期间的迟到加载不绘制旧会话，返回后正常恢复。支持语法错误、超限、配置/主题注入、HTML/JavaScript/URL、不支持类型和 vendor 请求失败的可读回退。最终 SVG 无 style/script/foreignObject，生成 CSS 的网络、导入、表达式及转义拒绝测试通过；Cytoscape 固定样式改用本地 CSS，CSP 未放宽，最终没有页面脚本错误或 CSP 违反。
+
+320/390 像素宽度、实际字号处理器的 10/20/48 像素组合没有页面横向溢出；按最终 SVG 的坐标和变换实际滚动，十个思维导图文字节点都能进入图表视口，截图保留滚到根节点的位置。根圆文字针对上游选择器错误做窄范围居中，并验证文字居中且完整落在圆内。桌面截图覆盖完整导图及另外两类；只读子查看器复用渲染，主会话 URL、标题、消息 DOM、侧栏和草稿保持，fixture 只接受 GET。通过浏览器中 persisted pagehide/pageshow 事件验证 URL 撤销后重新绘制；这是生命周期处理器的受控验证，不是实体手机的实际 bfcache 导航验收。
+
+单文件 bundle 为 5,252,942 字节（5.01 MiB），gzip 1,500,087 字节、Brotli 1,111,143 字节；这是压缩尺寸而非网络测速，首次可见图表需要载入该模块。内置浏览器本轮报告无 IAB 后端，使用仅含合成内容的独立 Chrome 临时 profile；未读取用户 cookie、生产数据或数据库会话。实体手机和已登录公网未测。重现脚本、完整 TAP、浏览器 JSON、截图及冻结哈希在忽略目录 `work/mermaid-rendering/`，行为与后续专用 bridge child/Hub 刷新要求见 [Mermaid 图表](mermaid-rendering.md)。
+
+候选经审阅后，已完成授权的同版本试用：只更新上述八个文件到本机安装根与两个 VPS，逐文件备份、原子替换和 ACL/owner/mode 核对通过。完整 manifest/assets 到位后，仅现有 supervisor 下的专用 bridge child 和两处 `codex-mobile-hub.service` 重载；connector 与 supervisor PID/配置、Caddy PID/配置、环境与服务文件、持久配置及数据库文件身份保持。维护前发送记录连续短窗口无写入，17 项均已接受，没有未完成的新建记录；聚合进行中的控制请求未暴露，此检查不声称绝对全系统闲置。第一个原始 bundle 的 staging 上传超时，没有触及 VPS 生产文件或重启；改用压缩包并从本机完成位置恢复后，两 VPS 均成功。本机六项可公开静态资源的实际 GET 字节与冻结值一致，manifest 和未知文件仍拒绝；八项磁盘资源和之前 app/connection 试用哈希三处都一致。两 VPS 匿名 HTTPS health 为 200，已安装 connector 恢复在线。本机安装版本仍为 1.0.3，两 VPS 既有 package 版本仍为 1.0.0；没有业务 mutation、数据库会话、安装器构建或 GitHub 发布。冻结记录、部署证据与最终守卫分别在 `source-freeze.json`、`trial-deploy-evidence.json`、`final-guards.json`；手机刷新后的实体体验仍需用户试用确认。
+
+2026-10-04 的长会话切换性能修复只修改 `public/app.js`，版本保持 1.0.3。以最新真实条目分布构造的 1169 条、249,037 字节 synthetic fixture（293 条助手、865 条活动、11 条用户）保留全部内容，折叠时 DOM 从 23,423 降至 137、Markdown 调用从 304 降至 21。七次缓存切换的隔离 Chromium 同步耗时中位数由 62.3ms 降至 3.8ms，双 requestAnimationFrame 检查由 66.0ms 降至 22.6ms；这包含浏览器帧调度，不能等同于实体手机显示延迟。jsdom 同样本中位数为 425.4ms→12.5ms，证明避免重建折叠内容的 CPU 成本；jsdom 数字不含真实布局与绘制。展开第一块后完整保留 29 条说明、87 条活动和 29 个公式，重复开合不重复构建。320/390 像素的候选读取提示可见、父会话草稿/选中态保留、无横向溢出；Chromium 无脚本错误或 mutation 请求。针对性测试 157 通过、0 失败，1 项既有真实 shape opt-in 默认跳过；新增覆盖懒渲染、公式/文件/建议、更新和缓存切换、语言/字号、嵌套展开、草稿/滚动、迟到 detached toggle，以及取消/失败/子对话确认期间的反馈清理。证据与重现命令在忽略目录 `work/thread-switch-performance/`。
+
+首次冷读取仍包含原生桌面读取和 relay 传输成本。本机真实只读长会话 254,054 字节读取约 305–398ms，native full read 约 309ms；独立真实 connector/HubRelay 代码 fixture 在固定 190ms RTT 下传输约 254KB 的 4–5 个逐帧 ACK 耗时约 1.077s，1MiB 的 17 帧约 3.883s，27/27 正文与哈希一致。该传输 fixture 没有 TLS、抖动或手机公网环境，Caddy 压缩发生于 relay 之后，不能减少该阶段逐帧等待。本次保持协议和后端实现，首次未知子对话仍等待身份确认。已登录公网浏览器和实体手机未测；内置浏览器正确初始化后报告无 IAB 后端，因此页面验收使用已有临时运行时的隔离 Chromium，不读取用户浏览器 profile。
+
+验收后已完成授权的同版本静态试用：只原子替换本机安装目录和两个 VPS 的 `public/app.js`，三处字节均匹配冻结 SHA256 `d62068cd4f096d5b4584915697da10f541bb3cc20a6d680aa0c03324a208aa8e`，旧文件备份保留。实际本机 `app.js` HTTP 返回字节一致，ACL、持久配置、connector/recovery PID 和在线状态保持；两 VPS 的 owner/mode、backend/package、环境/Caddy/service 配置、数据库文件身份及 Hub/Caddy PID 保持，匿名 HTTPS health 均 200。先前 `connection.js` 试用哈希 `3c71433be04d1ede8032e0e672aa5f7c7a7ab105764cf0dea241874652481869` 保持。本次没有取用户 cookie、创建数据库会话、业务发送、服务重启、版本变化或发布；最终部署与前后守卫记录在 `work/thread-switch-performance/trial-deploy-evidence.json` 和 `final-guards.json`。现有手机页面需刷新后试用，首次冷读取限制仍适用。
+
 本页保留各次功能验收的日期、范围和限制；其中测试数量只对应相邻记录所述的补丁或版本，不代表 v1.0.0 的完整测试结果。最终发布验证与资产核对结果见 [v1.0.0 发布说明](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v1.0.0)。隔离浏览器、模拟设备或真实本机测试不能代替文中明确标出的实体手机、第二台电脑或未来桌面版本验证。
+
+2026-10-04 的条件响应兼容试用修补保持版本 1.0.3，只有生产 `public/connection.js` 需要更新。原 API helper 经真实 Caddy v2.11.4、现有 bridge/connector/relay 和无业务内容的 localhost fixture 复现：gzip/zstd 的首次压缩 200 返回强 ETag `"hash-gzip"`/`"hash-zstd"`，下一次无正文 304 返回 `"hash"`，此前精确字符串校验因此误报“数据不完整”；connector 始终在线。实际问题是 opaque tag 变化，并非只差 `W/`。探针没有观测到损坏 JSON、错会话身份或业务历史损坏。
+
+修补只允许符合 RFC 的弱等价直接使用快照；opaque 不同则最多一次无条件 GET，去除所有大小写 If-None-Match 并指定 cache:no-store，再完整校验正文、身份和 turns。成功恢复后该 exact path 缓存条目暂停条件请求三十秒，中间 200 不延长期限，到期重新尝试；没有永久跳过条件校验，也不会剥离 encoding 后缀盲信其他标签。重复 304、坏 JSON、错身份/shape 继续失败闭合，mutation 不重试。错误对象补充固定 reason/stage，未附加正文、cookie 或 token，产品提示保持简洁。
+
+真实 Caddy 候选链 gzip/zstd 各十九次请求，共三十八次 synthetic 桌面读取，通过首次 200、多次 304 恢复、cooldown 单请求、期限恢复、正文变化 200 后再次 304、跨会话/分页和全新 API cache；逐步调用数与耗时见 `work/conditional-response-fix/candidate-caddy-evidence.json`。只加速 fixture 的 JavaScript 客户端时钟；Node22 的 zstd 解码用原生 zstdDecompressSync，保留 wire headers，不等同于实体手机解码测试。最终 focused 回归 192 通过、0 失败、1 跳过（之前已单独通过的真实桌面 shape opt-in，本次没有重读业务历史）。新增回归覆盖缓存 eviction/session/mutation 清理、30秒不续期、不同页面/API隔离、AbortError、失败闭合、旧页和草稿保留，以及健康连接与发送控件。证据在 `work/conditional-response-fix/final-focused.tap` 和 `pretrial-guards.json`。
+
+源码验收阶段没有生产 static 写入、服务重启、版本变化、安装包构建或 GitHub 发布；两生产 Caddy/Hub 服务及原脚本哈希保持，已安装 1.0.3 的脚本文件与实际 HTTP 返回内容一致。本记录不能代替静态试用补丁应用后的已登录公网页面或实体手机稳定反馈。用户明确要求确认稳定后才另行授权发布。
+
+同日验收后，已授权的同版本试用仅原子替换本机安装目录和两个 VPS 的 `public/connection.js`，三处精确字节均与冻结源码 SHA256 `3c71433be04d1ede8032e0e672aa5f7c7a7ab105764cf0dea241874652481869` 一致，原脚本备份保留在对应忽略的 work 目录。本机实际静态 HTTP 返回通过字节核对，ACL、十个持久文件、connector/recovery PID、1.0.3 版本及 metadata-only 连接状态保持。远端逐文件 owner/mode、backend/package、环境/Caddy/service 配置哈希、数据库文件身份及运行 Hub/Caddy PID 均保持，两处匿名 HTTPS health 返回 200。没有配对、数据库会话创建、业务消息、版本发布或服务重启。远端验收是磁盘字节与逐请求读取静态文件的源码证据，没有取用户 cookie 或伪造数据库登录以获取已登录 device HTTP；实体手机和已登录公网页面仍由用户刷新后试用确认。完整记录为 `work/conditional-response-fix/trial-deploy-evidence.json`。
 
 2026-10-04 的新会话切换修复通过最终针对性测试 191 项、0 失败；默认跳过 1 项需要实际只读桌面 shape 的验收，该项在显式提供脱敏真实 HTTP shape 后单独通过。覆盖输出读取拒绝后的同身份/同 cursor/同 turnLimit 降级与后续恢复、普通输入和助手消息、已知注入输入保留、真实分帧 pipe、并行 relay 与 ETag 隔离、新会话在连接后出现、首读与已知会话读错身份、历史分页错误/重试、迟到成功与失败、无效 JSON/shape/304、mutation 只尝试一次，以及健康连接与发送资格不受单会话读错误影响。
 
@@ -29,5 +55,9 @@
 实体手机触摸与移动网络、第二台实际电脑、已登录公网浏览器完整流程，以及可交互 Windows 桌面的完整安装体验尚未验收。Windows 界面检查包含真实 WinForms 渲染和隔离安装验证，不能替代上述体验验收。原生鼠标托盘操作与真实登录注册迁移尚未验收；隔离 QA 不修改正在使用的启动项或配对。
 
 `deploy/verify-connector-tray.mjs` 针对实际 EXE 在临时安装目录验证本地 TLS / WSS、停止本安装监测与连接器、保留无关进程和独立桥接、同次登录暂停、窗口 X 隐藏、双开控制与主动退出；其运行证据留在私有目录，不随发布包分发。
+
+2026-10-05 的 favicon 修补复用 Windows 连接器的绿色手机图标：SVG 直接复用 `deploy/windows/icons/connector.svg`，PNG 来自现有 ICO 的 32px PNG 帧，原图标和 ISC 许可文件 `deploy/windows/icons/LICENSE` 保持不变。Hub 登录页和设备页均引用绝对根路径 `/favicon.png`、`/favicon.svg`；Hub 只为这两个固定 GET 路径增加匿名响应，设备资源仍保留账户与设备归属校验，CSP 保持不变。最终四组相关测试 51 通过、0 失败、0 跳过；实际服务器的隔离 HTTP 验证通过 14 项检查，三个页面共 12 次 SVG/PNG 的 16/32px 解码，没有 CSP 或页面错误。图标预览已目视检查；headless Chrome 没有可见标签栏，因此不声称已观察真实标签栏图标。ICO 在该隔离浏览器中的解码原因未确定，网页采用已验证的 PNG/SVG。
+
+该六文件补丁已完成同版本试部署到已安装 Windows 连接器与两个 VPS。备份后逐文件原子替换，保留既有文件 ACL 或 owner/mode，只刷新本机专用 bridge child 和两个 Hub 服务。部署前回执在 2.5 秒窗口内稳定且未完成数为 0；总体 inflight 控制计数不可观察。最终磁盘哈希、三个入口的匿名图标 200/MIME/正文及 HTML 根路径引用均匹配，两个公网健康检查为 200，其他共享资源匿名请求仍为 401；连接器恢复在线，supervisor、connector、Caddy 及配置保持原状，原有应用和 Mermaid 渲染资源哈希保持一致。仓库与已安装版本仍为 1.0.3，VPS 包版本仍为 1.0.0，没有提交、发布或重新构建安装器；本轮未访问生产数据库内容、用户 cookie 或业务会话。证据见忽略目录 `work/favicon/`。
 
 详细本机日志、截图、临时路径、会话标识和部署记录保存在忽略版本控制的 work/ 与 docs/verification/ 中。模型设置说明见 [model-settings.md](model-settings.md)，运行条件见 [remote-readiness.md](remote-readiness.md)，部署与设备配对见 [vps-device-hub.md](vps-device-hub.md)。

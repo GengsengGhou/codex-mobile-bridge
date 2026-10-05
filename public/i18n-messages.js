@@ -545,5 +545,13 @@ export const messages = {
   "恢复默认 · 20 px": "Reset default · 20 px",
   "此页面需要启用 JavaScript 才能连接本机 Codex。": "Enable JavaScript to connect to local Codex.",
   "登录 · Codex": "Sign in · Codex Mobile Bridge",
-  "访问密码": "Access password"
+  "访问密码": "Access password",
+  "正在绘制图表…": "Rendering diagram…",
+  "查看源码": "View source",
+  "Mermaid 图表": "Mermaid diagram",
+  "图表过大，显示源码": "Diagram too large; showing source",
+  "图表尚未完整，显示源码": "Diagram incomplete; showing source",
+  "支持思维导图、流程图和时序图；此图显示源码": "Mindmaps, flowcharts and sequence diagrams are supported; showing source for this diagram",
+  "图表包含不支持的内容，显示源码": "Diagram contains unsupported content; showing source",
+  "图表暂时无法渲染，显示源码": "Diagram could not be rendered; showing source"
 };

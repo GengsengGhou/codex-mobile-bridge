@@ -17,9 +17,9 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-[assembly: AssemblyVersion("1.0.3.0")]
-[assembly: AssemblyFileVersion("1.0.3.0")]
-[assembly: AssemblyInformationalVersion("1.0.3")]
+[assembly: AssemblyVersion("1.0.4.0")]
+[assembly: AssemblyFileVersion("1.0.4.0")]
+[assembly: AssemblyInformationalVersion("1.0.4")]
 [assembly: AssemblyTitle("Codex Mobile Bridge")]
 [assembly: AssemblyProduct("Codex Mobile Bridge")]
 [assembly: AssemblyDescription("Codex Mobile Bridge")]
@@ -264,5 +264,5 @@ class InstallerWindow : Form {
                     }
                 }
     }
-    void Register() {using(var key=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexMobileConnector")){key.SetValue("DisplayName","Codex Mobile Bridge");key.SetValue("DisplayVersion",ConnectorBootstrap.Version);key.SetValue("InstallLocation",root);key.SetValue("UninstallString","\""+Path.Combine(root,"CodexMobileConnector.exe")+"\" --uninstall");key.SetValue("NoModify",1);key.SetValue("NoRepair",1);}}
+    void Register() {using(var key=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexMobileConnector")){key.SetValue("DisplayName","Codex Mobile Bridge");key.SetValue("DisplayVersion",ConnectorBootstrap.Version);key.SetValue("InstallLocation",root);key.SetValue("DisplayIcon","\""+Path.Combine(root,"CodexMobileConnector.exe")+"\",0");key.SetValue("UninstallString","\""+Path.Combine(root,"CodexMobileConnector.exe")+"\" --uninstall");key.SetValue("NoModify",1);key.SetValue("NoRepair",1);}}
 }

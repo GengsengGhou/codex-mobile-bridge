@@ -55,7 +55,7 @@ function pollingClock(window) {
   };
 }
 
-async function mount(t, route = () => undefined, { session = {}, expectedRows = 3, urlThread = A, automaticClock = false, language = 'zh-CN', delayedMath = false, pathname = '/', disconnectedStartup = false } = {}) {
+async function mount(t, route = () => undefined, { session = {}, expectedRows = 3, urlThread = A, automaticClock = false, language = 'zh-CN', delayedMath = false, pathname = '/', disconnectedStartup = false, onMarkdown = null } = {}) {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const dom = new JSDOM(html, { url: `http://127.0.0.1:4317${pathname}?thread=${urlThread}`, runScripts: 'outside-only', pretendToBeVisual: true });
   Object.defineProperty(dom.window.navigator, 'language', { value: language, configurable: true }); // Existing Chinese-copy fixtures default to zh-CN.
@@ -107,11 +107,15 @@ async function mount(t, route = () => undefined, { session = {}, expectedRows = 
         .replace(/^import .*;\r?\n/gm, '')
         .replaceAll('export ', '')
         .replace('import("./vendor/katex/katex.mjs")', 'releaseKatex');
-      const [{ createI18n }, { splitLocalReference }] = await Promise.all([
-        import('../public/i18n.js'), import('../public/files.js')
+      const [{ createI18n }, { splitLocalReference }, { enhanceMermaidCode, MERMAID_LIMITS }] = await Promise.all([
+        import('../public/i18n.js'), import('../public/files.js'), import('../public/mermaid.js')
       ]);
-      const createDelayedMarkdown = new Function('createI18n', 'splitLocalReference', 'releaseKatex', 'window', `${markdownSource}\nreturn { appendMarkdown, parseMarkdown, safeHref, mathReady };`);
-      Object.assign(modules, createDelayedMarkdown(createI18n, splitLocalReference, mathGate.promise, window));
+      const createDelayedMarkdown = new Function('createI18n', 'splitLocalReference', 'enhanceMermaidCode', 'MERMAID_LIMITS', 'releaseKatex', 'window', `${markdownSource}\nreturn { appendMarkdown, parseMarkdown, safeHref, mathReady };`);
+      Object.assign(modules, createDelayedMarkdown(createI18n, splitLocalReference, enhanceMermaidCode, MERMAID_LIMITS, mathGate.promise, window));
+    }
+    if (modules.appendMarkdown && onMarkdown) {
+      const append = modules.appendMarkdown;
+      modules.appendMarkdown = (...args) => { onMarkdown(args[1]); return append(...args); };
     }
     window.__modules[match[2]] = modules;
   }
@@ -152,6 +156,45 @@ test('a newly listed thread switches after startup while rejected reads preserve
   ui.doc.querySelector(`.task-row[data-order-id="${A}"] .task-item`).click();
   await until(() => input.value === 'Alpha retained draft', 'original draft restored');
   selectNew(); await until(() => input.value === 'New task draft', 'new draft restored');
+  assert.equal(ui.requests.some(call => call.method && call.method !== 'GET'), false); assert.deepEqual(ui.errors, []);
+});
+
+test('compressed validator recovery keeps messages, pagination, drafts and healthy send controls through repeated synchronization', async t => {
+  let revision = 0, malformed = false; const readCalls = [];
+  const ui = await mount(t, call => {
+    const match = /^\/api\/threads\/([^/?]+)(?:\?cursor=older)?$/.exec(call.path);
+    if (!match) return;
+    const id = match[1], older = call.path.includes('?'); readCalls.push(call);
+    const rawTag = `"${id}-${older ? 'older' : 'latest'}-${revision}"`;
+    if (call.headers?.['If-None-Match']) return new Response(null, { status: 304, headers: { ETag: rawTag } });
+    if (malformed) return new Response('{', { headers: { ETag: rawTag.slice(0, -1) + '-gzip"' } });
+    const data = snapshot(id, `${id === A ? 'Alpha' : 'Beta'} reply ${revision}`);
+    if (older) data.turns = [{ id: `older-${id}`, items: [{ id: `older-item-${id}`, type: 'agentMessage', text: 'Older retained content' }] }];
+    data.page = older ? { hasMore: false, nextCursor: null } : { hasMore: true, nextCursor: 'older' };
+    return new Response(JSON.stringify(data), { headers: { ETag: rawTag.slice(0, -1) + '-gzip"' } });
+  });
+  const input = ui.doc.getElementById('promptInput'); input.value = 'Alpha draft'; input.dispatchEvent(new ui.window.Event('input'));
+  const latestReads = () => readCalls.filter(call => call.path === `/api/threads/${A}`).length;
+  const before = latestReads(); ui.doc.getElementById('retryThreadButton').click();
+  await until(() => latestReads() === before + 2, 'different opaque tag requires one recovery GET');
+  await until(() => !ui.doc.getElementById('sendButton').disabled, 'healthy send control');
+  assert.equal(input.value, 'Alpha draft'); assert.equal(ui.doc.getElementById('connection').dataset.state, 'connected');
+  for (let i = 0; i < 3; i++) { const count = latestReads(); ui.doc.getElementById('retryThreadButton').click(); await until(() => latestReads() > count, 'single cooldown read'); }
+  assert.equal(latestReads(), before + 5);
+  revision++; ui.doc.getElementById('retryThreadButton').click();
+  await until(() => ui.doc.getElementById('transcript').textContent.includes('Alpha reply 1'), 'changed content during cooldown');
+  ui.doc.getElementById('olderButton').click(); await until(() => ui.doc.getElementById('transcript').textContent.includes('Older retained content'), 'older page loads');
+  ui.doc.querySelector(`.task-row[data-order-id="${B}"] .task-item`).click();
+  await until(() => ui.doc.getElementById('threadTitle').textContent === 'Beta', 'Beta selected');
+  input.value = 'Beta draft'; input.dispatchEvent(new ui.window.Event('input'));
+  ui.doc.querySelector(`.task-row[data-order-id="${A}"] .task-item`).click();
+  await until(() => input.value === 'Alpha draft', 'Alpha draft restored');
+  assert.ok(ui.doc.getElementById('transcript').textContent.includes('Older retained content'));
+  malformed = true; ui.doc.getElementById('retryThreadButton').click();
+  await until(() => ui.doc.getElementById('notice').textContent.includes('数据不完整'), 'genuinely damaged response remains visible');
+  assert.equal(input.value, 'Alpha draft'); assert.equal(ui.doc.getElementById('connection').dataset.state, 'connected');
+  assert.ok(ui.doc.getElementById('transcript').textContent.includes('Alpha reply 1'));
+  assert.equal(ui.doc.getElementById('sendButton').disabled, false);
   assert.equal(ui.requests.some(call => call.method && call.method !== 'GET'), false); assert.deepEqual(ui.errors, []);
 });
 
@@ -522,6 +565,152 @@ test('one native turn shows 165 minutes 36 seconds once across split work blocks
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.deepEqual(summaries(), ['工作过程', '工作过程', '工作过程 · 用时 165 分 36 秒']);
   assert.deepEqual(ui.errors, []);
+});
+
+test('long conversations defer closed work Markdown and tool DOM until the block opens once', async t => {
+  const markdown = [];
+  const turns = Array.from({ length: 10 }, (_, index) => ({ id: `lazy-${index}`, startedAt: 1000 + index, status: 'completed', items: [
+    { id: `user-${index}`, type: 'userMessage', text: `Request ${index}` },
+    ...(index === 0 ? [{ id: 'extra-user', type: 'userMessage', text: 'Clarification' }] : []),
+    ...Array.from({ length: index < 3 ? 29 : 28 }, (_, item) => ({ id: `comment-${index}-${item}`, type: 'agentMessage', phase: 'commentary', text: `Hidden work ${index}/${item} **with Markdown**` })),
+    ...Array.from({ length: index < 5 ? 87 : 86 }, (_, item) => ({ id: `tool-${index}-${item}`, type: 'activity', text: `Tool ${item}`, detail: { result: item } })),
+    { id: `final-${index}`, type: 'agentMessage', phase: 'final_answer', text: `Alpha reply ${index}` },
+  ] }));
+  const ui = await mount(t, call => call.path === `/api/threads/${A}` ? response({ ...snapshot(A), turns }) : undefined, { onMarkdown: value => markdown.push(value) });
+  assert.equal(turns.flatMap(turn => turn.items).length, 1169);
+  assert.equal(markdown.length, 21);
+  assert.equal(ui.doc.querySelectorAll('#transcript .work-commentary, #transcript .activity-item').length, 0);
+  assert.ok(ui.doc.querySelectorAll('#transcript *').length < 300);
+  const work = ui.doc.querySelector('.work-process');
+  work.open = true;
+  await until(() => work.querySelectorAll('.work-commentary').length === 29, 'work materialized on open');
+  assert.equal(work.querySelectorAll('.activity-item').length, 87);
+  assert.equal(markdown.length, 50);
+  const first = work.querySelector('.work-commentary');
+  work.open = false; await new Promise(resolve => setTimeout(resolve, 0));
+  work.open = true; await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(work.querySelector('.work-commentary'), first);
+  assert.equal(markdown.length, 50);
+  assert.equal(ui.requests.some(call => call.method && call.method !== 'GET'), false);
+  assert.deepEqual(ui.errors, []);
+});
+
+test('lazy work preserves math, actions, expanded details and drafts through updates and cached switches', async t => {
+  let revision = 0;
+  const data = () => ({ ...snapshot(A), turns: [{ id: 'lazy-live', startedAt: 1000, status: 'completed', items: [
+    { id: 'work-comment', type: 'agentMessage', phase: 'commentary', text: `Work revision ${revision} $x^2$ [notes](<E:/project/notes.txt>)\n\n:codex-followup[检查]{prompt="检查建议"}` },
+    { id: 'work-tool', type: 'activity', text: 'Tool check', detail: `Detail revision ${revision}` },
+    { id: 'reply', type: 'agentMessage', phase: 'final_answer', text: 'Alpha reply' },
+  ] }] });
+  const ui = await mount(t, call => {
+    if (call.path === `/api/threads/${A}`) return response(data());
+    if (call.path.startsWith(`/api/threads/${A}/file?`)) return response({ code: 'FILE_FORBIDDEN', error: 'fixture denied' }, 403);
+  }, { delayedMath: true });
+  const input = ui.doc.getElementById('promptInput'), transcript = ui.doc.getElementById('transcript');
+  input.value = 'Alpha draft'; input.dispatchEvent(new ui.window.Event('input'));
+  let work = ui.doc.querySelector('.work-process');
+  work.open = true; await until(() => work.querySelector('.markdown-math-fallback'), 'lazy math before import');
+  ui.mathGate.resolve({ default: (await import('../public/vendor/katex/katex.mjs')).default });
+  await ui.mathReady;
+  assert.equal(work.querySelectorAll('.katex').length, 1);
+  work.querySelector('.activity-details').open = true;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  ui.doc.getElementById('languageSelect').value = 'en';
+  ui.doc.getElementById('languageSelect').dispatchEvent(new ui.window.Event('change', { bubbles: true }));
+  assert.match(work.querySelector('summary').textContent, /Work/);
+  assert.equal(work.querySelector('.activity-details > summary').textContent, 'View details');
+  work.querySelector('.markdown-followup').click();
+  assert.equal(ui.doc.getElementById('followupDraftDialog').open, true);
+  assert.equal(input.value, 'Alpha draft');
+  ui.doc.getElementById('followupDraftCancel').click();
+  work.querySelector('[data-local-file]').click();
+  await until(() => ui.requests.some(call => call.path.startsWith(`/api/threads/${A}/file?`)), 'lazy file preview uses current identity');
+  ui.doc.getElementById('filesClose').click();
+  revision = 1; ui.doc.getElementById('retryThreadButton').click();
+  await until(() => transcript.textContent.includes('Work revision 1'), 'open work refresh');
+  work = ui.doc.querySelector('.work-process');
+  assert.equal(work.open, true); assert.equal(work.querySelector('.activity-details').open, true);
+  assert.equal(work.querySelector('.activity-detail').textContent, 'Detail revision 1');
+  assert.equal(work.querySelectorAll('.katex').length, 1);
+  const font = ui.doc.getElementById('fontRange'); font.value = '48'; font.dispatchEvent(new ui.window.Event('input'));
+  transcript.scrollTop = 73;
+  ui.doc.querySelector(`.task-row[data-order-id="${B}"] .task-item`).click();
+  await until(() => ui.doc.getElementById('threadTitle').textContent === 'Beta', 'Beta selected');
+  input.value = 'Beta draft'; input.dispatchEvent(new ui.window.Event('input'));
+  ui.doc.querySelector(`.task-row[data-order-id="${A}"] .task-item`).click();
+  assert.equal(input.value, 'Alpha draft'); assert.equal(transcript.scrollTop, 73);
+  work = ui.doc.querySelector('.work-process');
+  assert.equal(work.open, true); assert.equal(work.querySelector('.activity-details').open, true);
+  assert.equal(work.querySelectorAll('.katex').length, 1);
+  assert.match(work.querySelector('summary').textContent, /Work/);
+  assert.equal(ui.doc.documentElement.style.getPropertyValue('--font-size'), '48px');
+  assert.equal(ui.requests.some(call => call.method && call.method !== 'GET'), false);
+  assert.deepEqual(ui.errors, []);
+});
+
+test('detached work toggles cannot render a previous selection and pending identity checks show immediate feedback', async t => {
+  const pending = deferred(), markdown = [];
+  const ui = await mount(t, call => {
+    if (call.path === `/api/threads/${A}`) return response({ ...snapshot(A), turns: [{ id: 'lazy-old', items: [
+      { id: 'hidden-old', type: 'agentMessage', phase: 'commentary', text: 'Old hidden commentary' },
+      { id: 'reply-old', type: 'agentMessage', phase: 'final_answer', text: 'Alpha reply' },
+    ] }] });
+    if (call.path === `/api/threads/${B}`) return pending.promise;
+  }, { onMarkdown: value => markdown.push(value) });
+  const work = ui.doc.querySelector('.work-process'), input = ui.doc.getElementById('promptInput');
+  input.value = 'Retained Alpha draft'; input.dispatchEvent(new ui.window.Event('input'));
+  ui.doc.querySelector(`.task-row[data-order-id="${B}"] .task-item`).click();
+  assert.equal(ui.doc.getElementById('composerHint').textContent, '正在读取所选会话，草稿已保留');
+  assert.equal(ui.doc.getElementById('composerHint').classList.contains('sr-only'), false);
+  const beta = ui.doc.querySelector(`.task-row[data-order-id="${B}"] .task-item`);
+  assert.equal(beta.getAttribute('aria-busy'), 'true');
+  assert.equal(beta.querySelector('.task-read-state').hidden, false);
+  assert.equal(beta.querySelector('.task-read-state').textContent, '读取中…');
+  assert.equal(ui.doc.querySelector(`.task-row[data-order-id="${A}"] .task-item`).getAttribute('aria-current'), 'true');
+  assert.equal(ui.doc.getElementById('sendButton').disabled, true);
+  assert.equal(input.value, 'Retained Alpha draft'); assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Alpha');
+  pending.resolve(response(snapshot(B)));
+  await until(() => ui.doc.getElementById('threadTitle').textContent === 'Beta', 'confirmed ordinary selection');
+  assert.equal(work.isConnected, false);
+  const count = markdown.length;
+  work.open = true; work.dispatchEvent(new ui.window.Event('toggle'));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(markdown.length, count); assert.equal(work.querySelector('.work-process-content').childElementCount, 0);
+  assert.equal(ui.doc.getElementById('composerHint').textContent, '');
+  assert.equal(ui.doc.querySelector(`.task-row[data-order-id="${B}"] .task-item`).getAttribute('aria-busy'), 'false');
+  assert.equal(ui.doc.querySelector(`.task-row[data-order-id="${B}"] .task-read-state`).hidden, true);
+  assert.equal(ui.requests.some(call => call.method && call.method !== 'GET'), false);
+  assert.deepEqual(ui.errors, []);
+});
+
+test('candidate loading feedback clears on cancellation, failure and confirmed child routing without changing the parent', async t => {
+  const pending = deferred(); let mode = 'pending';
+  const ui = await mount(t, call => {
+    if (call.path === `/api/threads/${B}`) {
+      if (mode === 'pending') return pending.promise;
+      if (mode === 'failure') return response({ code: 'THREAD_READ_FAILED', error: 'Fixture read failure' }, 502);
+      return response({ ...snapshot(B, 'Child reply'), thread: { ...snapshot(B).thread, delegated: true }, canSend: false });
+    }
+  });
+  const input = ui.doc.getElementById('promptInput'); input.value = 'Parent draft'; input.dispatchEvent(new ui.window.Event('input'));
+  const beta = () => ui.doc.querySelector(`.task-row[data-order-id="${B}"] .task-item`);
+  beta().click(); assert.equal(beta().getAttribute('aria-busy'), 'true');
+  ui.doc.querySelector(`.task-row[data-order-id="${A}"] .task-item`).click();
+  assert.equal(beta().getAttribute('aria-busy'), 'false'); assert.equal(beta().querySelector('.task-read-state').hidden, true);
+  pending.resolve(response(snapshot(B, 'Late ignored Beta')));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Alpha'); assert.equal(input.value, 'Parent draft');
+  mode = 'failure'; beta().click();
+  await until(() => ui.doc.getElementById('notice').textContent.includes('Fixture read failure'), 'candidate failure');
+  assert.equal(beta().getAttribute('aria-busy'), 'false'); assert.equal(beta().querySelector('.task-read-state').hidden, true);
+  assert.equal(input.value, 'Parent draft'); assert.equal(ui.doc.getElementById('sendButton').disabled, false);
+  mode = 'child'; beta().click();
+  await until(() => ui.doc.getElementById('agentViewerTranscript').textContent.includes('Child reply'), 'confirmed child viewer');
+  assert.equal(beta(), null); assert.equal(ui.doc.getElementById('threadTitle').textContent, 'Alpha');
+  assert.equal(input.value, 'Parent draft'); assert.equal(new URL(ui.window.location.href).searchParams.get('thread'), A);
+  assert.equal(ui.doc.getElementById('composerHint').textContent, '');
+  assert.equal(ui.doc.getElementById('sendButton').disabled, false);
+  assert.equal(ui.requests.some(call => call.method && call.method !== 'GET'), false); assert.deepEqual(ui.errors, []);
 });
 
 test('transformed two-image native input reconciles one pending copy and preserves a distinct repeated user message', async t => {

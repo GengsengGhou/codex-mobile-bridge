@@ -1,5 +1,6 @@
 import { createI18n } from "./i18n.js";
 import { splitLocalReference } from "./files.js";
+import { enhanceMermaidCode, MERMAID_LIMITS } from "./mermaid.js";
 
 let katex = null;
 const pendingMathContainers = new Set();
@@ -326,8 +327,9 @@ export function parseMarkdown(markdown) {
       const body = [];
       index += 1;
       while (index < lines.length && !closing.test(lines[index])) body.push(lines[index++]);
-      if (index < lines.length) index += 1;
-      blocks.push({ type: "codeBlock", language, text: body.join("\n") });
+      const incomplete = index === lines.length;
+      if (!incomplete) index += 1;
+      blocks.push({ type: "codeBlock", language, text: body.join("\n"), ...(/^mermaid$/i.test(language) && incomplete ? { incomplete: true } : {}) });
       continue;
     }
 
@@ -508,6 +510,7 @@ function appendBlock(parent, block, doc, budget) {
     pre.append(code);
     wrapper.append(header, pre);
     parent.append(wrapper);
+    if (/^mermaid$/i.test(block.language)) enhanceMermaidCode(wrapper, block.text, doc, { incomplete: block.incomplete === true, limited: budget.diagrams-- <= 0 });
   } else if (block.type === "table") {
     const scroll = doc.createElement("div");
     scroll.className = "markdown-table-scroll";
@@ -538,7 +541,7 @@ function appendBlock(parent, block, doc, budget) {
 
 export function appendMarkdown(parent, source, doc = globalThis.document, options = {}) {
   if (!doc?.createElement || !parent?.append) throw new TypeError("A DOM parent and document are required");
-  const budget = { remaining: MAX_MATH_PER_MESSAGE, allowFollowups: options.allowFollowups === true };
+  const budget = { remaining: MAX_MATH_PER_MESSAGE, diagrams: MERMAID_LIMITS.perMessage, allowFollowups: options.allowFollowups === true };
   for (const block of parseMarkdown(source)) appendBlock(parent, block, doc, budget);
 }
 

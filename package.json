@@ -1,6 +1,6 @@
 {
   "name": "codex-mobile-bridge",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "description": "Mobile access and remote control for existing Codex desktop tasks through a local connector and device hub",
@@ -19,11 +19,14 @@
     "connector:start": "node scripts/start-connector.mjs",
     "connector:background": "node scripts/start-connector.mjs --background",
     "release:package": "node deploy/package.mjs",
-    "vendor:math": "node scripts/vendor-katex.mjs"
+    "vendor:math": "node scripts/vendor-katex.mjs",
+    "vendor:mermaid": "node scripts/vendor-mermaid.mjs"
   },
   "devDependencies": {
+    "esbuild": "0.28.2",
     "jsdom": "^29.1.1",
-    "katex": "0.18.9"
+    "katex": "0.18.9",
+    "mermaid": "12.1.0"
   },
   "dependencies": {
     "ws": "^8.22.0"

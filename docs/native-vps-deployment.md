@@ -54,7 +54,7 @@ systemctl is-active caddy
 
 ## 3. 下载、上传并校验服务器包
 
-下载 v1.0.0 的 [`codex-device-hub.tar.gz`](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v1.0.0/codex-device-hub.tar.gz) 和同一发行版的 [`SHA256SUMS`](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v1.0.0/SHA256SUMS)。可在自己的电脑用浏览器下载后上传，也可直接在 VPS 下载，不需要 GitHub 令牌；下载不授予桥接服务账号。
+下载 v1.0.4 的 [`codex-device-hub.tar.gz`](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v1.0.4/codex-device-hub.tar.gz) 和同一发行版的 [`SHA256SUMS`](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v1.0.4/SHA256SUMS)。可在自己的电脑用浏览器下载后上传，也可直接在 VPS 下载，不需要 GitHub 令牌；下载不授予桥接服务账号。
 
 先在 VPS root shell 创建上传目录：
 
@@ -72,7 +72,7 @@ scp codex-device-hub.tar.gz SHA256SUMS root@VPS_IP:/root/codex-hub-release/
 
 ```bash
 cd /root/codex-hub-release
-release_tag=v1.0.0
+release_tag=v1.0.4
 release_url="https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/$release_tag"
 curl -fL --proto '=https' --tlsv1.2 "$release_url/codex-device-hub.tar.gz" -o codex-device-hub.tar.gz
 curl -fL --proto '=https' --tlsv1.2 "$release_url/SHA256SUMS" -o SHA256SUMS

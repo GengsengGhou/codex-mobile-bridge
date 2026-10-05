@@ -117,7 +117,7 @@ test('invalid success JSON and mismatched thread shapes never enter the snapshot
   }
 });
 
-test('304 cannot reuse another thread or cursor snapshot and an explicit wrong validator fails closed', async () => {
+test('304 cannot reuse another thread or cursor snapshot and a different validator requires a fresh validated read', async () => {
   const a = '00000000-0000-0000-0000-000000000001', b = '00000000-0000-0000-0000-000000000002';
   const paths = [`/api/threads/${a}`, `/api/threads/${b}`, `/api/threads/${a}?cursor=older`];
   const calls = [], snapshots = [];
@@ -132,7 +132,131 @@ test('304 cannot reuse another thread or cursor snapshot and an explicit wrong v
   assert.deepEqual(calls.map(call => call.etag), [undefined, JSON.stringify(paths[0]), undefined, JSON.stringify(paths[1]), undefined, JSON.stringify(paths[2])]);
   assert.equal((await api(paths[0])).thread.id, a);
   wrongValidator = true; const before = snapshots.length;
-  await assert.rejects(api(paths[0]), { code: 'RESPONSE_INVALID' }); assert.equal(snapshots.length, before);
+  assert.equal((await api(paths[0])).thread.id, a); assert.equal(snapshots.length, before + 1);
+  assert.equal(calls.at(-1).etag, undefined, 'the unrelated validator cannot authorize cached content');
+});
+
+test('GET 304 accepts only RFC weak equality and returns isolated copies across repeated polls', async () => {
+  for (const [first, next] of [['"same"', 'W/"same"'], ['W/"same"', '"same"'], ['W/"same"', 'W/"same"'], ['""', 'W/""']]) {
+    let calls = 0;
+    const api = createApi({ fetchImpl: async (_path, options) => {
+      if (++calls === 1) return new Response('{"connected":true}', { headers: { ETag: first } });
+      assert.equal(options.headers['If-None-Match'], first);
+      return new Response(null, { status: 304, headers: { ETag: next } });
+    } });
+    (await api('/api/status')).connected = false;
+    for (let i = 0; i < 4; i++) assert.equal((await api('/api/status')).connected, true);
+    assert.equal(calls, 5);
+  }
+});
+
+test('opaque validator recovery is bounded, removes conditional headers, and pauses rather than continually retrying', async t => {
+  const originalNow = Date.now; let now = originalNow(); Date.now = () => now;
+  t.after(() => { Date.now = originalNow; });
+  const calls = []; let divergent = true;
+  const api = createApi({ headers: { 'if-none-match': 'global-validator' }, fetchImpl: async (_path, options) => {
+    calls.push(options);
+    if (options.headers['If-None-Match']) return new Response(null, { status: 304, headers: { ETag: divergent ? '"unrelated"' : 'W/"compressed"' } });
+    return new Response('{"connected":true}', { headers: { ETag: '"compressed"' } });
+  } });
+  const opts = { headers: { 'iF-NoNe-MaTcH': 'caller-validator' } };
+  await api('/api/status'); await api('/api/status', opts);
+  assert.equal(calls.length, 3);
+  assert.ok(Object.keys(calls.at(-1).headers).every(key => key.toLowerCase() !== 'if-none-match'));
+  assert.equal(calls.at(-1).cache, 'no-store');
+  now += 10000; await api('/api/status', opts); assert.equal(calls.length, 4);
+  now += 10000; await api('/api/status', opts); assert.equal(calls.length, 5);
+  assert.ok(calls.slice(3).every(call => Object.keys(call.headers).every(key => key.toLowerCase() !== 'if-none-match')));
+  divergent = false; now += 10001; await api('/api/status');
+  assert.equal(calls.length, 6); assert.equal(calls.at(-1).headers['If-None-Match'], '"compressed"', 'intermediate 200s do not prolong the 30-second pause');
+  await api('/api/status'); assert.equal(calls.length, 7);
+});
+
+test('unconditional recovery rejects repeated 304, bad JSON, wrong IDs and invalid shapes with safe reason and stage', async () => {
+  const id = '00000000-0000-0000-0000-000000000001', path = `/api/threads/${id}`;
+  for (const [reply, reason, code] of [
+    [() => new Response(null, { status: 304 }), 'unexpected-not-modified', 'RESPONSE_INVALID'],
+    [() => new Response('{'), 'json-parse', 'RESPONSE_INVALID'],
+    [() => new Response('null'), 'json-shape', 'RESPONSE_INVALID'],
+    [() => new Response(JSON.stringify({ thread: { id: 'wrong' }, turns: [] })), 'thread-identity', 'THREAD_MISMATCH'],
+    [() => new Response(JSON.stringify({ thread: { id }, turns: {} })), 'thread-turns-shape', 'RESPONSE_INVALID']
+  ]) {
+    let calls = 0; const snapshots = [];
+    const api = createApi({ onSnapshot: body => snapshots.push(body), fetchImpl: async (_path, options) => {
+      calls++;
+      if (calls === 1) return new Response(JSON.stringify({ thread: { id }, turns: [] }), { headers: { ETag: '"cached"' } });
+      if (calls === 2) return new Response(null, { status: 304, headers: { ETag: '"unrelated"' } });
+      assert.equal(options.headers['If-None-Match'], undefined); assert.equal(options.cache, 'no-store'); return reply();
+    } });
+    await api(path);
+    await assert.rejects(api(path), error => error.code === code && error.reason === reason && error.stage === 'conditional-recovery');
+    assert.equal(calls, 3); assert.equal(snapshots.length, 1);
+  }
+});
+
+test('validator cooldown is scoped to the exact page and API instance, and mutation invalidation removes it', async () => {
+  const a = '00000000-0000-0000-0000-000000000001', b = '00000000-0000-0000-0000-000000000002';
+  const path = `/api/threads/${a}`, seen = [];
+  const create = () => createApi({ fetchImpl: async (route, options) => {
+    seen.push({ route, validator: options.headers['If-None-Match'] });
+    if (options.headers['If-None-Match']) return new Response(null, { status: 304, headers: { ETag: '"different"' } });
+    return new Response(JSON.stringify(options.method === 'POST' ? { accepted: true } : { thread: { id: route.includes(b) ? b : a }, turns: [] }), { headers: { ETag: '"current"' } });
+  } });
+  const first = create(); await first(path); await first(path); await first(`${path}?cursor=older`);
+  await first(`/api/threads/${b}`); const other = create(); await other(path);
+  await first(path, { method: 'POST', body: '{}' }); await first(path); await first(path);
+  assert.deepEqual(seen.map(call => call.validator), [undefined, '"current"', undefined, undefined, undefined, undefined, undefined, undefined, '"current"', undefined]);
+});
+
+test('an aborted recovery preserves the original cancellation and never issues further requests', async () => {
+  const controller = new AbortController(); let calls = 0;
+  const cancellation = Object.assign(new Error('cancelled'), { name: 'AbortError' });
+  const api = createApi({ fetchImpl: async (_path, options) => {
+    calls++;
+    if (calls === 1) return new Response('{}', { headers: { ETag: '"first"' } });
+    if (calls === 2) return new Response(null, { status: 304, headers: { ETag: '"different"' } });
+    assert.equal(options.signal, controller.signal); controller.abort(); throw cancellation;
+  } });
+  await api('/api/status'); await assert.rejects(api('/api/status', { signal: controller.signal }), error => error === cancellation);
+  assert.equal(calls, 3);
+});
+
+test('eviction and missing or malformed 200 validators discard both old snapshots and conditional cooldowns', async () => {
+  const id = '00000000-0000-0000-0000-000000000001', path = `/api/threads/${id}`;
+  for (const nextEtag of [null, 'unquoted', 'w/"invalid"']) {
+    let calls = 0; const seen = [];
+    const api = createApi({ fetchImpl: async (_path, options) => {
+      seen.push(options.headers['If-None-Match']); calls++;
+      const etag = calls === 1 ? '"old"' : nextEtag;
+      return new Response(JSON.stringify({ thread: { id }, turns: [] }), { headers: etag ? { ETag: etag } : {} });
+    } });
+    await api(path); await api(path); await api(path);
+    assert.deepEqual(seen, [undefined, '"old"', undefined]);
+  }
+  const seen = [], api = createApi({ fetchImpl: async (route, options) => {
+    seen.push(options.headers['If-None-Match']);
+    if (options.headers['If-None-Match']) return new Response(null, { status: 304, headers: { ETag: '"divergent"' } });
+    return new Response(JSON.stringify({ thread: { id: route.split('/').at(-1) }, turns: [] }), { headers: { ETag: '"current"' } });
+  } });
+  await api(path); await api(path);
+  for (let i = 2; i < 35; i++) await api('/api/threads/00000000-0000-0000-0000-' + String(i).padStart(12, '0'));
+  await api(path); assert.equal(seen.at(-1), undefined);
+  await api(path); assert.equal(seen.at(-2), '"current"', 'evicted cooldown must not suppress the new entry');
+});
+
+test('GET session renewal clears conditional cooldown and uses an unconditional authenticated retry', async () => {
+  let failSession = false; const calls = [];
+  const api = createApi({ fetchImpl: async (path, options) => {
+    calls.push({ path, ...options });
+    if (path === '/') { failSession = false; return new Response('renewed'); }
+    if (failSession) return new Response('{}', { status: 401 });
+    if (options.headers['If-None-Match']) return new Response(null, { status: 304, headers: { ETag: '"other"' } });
+    return new Response('{}', { headers: { ETag: '"current"' } });
+  } });
+  await api('/api/status'); await api('/api/status');
+  failSession = true; await api('/api/status'); await api('/api/status');
+  assert.equal(calls.filter(call => call.path === '/').length, 1);
+  await api('/api/status'); assert.equal(calls.at(-2).headers['If-None-Match'], '"current"', 'renewed session can validate after one fresh cache insert');
 });
 
 test('an uncached repeated 304 and invalid mutation response cannot masquerade as an empty success', async () => {

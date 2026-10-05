@@ -1,0 +1,12 @@
+{
+  "version": "12.1.0",
+  "bundler": "0.28.2",
+  "assets": [
+    "mermaid.mjs",
+    "LICENSE"
+  ],
+  "sha256": {
+    "mermaid.mjs": "9c9305af59e9fdd7c4b22529c6b361b5ffcd5149f2e5cb9316f12c34af1cd494",
+    "LICENSE": "ec9fb67dcb25eccc416ed56e1aab819222c805a2a4bfe4cb19e7556bf2ffde80"
+  }
+}
