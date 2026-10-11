@@ -7,10 +7,12 @@ import { chooseFreePort, probeLocalBridge } from './bootstrap-bridge.mjs';
 import { registerDeferredConnectorLogin, launchConnectorLoginWatcher } from './connector-login.mjs';
 import { createConnectorControl, stopOwnedConnectorProcesses } from './connector-control.mjs';
 import { createConnectorUpdater } from './connector-updates.mjs';
+import { collaborationSettings } from './collaboration-settings.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 export async function guiCommand(command, deps = {}) {
   const appRoot = deps.root || root;
+  if (['get-collaboration-state', 'save-collaboration'].includes(command.action)) return collaborationSettings(command, { root: appRoot, ...deps.collaborationOptions });
   if (['get-update-state', 'check-update', 'update-preferences', 'download-update'].includes(command.action)) {
     const updater = deps.updater || createConnectorUpdater({ root: appRoot, ...deps.updateOptions });
     if (command.action === 'get-update-state') return updater.state();
@@ -96,7 +98,7 @@ export async function guiCommand(command, deps = {}) {
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   let text = '';
-  for await (const chunk of process.stdin) { text += chunk; if (text.length > 8192) throw new Error('请求过大。'); }
+  for await (const chunk of process.stdin) { text += chunk; if (text.length > 65536) throw new Error('请求过大。'); }
   try { console.log(JSON.stringify({ ok: true, ...await guiCommand(JSON.parse(text)) })); }
   catch (error) { console.log(JSON.stringify({ ok: false, error: error.message })); process.exitCode = 1; }
 }

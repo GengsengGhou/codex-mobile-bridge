@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -121,10 +122,12 @@ class ConnectorWindow : Form,IConnectorWindow {
     void Fields(Dictionary<string,object> fields,params string[] allowed){foreach(string key in fields.Keys)if(Array.IndexOf(allowed,key)<0)throw new Exception(DesktopLocale.T("请求字段无效。"));}
     string TextField(Dictionary<string,object> data,string key,int maximum){object value;if(!data.TryGetValue(key,out value)||!(value is string)||((string)value).Length>maximum)throw new Exception(DesktopLocale.T("请求内容无效。"));return (string)value;}
     bool BoolField(Dictionary<string,object> data,string key){object value;if(!data.TryGetValue(key,out value)||!(value is bool))throw new Exception(DesktopLocale.T("请求内容无效。"));return (bool)value;}
+    string[] StringArrayField(Dictionary<string,object> data,string key,int maximumCount,int maximumLength){object raw;if(!data.TryGetValue(key,out raw)||!(raw is IList))throw new Exception(DesktopLocale.T("请求内容无效。"));var values=(IList)raw;if(values.Count>maximumCount)throw new Exception(DesktopLocale.T("请求内容无效。"));var result=new List<string>(values.Count);foreach(object value in values){if(!(value is string)||string.IsNullOrWhiteSpace((string)value)||((string)value).Length>maximumLength)throw new Exception(DesktopLocale.T("请求内容无效。"));result.Add((string)value);}return result.ToArray();}
+    string[] DeviceIdArrayField(Dictionary<string,object> data,string key){string[] values=StringArrayField(data,key,10,36);foreach(string value in values){Guid parsed;if(!Guid.TryParseExact(value,"D",out parsed))throw new Exception(DesktopLocale.T("请求内容无效。"));}return values;}
     async Task Receive(CoreWebView2WebMessageReceivedEventArgs e) {
         int id=0;
         try {
-            if(e.Source!=Page||e.WebMessageAsJson.Length>8192)return;
+            if(e.Source!=Page||e.WebMessageAsJson.Length>65536)return;
             var request=json.Deserialize<Dictionary<string,object>>(e.WebMessageAsJson);Fields(request,"id","action","payload");
             if(!request.ContainsKey("id")||!(request["id"] is int)||(int)request["id"]<=0)return;id=(int)request["id"];
             string action=TextField(request,"action",40);object raw;if(!request.TryGetValue("payload",out raw)||!(raw is Dictionary<string,object>))throw new Exception(DesktopLocale.T("请求内容无效。"));var payload=(Dictionary<string,object>)raw;
@@ -140,6 +143,8 @@ class ConnectorWindow : Form,IConnectorWindow {
             if(action=="set-language"){Fields(payload,"language");string selected=TextField(payload,"language",5);DesktopLocale.Save(root,selected);LocalizeTray();SetTray();result=new{language=DesktopLocale.Language};}
             else if(action=="check-update"){Fields(payload,"manual");result=await CheckUpdate(BoolField(payload,"manual"));}
             else if(action=="get-update-state"){Fields(payload);var data=await Run(new{action=action});PublishUpdate(data);ScheduleUpdate((Dictionary<string,object>)data["update"]);result=data;}
+            else if(action=="get-collaboration-state"){Fields(payload);result=await Run(new{action=action});}
+            else if(action=="save-collaboration"){Fields(payload,"controlEnabled","receiveEnabled","allowedDeviceIds","allowedProjectRoots");result=await Run(new{action=action,controlEnabled=BoolField(payload,"controlEnabled"),receiveEnabled=BoolField(payload,"receiveEnabled"),allowedDeviceIds=DeviceIdArrayField(payload,"allowedDeviceIds"),allowedProjectRoots=StringArrayField(payload,"allowedProjectRoots",100,4096)});}
             else if(action=="update-preferences"){Fields(payload,"automatic");bool wasEnabled=updateAutomatic;var data=await Run(new{action=action,automatic=BoolField(payload,"automatic")});PublishUpdate(data);ScheduleUpdate((Dictionary<string,object>)data["update"],!wasEnabled);result=data;}
             else if(action=="download-update"){Fields(payload);if(updateInFlight)throw new Exception(DesktopLocale.T("正在检查或下载更新，请稍后重试。"));if(busy||initializing||confirmingPair||uninstallPending)throw new Exception(DesktopLocale.T("正在完成上一操作，请稍后重试。"));updateInFlight=true;try{var data=await Run(new{action=action},300000);PublishUpdate(data);var state=(Dictionary<string,object>)data["update"];ScheduleUpdate(state);object verified,error;if(data.TryGetValue("installerVerified",out verified)&&verified is bool&&(bool)verified)LaunchVerifiedInstaller(data);else if(!state.TryGetValue("error",out error)||!(error is string)||string.IsNullOrWhiteSpace((string)error))throw new Exception(DesktopLocale.T("后台响应无效。"));result=data;}finally{updateInFlight=false;}}
             else if(action=="status"){Fields(payload);await RefreshStatus();result=new{refreshed=true};}

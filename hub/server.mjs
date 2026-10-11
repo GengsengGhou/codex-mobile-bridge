@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { Readable } from 'node:stream';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
@@ -20,10 +21,10 @@ const ASSETS = new Set([...publicAssets, '/device-context.js']);
 const sharedPublic = new URL('../public/', import.meta.url);
 const hubPublic = new URL('./public/', import.meta.url);
 const json = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); };
-async function readJson(req, keys) {
+async function readJson(req, keys, maxBytes = 8192) {
   if (!(req.headers['content-type'] || '').startsWith('application/json')) throw new HubError('需要 JSON 请求。', 'INVALID_REQUEST', 400);
   let size = 0; const parts = [];
-  for await (const chunk of req) { size += chunk.length; if (size > 8192) throw new HubError('请求过大。', 'BODY_TOO_LARGE', 413); parts.push(chunk); }
+  for await (const chunk of req) { size += chunk.length; if (size > maxBytes) throw new HubError('请求过大。', 'BODY_TOO_LARGE', 413); parts.push(chunk); }
   let value; try { value = JSON.parse(Buffer.concat(parts).toString('utf8')); } catch { throw new HubError('JSON 格式无效。', 'INVALID_REQUEST', 400); }
   if (!value || Array.isArray(value) || typeof value !== 'object' || Object.keys(value).some(key => !keys.includes(key))) throw new HubError('请求参数无效。', 'INVALID_REQUEST', 400);
   return value;
@@ -39,6 +40,10 @@ export function createHubServer({ store = new HubStore(), publicOrigin, allowIns
   const configuredOrigin = originSetting(publicOrigin, allowInsecureLocal);
   const cookieName = allowInsecureLocal ? 'hub_session' : '__Host-hub_session';
   const validRequest = context => {
+    if (context.collaboration) {
+      const source = store.authenticateDevice(context.sourceToken);
+      return Boolean(source && source.id === context.collaboration.sourceDeviceId && source.userId === context.userId && store.device(context.deviceId, source.userId));
+    }
     const session = store.session(context.sessionToken);
     return Boolean(session && session.user.id === context.userId && store.device(context.deviceId, context.userId));
   };
@@ -99,6 +104,27 @@ export function createHubServer({ store = new HubStore(), publicOrigin, allowIns
       if (req.method === 'GET' && ['/', '/hub.js', '/hub.css'].includes(url.pathname)) { await serveAsset(req, res, url.pathname === '/' ? 'index.html' : url.pathname.slice(1), hubPublic); return; }
       if (req.method === 'GET' && ['/hub-boot.js', '/i18n.js', '/i18n-messages.js'].includes(url.pathname)) { await serveAsset(req, res, url.pathname.slice(1), url.pathname === '/hub-boot.js' ? hubPublic : sharedPublic); return; }
       const mutation = !['GET', 'HEAD'].includes(req.method);
+      if (url.pathname.startsWith('/api/hub/collaboration/')) {
+        // This authentication path is deliberately separate from browser session routes.
+        const credential = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization || '')?.[1];
+        const source = store.authenticateDevice(credential);
+        if (!source) throw new HubError('设备凭据无效。', 'DEVICE_REVOKED', 401);
+        if (req.headers['x-bridge-client'] !== 'computer-v1') throw new HubError('请求来源无效。', 'FORBIDDEN', 403);
+        if (req.method === 'GET' && url.pathname === '/api/hub/collaboration/devices') {
+          json(res, 200, { version: 1, sourceDeviceId: source.id, devices: visibleDevices(source.userId).filter(d => d.id !== source.id) }); return;
+        }
+        const target = url.pathname.match(new RegExp(`^/api/hub/collaboration/devices/(${UUID})$`, 'i'))?.[1];
+        if (req.method !== 'POST' || !target) throw new HubError('操作不存在。', 'NOT_FOUND', 404);
+        if (target === source.id || !store.device(target, source.userId)) throw new HubError('设备不存在。', 'NOT_FOUND', 404);
+        const body = await readJson(req, ['operation', 'projectId', 'threadId', 'operationId', 'prompt', 'title', 'cursor', 'turnId', 'turnLimit', 'path', 'kind'], 65536);
+        const bytes = Buffer.from(JSON.stringify(body));
+        const forwarded = Readable.from([bytes]);
+        forwarded.method = 'POST'; forwarded.headers = { 'content-type': 'application/json', 'content-length': String(bytes.length) }; forwarded.complete = true;
+        const abort = () => forwarded.emit('aborted'); req.on('aborted', abort);
+        try { await relay.proxy(target, forwarded, res, '/api/collaboration', { userId: source.userId, deviceId: target, sourceToken: credential, collaboration: { sourceDeviceId: source.id, targetDeviceId: target } }); }
+        finally { req.off('aborted', abort); }
+        return;
+      }
       if (mutation && (req.headers.origin !== origin || req.headers['x-bridge-client'] !== 'mobile-v1')) throw new HubError('拒绝跨站请求。', 'FORBIDDEN', 403);
       if (url.pathname.startsWith('/api/') && req.headers['x-bridge-client'] !== 'mobile-v1') throw new HubError('请求来源无效。', 'FORBIDDEN', 403);
       const token = sessionToken(req);
@@ -139,6 +165,7 @@ export function createHubServer({ store = new HubStore(), publicOrigin, allowIns
         if (req.method === 'GET' && ASSETS.has(path)) { await serveAsset(req, res, path === '/' ? 'index.html' : path.slice(1), sharedPublic); return; }
         if (req.headers['x-bridge-client'] !== 'mobile-v1') throw new HubError('请求来源无效。', 'FORBIDDEN', 403);
         const bridgePath = `${path}${url.search}`;
+        if (path === '/api/collaboration') throw new HubError('此入口未开放该操作。', 'NOT_FOUND', 404);
         if (!allowedBridgeRequest(req.method, bridgePath)) throw new HubError('此入口未开放该操作。', 'NOT_FOUND', 404);
         await relay.proxy(deviceId, req, res, bridgePath, { userId: session.user.id, sessionToken: token, deviceId }); return;
       }

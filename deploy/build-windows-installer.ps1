@@ -24,9 +24,22 @@ try {
         if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $relative -match '(^|/)(\.local|work|data|mobile-uploads|coverage|\.cache)(/|$)' -or ($item.Name -ne '.env.example' -and $item.Name -match '^\.env(\.|$)') -or $item.Name -match '\.(sqlite(-.*)?|db(-.*)?|pem|key|pfx|p12|log|tmp)$') { throw "Private or local-only installer input rejected: $relative" }
     }
     New-Item -ItemType Directory -Path (Join-Path $app 'node_modules') | Out-Null
-    Copy-Item -LiteralPath (Join-Path $root 'node_modules/ws') -Destination (Join-Path $app 'node_modules') -Recurse
+    foreach ($dependency in @('ws','@iarna/toml')) {
+        $destination = Join-Path $app ('node_modules/' + $dependency)
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $root ('node_modules/' + $dependency)) -Destination $destination -Recurse
+        if (-not (Test-Path -LiteralPath (Join-Path $destination 'LICENSE'))) { throw "Runtime dependency license is missing: $dependency" }
+        foreach ($item in Get-ChildItem -LiteralPath $destination -Recurse -Force) {
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.Name -match '^\.env(\.|$)' -or $item.Name -match '\.(sqlite(-.*)?|db(-.*)?|pem|key|pfx|p12|log|tmp)$' -or ($item.PSIsContainer -and $item.Name -in @('.local','work','data','mobile-uploads','coverage','.cache'))) { throw "Private runtime dependency input rejected: $($item.FullName)" }
+        }
+    }
     New-Item -ItemType Directory -Path (Join-Path $app 'runtime') | Out-Null
-    if ($RuntimeExecutable) { Copy-Item -LiteralPath $RuntimeExecutable -Destination (Join-Path $app 'runtime/node.exe') }
+    if ($RuntimeExecutable) {
+        $runtimeLicense = Join-Path (Split-Path -Parent $RuntimeExecutable) 'LICENSE'
+        if (-not (Test-Path -LiteralPath $runtimeLicense -PathType Leaf)) { throw 'Reused Node runtime license is missing.' }
+        Copy-Item -LiteralPath $RuntimeExecutable -Destination (Join-Path $app 'runtime/node.exe')
+        Copy-Item -LiteralPath $runtimeLicense -Destination (Join-Path $app 'runtime/LICENSE')
+    }
     else {
         $base = 'https://nodejs.org/dist/latest-v22.x/'
         $manifest = (Invoke-WebRequest -UseBasicParsing -Uri ($base+'SHASUMS256.txt')).Content

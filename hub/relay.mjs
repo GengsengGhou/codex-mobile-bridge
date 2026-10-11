@@ -120,7 +120,7 @@ export class HubRelay {
     this.active++; this.userRequests.set(userId, (this.userRequests.get(userId) || 0) + 1);
     request.timer = setTimeout(() => request.fail(this.failure(request, 'timeout')), this.requestTimeoutMs);
     void (async () => { try {
-      control(connection.ws, { type: 'request', id, method: req.method, path, headers: selectHeaders(req.headers, REQUEST_HEADERS) });
+      control(connection.ws, { type: 'request', id, method: req.method, path, headers: selectHeaders(req.headers, REQUEST_HEADERS), ...(context.collaboration ? { collaboration: context.collaboration } : {}) });
       request.dispatched = true;
       let size = 0;
       for await (const chunk of req) {

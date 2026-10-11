@@ -8,7 +8,7 @@
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   while (walker.nextNode()) { const node = walker.currentNode, value = node.textContent.trim(); if (!node.parentElement.closest('input,option,#computerValue,#serverValue,#feedback,#installDirectory,#webviewVersion,#versionLabel') && dictionary[value]) staticText.push({node,value,prefix:node.textContent.slice(0,node.textContent.indexOf(value)),suffix:node.textContent.slice(node.textContent.indexOf(value)+value.length)}); }
   for (const element of document.querySelectorAll('[title],[aria-label]')) for (const attr of ['title','aria-label']) { const value = element.getAttribute(attr); if(dictionary[value]) staticAttributes.push({element,attr,value}); }
-  function applyLanguage(value) { language = value === 'en' ? 'en' : 'zh-CN'; document.documentElement.lang = language; for(const item of staticText)item.node.textContent=item.prefix+t(item.value)+item.suffix;for(const item of staticAttributes)item.element.setAttribute(item.attr,t(item.value));document.getElementById('language').value=language;render(); }
+  function applyLanguage(value) { language = value === 'en' ? 'en' : 'zh-CN'; document.documentElement.lang = language; for(const item of staticText)item.node.textContent=item.prefix+t(item.value)+item.suffix;for(const item of staticAttributes)item.element.setAttribute(item.attr,t(item.value));document.getElementById('language').value=language;render();renderCollaboration(); }
   const $ = id => document.getElementById(id);
   const native = window.chrome?.webview;
   const requests = new Map();
@@ -16,6 +16,8 @@
   let actionBusy = false, nativeBusy = false, mutationPending = 0, busyReason = '', statusError = '', actionError = '', warning = '', viewBeforeSettings = 'pairing';
   let serverTouched = false, nameTouched = false, defaultsApplied = false;
   let update = null, updateBusy = false, updateError = '';
+  let collaboration = null, collaborationDirty = false, collaborationBusy = false, collaborationError = '', collaborationMessage = '';
+  let collaborationDraft = { controlEnabled: false, receiveEnabled: false, allowedDeviceIds: [], allowedProjectRoots: [] };
   function updateDiagnostic(text) { return diagnostic(text)?.replace(/更新服务请求失败（HTTP (\d+)），请重试。/g,(_,code)=>language==='en'?`The update service returned HTTP ${code}. Try again.`:`更新服务请求失败（HTTP ${code}），请重试。`); }
   function renderUpdate() {
     $('currentVersion').textContent = update?.currentVersion ? 'v'+update.currentVersion : $('versionLabel').textContent;
@@ -28,6 +30,107 @@
     $('updateNotice').hidden = !update?.available;
     $('downloadUpdate').disabled = updateBusy || actionBusy;
     $('updateMessage').textContent = updateDiagnostic(updateError || update?.error) || t(updateBusy ? '正在检查或下载更新…' : update?.available ? '发现新版本，可下载并升级。' : update?.status === 'current' ? '已是最新版本。' : '启动时及每天自动检查更新。');
+  }
+  function renderCollaboration() {
+    const state = collaboration;
+    const paired = !!state && state.paired === true;
+    const canGrant = paired && state.featureAvailable !== false && state.registration?.status !== 'recovering';
+    const revokingOnly = paired && (state.controlEnabled && !collaborationDraft.controlEnabled || state.receiveEnabled && !collaborationDraft.receiveEnabled
+      || collaborationDraft.allowedDeviceIds.length < (state.allowedDeviceIds || []).length
+      || collaborationDraft.allowedProjectRoots.length < (state.allowedProjectRoots || []).length)
+      && (!collaborationDraft.controlEnabled || state.controlEnabled === true)
+      && (!collaborationDraft.receiveEnabled || state.receiveEnabled === true)
+      && collaborationDraft.allowedDeviceIds.every(id => (state.allowedDeviceIds || []).includes(id))
+      && collaborationDraft.allowedProjectRoots.every(path => (state.allowedProjectRoots || []).includes(path));
+    const canSave = canGrant || revokingOnly;
+    $('controlEnabled').checked = collaborationDraft.controlEnabled;
+    $('receiveEnabled').checked = collaborationDraft.receiveEnabled;
+    $('controlEnabled').disabled = collaborationBusy || !paired || !canGrant && !(state.controlEnabled || collaborationDraft.controlEnabled);
+    $('receiveEnabled').disabled = collaborationBusy || !paired || !canGrant && !(state.receiveEnabled || collaborationDraft.receiveEnabled);
+    $('saveCollaboration').disabled = collaborationBusy || !canSave;
+    $('collaborationDevices').closest('.collaboration-group').hidden = !collaborationDraft.receiveEnabled;
+    $('collaborationProjects').closest('.collaboration-group').hidden = !collaborationDraft.receiveEnabled;
+    $('collaborationSummary').textContent = !state ? t('正在读取电脑协作设置…')
+      : state.paired !== true ? t('需要先配对这台电脑，才能设置电脑协作。')
+      : state.registration?.status === 'recovering' ? t('已配对；协作注册正在恢复，请稍后刷新。')
+      : state.registration?.status === 'error' ? diagnostic(state.registration?.message || state.error) || t('电脑协作当前不可用，请检查配对状态后重试。')
+      : state.featureAvailable === false ? diagnostic(state.error) || t('电脑协作当前不可用，请检查配对状态后重试。')
+      : diagnostic(state.registration?.message) || '';
+    const drawOptions = (container, items, key, selected, emptyText) => {
+      container.replaceChildren();
+      if (!Array.isArray(items) || items.length === 0) {
+        const empty = document.createElement('div'); empty.className = 'collaboration-empty'; empty.textContent = t(emptyText); container.append(empty); return;
+      }
+      for (const item of items) {
+        if (!item || typeof item.id !== 'string' || !item.id) continue;
+        if (key === 'allowedDeviceIds' && status?.deviceId && item.id === status.deviceId) continue;
+        const selection = key === 'allowedProjectRoots' ? item.cwd : item.id;
+        if (typeof selection !== 'string' || !selection) continue;
+        const label = document.createElement('label'); label.className = 'collaboration-option';
+        const input = document.createElement('input'); input.type = 'checkbox'; input.value = item.id;
+        input.checked = selected.includes(selection); input.disabled = collaborationBusy || !canGrant;
+        input.addEventListener('change', () => {
+          const current = new Set(collaborationDraft[key]);
+          input.checked ? current.add(selection) : current.delete(selection);
+          collaborationDraft[key] = [...current]; collaborationDirty = true; collaborationMessage = ''; renderCollaboration();
+        });
+        const text = document.createElement('span'); text.textContent = item.name || item.cwd || item.id;
+        if (key === 'allowedDeviceIds') {
+          const detail = document.createElement('small'); detail.textContent = t(item.online === true ? '已在线' : '离线'); text.append(detail);
+        }
+        label.append(input, text); container.append(label);
+      }
+    };
+    drawOptions($('collaborationDevices'), state?.devices, 'allowedDeviceIds', collaborationDraft.allowedDeviceIds, '目前没有可用的同账号电脑。');
+    drawOptions($('collaborationProjects'), state?.projects, 'allowedProjectRoots', collaborationDraft.allowedProjectRoots, '没有可授权的本机项目。');
+    $('collaborationMessage').textContent = diagnostic(collaborationError || collaborationMessage) || '';
+    $('collaborationMessage').dataset.kind = collaborationError ? 'error' : collaborationMessage ? 'success' : '';
+  }
+  function acceptCollaborationState(result, { preserveDraft = collaborationDirty } = {}) {
+    const next = result?.collaboration || result;
+    if (!next || typeof next !== 'object') throw new Error(t('电脑协作设置无法读取，请重试。'));
+    collaboration = next;
+    if (!preserveDraft) {
+      collaborationDraft = {
+        controlEnabled: next.controlEnabled === true,
+        receiveEnabled: next.receiveEnabled === true,
+        allowedDeviceIds: Array.isArray(next.allowedDeviceIds) ? [...next.allowedDeviceIds] : [],
+        allowedProjectRoots: Array.isArray(next.allowedProjectRoots) ? [...next.allowedProjectRoots] : []
+      };
+      collaborationDirty = false;
+    }
+    renderCollaboration();
+  }
+  async function refreshCollaboration({ preserveDraft = collaborationDirty } = {}) {
+    collaborationBusy = !collaboration; collaborationError = ''; renderCollaboration();
+    try { acceptCollaborationState(await command('get-collaboration-state'), { preserveDraft }); }
+    catch (error) { collaborationError = error.message; renderCollaboration(); }
+    finally { collaborationBusy = false; renderCollaboration(); }
+  }
+  async function saveCollaboration() {
+    if (collaborationBusy) return;
+    const deviceIds = new Set((collaboration?.devices || []).filter(device => device?.id && device.id !== status?.deviceId).map(device => device.id));
+    const projectRoots = new Set((collaboration?.projects || []).filter(project => project?.cwd).map(project => project.cwd));
+    const needsFreshAllowlist = collaborationDraft.receiveEnabled && (!collaboration.receiveEnabled
+      || collaborationDraft.allowedDeviceIds.some(id => !(collaboration.allowedDeviceIds || []).includes(id))
+      || collaborationDraft.allowedProjectRoots.some(path => !(collaboration.allowedProjectRoots || []).includes(path)));
+    if (needsFreshAllowlist && (!collaborationDraft.allowedDeviceIds.some(id => deviceIds.has(id)) || !collaborationDraft.allowedProjectRoots.some(path => projectRoots.has(path)))) {
+      collaborationError = ''; collaborationMessage = t('启用接收前，请至少选择一台电脑和一个本机项目。'); renderCollaboration(); return;
+    }
+    collaborationBusy = true; collaborationError = ''; collaborationMessage = ''; renderCollaboration();
+    let saved = false;
+    try {
+      const result = await command('save-collaboration', {
+        controlEnabled: collaborationDraft.controlEnabled,
+        receiveEnabled: collaborationDraft.receiveEnabled,
+        allowedDeviceIds: [...collaborationDraft.allowedDeviceIds],
+        allowedProjectRoots: [...collaborationDraft.allowedProjectRoots]
+      });
+      acceptCollaborationState(result, { preserveDraft: false });
+      collaborationMessage = t('电脑协作设置已保存。'); saved = true;
+    } catch (error) { collaborationError = error.message; }
+    finally { collaborationBusy = false; renderCollaboration(); }
+    if (saved) await refreshCollaboration({ preserveDraft: collaborationDirty });
   }
   async function updateAction(action,payload={}) { if(updateBusy)return; updateBusy=true;updateError='';renderUpdate();try{const result=await command(action,payload);if(result.update)update=result.update;}catch(error){updateError=error.message;}finally{updateBusy=false;renderUpdate();} }
 
@@ -134,7 +237,7 @@
   $('cancelPairing').addEventListener('click', () => { changingServer = false; render(); });
   $('settingsButton').addEventListener('click', () => {
     viewBeforeSettings = changingServer || !status?.paired ? 'pairing' : 'connection';
-    settingsVisible = !settingsVisible; render();
+    settingsVisible = !settingsVisible; render(); if (settingsVisible) refreshCollaboration();
   });
   $('backSettings').addEventListener('click', () => { settingsVisible = false; changingServer = status?.paired && viewBeforeSettings === 'pairing'; render(); });
   $('changeServer').addEventListener('click', () => { settingsVisible = false; changingServer = true; actionError = ''; render(); $('server').focus(); });
@@ -156,6 +259,9 @@
   $('updateNotice').addEventListener('click', () => { viewBeforeSettings=changingServer||!status?.paired?'pairing':'connection';settingsVisible=true;render();$('checkUpdate').focus(); });
   $('downloadUpdate').addEventListener('click', () => updateAction('download-update'));
   $('automaticUpdates').addEventListener('change', () => updateAction('update-preferences',{automatic:$('automaticUpdates').checked}));
+  $('controlEnabled').addEventListener('change', () => { collaborationDraft.controlEnabled = $('controlEnabled').checked; collaborationDirty = true; collaborationMessage = ''; renderCollaboration(); });
+  $('receiveEnabled').addEventListener('change', () => { collaborationDraft.receiveEnabled = $('receiveEnabled').checked; collaborationDirty = true; collaborationMessage = ''; renderCollaboration(); });
+  $('saveCollaboration').addEventListener('click', saveCollaboration);
   native?.addEventListener('message', event => {
     const data = event.data;
     if (data.type === 'result') {

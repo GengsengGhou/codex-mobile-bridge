@@ -115,7 +115,7 @@ $languageBytes = if ($hadLanguage) { [IO.File]::ReadAllBytes($languagePath) } el
 $intent = if ($hadControl) { Get-Content -LiteralPath $controlPath -Raw | ConvertFrom-Json } else { $null }
 if ($intent -and ($intent.paused -isnot [bool] -or $intent.autoStart -isnot [bool])) { throw 'Saved connection intent is damaged; upgrade was stopped.' }
 $paired = Test-Path -LiteralPath (Join-Path $Root '.local/hub-connector.json') -PathType Leaf
-$entries = @('scripts/connector-login.mjs','scripts/start-connector.mjs','scripts/start.mjs','scripts/supervisor.mjs','src/server.mjs')
+$entries = @('scripts/connector-login.mjs','scripts/start-connector.mjs','scripts/start.mjs','scripts/supervisor.mjs','scripts/collaboration-mcp.mjs','src/server.mjs')
 function Owned-Processes([string[]]$Scripts, [bool]$IncludeGui) {
     @(
         foreach ($process in Get-CimInstance Win32_Process) {
@@ -160,7 +160,7 @@ try {
         if ($hadControl) { [IO.File]::WriteAllBytes($controlPath,$controlBytes) }
     }
     Stop-Owned @('scripts/connector-login.mjs','scripts/start.mjs','scripts/supervisor.mjs') $false
-    Stop-Owned @('scripts/start-connector.mjs','src/server.mjs') $true
+    Stop-Owned @('scripts/start-connector.mjs','scripts/collaboration-mcp.mjs','src/server.mjs') $true
     if (@(Owned-Processes $entries $true).Count -ne 0) { throw 'Installation processes are still running.' }
     foreach ($item in Get-ChildItem -LiteralPath $Root -Force) {
         if ($item.Name -eq '.local') { continue }
@@ -208,7 +208,7 @@ try {
     try {
         if ($moved.Count -gt 0) {
             Stop-Owned @('scripts/connector-login.mjs','scripts/start.mjs','scripts/supervisor.mjs') $false
-            Stop-Owned @('scripts/start-connector.mjs','src/server.mjs') $true
+            Stop-Owned @('scripts/start-connector.mjs','scripts/collaboration-mcp.mjs','src/server.mjs') $true
         }
         foreach ($name in $copied) { $target=Join-Path $Root $name; if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction Stop } }
         foreach ($name in $moved) { Move-Item -LiteralPath (Join-Path $backup $name) -Destination $Root -ErrorAction Stop }

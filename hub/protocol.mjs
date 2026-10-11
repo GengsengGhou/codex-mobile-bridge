@@ -12,6 +12,7 @@ export function allowedBridgeRequest(method, path) {
   let url; try { url = new URL(path, 'http://127.0.0.1'); } catch { return false; }
   if (url.hash || url.pathname.includes('%')) return false;
   const p = url.pathname;
+  if (method === 'POST' && p === '/api/collaboration' && !url.search) return true;
   if (method === 'GET' && /^\/api\/(status|recovery|sidebar-order|projects|threads|archives)$/.test(p)) return true;
   if (method === 'PUT' && p === '/api/sidebar-order') return true;
   if (method === 'POST' && p === '/api/threads') return true;

@@ -15,7 +15,7 @@
 
 ## 下载与校验
 
-稳定版为 v1.0.5。请从 [最新稳定版 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest) 下载所需文件和同一版本的 `SHA256SUMS`：
+当前发行版为 v2.0.0。请从 [最新 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest) 下载所需文件和同一版本的 `SHA256SUMS`：
 
 | 文件 | 用途 |
 | --- | --- |
@@ -60,6 +60,8 @@ Get-Content .\SHA256SUMS
 首次成功配对会默认开启当前 Windows 用户的登录后自动连接，并立即在托盘后台等待 Codex。若此前已明确关闭该设置，首次配对会保留关闭状态。设备令牌只保存在电脑私有 ACL 保护的 `.local` 数据中，不上传 GitHub。
 
 托盘显示“尚未绑定这台电脑”时，双击图标打开窗口，完成上面的 HTTPS 入口和配对码步骤。新安装目录不会自动继承另一个源码或 ZIP 目录里的设备配对；网页上原有设备在线，不代表新安装程序已经绑定。仍在使用原目录连接器时，可以继续使用那个设备，不必为它重新配对或复制私有凭据。
+
+电脑协作需要所有参与电脑都升级到 v2.0.0，并在同一个 Hub 和账号下配对。目标电脑需授权来源设备及允许访问的项目；来源电脑开启指挥开关并在 Codex 重新加载连接后，随包 MCP 工具即可使用。两个开关默认关闭，详细步骤和权限边界见[电脑协作](computer-collaboration.md)。
 
 ## 托盘与自动启动
 

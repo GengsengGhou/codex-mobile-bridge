@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parseArgs } from 'node:util';
 const root = fileURLToPath(new URL('..', import.meta.url));
+const { values } = parseArgs({ options: { 'runtime-executable': { type: 'string' }, 'webview-package': { type: 'string' } } });
 async function checkReleaseInput(relative) {
   const entries = await readdir(join(root, relative), { withFileTypes: true });
   for (const entry of entries) {
@@ -17,7 +19,9 @@ async function checkReleaseInput(relative) {
 for (const directory of ['hub', 'public', 'src', 'scripts', 'deploy', 'docs']) await checkReleaseInput(directory);
 await mkdir(new URL('../dist/', import.meta.url), { recursive: true });
 const file = 'dist/codex-device-hub.tar.gz';
-const result = spawnSync('tar', ['--exclude=.env', '--exclude=*.sqlite*', '--exclude=*.tmp', '--exclude=docs/verification', '-czf', file, 'package.json', 'package-lock.json', 'README.md', 'CHANGELOG.md', 'hub', 'public', 'src', 'scripts', 'deploy', 'node_modules/ws', 'docs'], { cwd: root, stdio: 'inherit' });
+const runtimeDependencies = ['node_modules/ws', 'node_modules/@iarna/toml'];
+for (const dependency of runtimeDependencies) await checkReleaseInput(dependency);
+const result = spawnSync('tar', ['--exclude=.env', '--exclude=*.sqlite*', '--exclude=*.tmp', '--exclude=docs/verification', '-czf', file, 'package.json', 'package-lock.json', 'README.md', 'CHANGELOG.md', 'hub', 'public', 'src', 'scripts', 'deploy', ...runtimeDependencies, 'docs'], { cwd: root, stdio: 'inherit' });
 if (result.status !== 0) throw new Error('Packaging failed; a compatible tar executable is required.');
 const digest = createHash('sha256').update(await readFile(new URL('../' + file, import.meta.url))).digest('hex');
 let sums = `${digest}  codex-device-hub.tar.gz\n`;
@@ -30,7 +34,10 @@ if (process.platform === 'win32') {
     const script = `Add-Type -AssemblyName System.IO.Compression.FileSystem; if (Test-Path -LiteralPath ${literal(zip)}) { Remove-Item -LiteralPath ${literal(zip)} }; [IO.Compression.ZipFile]::CreateFromDirectory(${literal(staging)},${literal(zip)})`;
     if (spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, stdio: 'inherit' }).status !== 0) throw new Error('Windows ZIP packaging failed.');
     sums += `${createHash('sha256').update(await readFile(zip)).digest('hex')}  codex-mobile-connector-windows.zip\n`;
-    const build = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(root, 'deploy/build-windows-installer.ps1')], { windowsHide: true, stdio: 'inherit' });
+    const buildArgs = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(root, 'deploy/build-windows-installer.ps1')];
+    if (values['runtime-executable']) buildArgs.push('-RuntimeExecutable', values['runtime-executable']);
+    if (values['webview-package']) buildArgs.push('-WebViewPackage', values['webview-package']);
+    const build = spawnSync('powershell.exe', buildArgs, { windowsHide: true, stdio: 'inherit' });
     if (build.status !== 0) throw new Error('Windows EXE installer packaging failed.');
     const exe = join(root, 'dist/CodexMobileConnector-Setup.exe');
     sums += `${createHash('sha256').update(await readFile(exe)).digest('hex')}  CodexMobileConnector-Setup.exe\n`;

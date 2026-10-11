@@ -20,6 +20,7 @@ import { advertisedModels, modelSelection, validateModelSelection } from './mode
 import { permissionSelection, permissionOptions } from './permission-settings.mjs';
 import { readGitContext, hydrateAgentContext } from './thread-context.mjs';
 import { publicAssets, assetContentType, appCsp } from './static-assets.mjs';
+import { createCollaborationGuard } from './collaboration-guard.mjs';
 
 const publicRoot = new URL('../public/', import.meta.url);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -53,7 +54,7 @@ async function creationSupplementRead(operation) {
     })]);
   } finally { clearTimeout(timer); }
 }
-export function createBridgeServer({ bridge, enableSend = false, allowedSendThreadId = bridge.callerThreadId, sendScope = 'single', orderStore = new SidebarOrderStore(), deliveryStore = new DeliveryStore({ path: null }), creationStore = new CreationStore({ path: null }), uploadStore = new UploadStore({ path: null }), control = null, recovery = null, remoteAccess = null } = {}) {
+export function createBridgeServer({ bridge, enableSend = false, allowedSendThreadId = bridge.callerThreadId, sendScope = 'single', orderStore = new SidebarOrderStore(), deliveryStore = new DeliveryStore({ path: null }), creationStore = new CreationStore({ path: null }), uploadStore = new UploadStore({ path: null }), control = null, recovery = null, remoteAccess = null, collaborationGuard = createCollaborationGuard() } = {}) {
   const session = randomBytes(32).toString('hex');
   const uploads = new UploadManager(uploadStore);
   const sending = new Set();
@@ -141,6 +142,10 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
       if (!url.pathname.startsWith('/api/')) { json(res, 404, { error: '页面不存在' }); return; }
       const cookie = (req.headers.cookie ?? '').split(';').map(c => c.trim()).find(c => c.startsWith('bridge_session='));
       if (cookie !== `bridge_session=${session}` || req.headers['x-bridge-client'] !== 'mobile-v1') throw new BridgeError('请重新打开本机页面', 'UNAUTHORIZED', 401);
+      const collaborationCheck = async (thread, projectId) => {
+        if (req.headers['x-collaboration-source']) await collaborationGuard(req, thread, thread || projectId !== undefined ? await bridge.projects() : [], projectId);
+      };
+      await collaborationCheck();
       if (req.method === 'GET' && url.pathname === '/api/access') {
         json(res, 200, { mode: 'local', authenticated: true }); return;
       }
@@ -191,6 +196,7 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
       if (fileMatch) {
         if (!UUID.test(fileMatch[1])) throw new BridgeError('无效的任务地址', 'INVALID_REQUEST', 400);
         if (req.method !== 'GET') throw new BridgeError('不支持的操作', 'METHOD_NOT_ALLOWED', 405);
+        if (req.headers['x-collaboration-source']) await collaborationCheck((await readMetadata(fileMatch[1])).thread);
         const input = url.searchParams.get('path') ?? '';
         if (fileMatch[2] === 'files') json(res, 200, await listThreadFiles(bridge, fileMatch[1], input));
         else {
@@ -264,6 +270,7 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
           if (!creationEnabled(await bridge.capabilities())) throw new BridgeError('当前桌面未开放新建会话', 'CREATE_DISABLED', 403);
           validateModelSelection(selection, advertisedModels(bridge.toolCatalog?.find(tool => tool.name === 'create_thread')));
           const result = await bridge.create(args, { beforeDispatch: async () => {
+            await collaborationCheck(null, args.projectId);
             await creationStore.reserve({ requestId: key, payloadHash: hash }); reserved = true;
           } });
           if (!reserved || !UUID.test(result?.threadId ?? '') || result.hostId !== 'local' || result.clientThreadId != null) throw new BridgeError('新建结果未知', 'DELIVERY_UNKNOWN', 409);
@@ -306,9 +313,14 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
         }
         json(res, 200, data); return;
       }
-      const match = url.pathname.match(/^\/api\/threads\/([^/]+)(\/messages(?:\/([^/]+))?|\/settings|\/context|\/control|\/stop|\/respond)?$/);
+      const match = url.pathname.match(/^\/api\/threads\/([^/]+)(\/messages(?:\/([^/]+))?|\/metadata|\/settings|\/context|\/control|\/stop|\/respond)?$/);
       if (!match || !UUID.test(match[1]) || (match[3] && !UUID.test(match[3]))) throw new BridgeError('无效的任务地址', 'INVALID_REQUEST', 400);
       const id = match[1];
+      if (req.method === 'GET' && match[2] === '/metadata') {
+        if (!req.headers['x-collaboration-source']) throw new BridgeError('不支持的操作', 'METHOD_NOT_ALLOWED', 405);
+        const { thread } = await readMetadata(id); if (thread?.id !== id) throw new BridgeError('会话信息不匹配', 'PROTOCOL_ERROR', 502);
+        await collaborationCheck(thread); json(res, 200, { thread }); return;
+      }
       if (req.method === 'GET' && match[2] === '/context') {
         const { thread } = await readSupplement(id);
         const unavailable = reason => ({ available: false, items: [], reason });
@@ -365,8 +377,11 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
       if (req.method === 'GET' && !match[2]) {
         const cursor = url.searchParams.get('cursor');
         if (cursor?.length > 4096) throw new BridgeError('分页参数过长', 'INVALID_REQUEST', 400);
-        const data = await bridge.read(id, cursor);
+        const turnLimit = url.searchParams.has('turnLimit') ? Number(url.searchParams.get('turnLimit')) : 10;
+        if (!Number.isInteger(turnLimit) || turnLimit < 1 || turnLimit > 10) throw new BridgeError('分页大小无效', 'INVALID_REQUEST', 400);
+        const data = await bridge.read(id, cursor, { turnLimit });
         if (data?.thread?.id !== id || !Array.isArray(data.turns)) throw new BridgeError('桌面返回了不匹配的任务', 'PROTOCOL_ERROR', 502);
+        await collaborationCheck(data.thread);
         json(res, 200, { ...data, ...sendAccess(data.thread), ...managementAccess(data.thread) }); return;
       }
       if (req.method !== 'POST' || !match[2] || match[3]) throw new BridgeError('不支持的操作', 'METHOD_NOT_ALLOWED', 405);
@@ -401,6 +416,7 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
         try {
           const { thread } = await bridge.read(id, undefined, { turnLimit: 1 });
           if (!controlAccess(thread)) throw new BridgeError('此会话不允许停止操作', 'CONTROL_DISABLED', 403);
+          await collaborationCheck(thread);
           const result = await control.stop(id, body.turnId);
           json(res, 200, { threadId: id, turnId: body.turnId, stopped: result.stopped === true, goalPauseError: result.goalPauseError === true }); return;
         } finally { sending.delete(id); }
@@ -455,7 +471,7 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
           validateModelSelection(selection, advertisedModels(bridge.toolCatalog?.find(tool => tool.name === 'send_message_to_thread')));
         }
         let reserved = false;
-        const reserve = async () => { await deliveryStore.reserve({ requestId: key, threadId: id, promptHash: hash }); reserved = true; };
+        const reserve = async () => { if (req.headers['x-collaboration-source']) await collaborationCheck((await readMetadata(id)).thread); await deliveryStore.reserve({ requestId: key, threadId: id, promptHash: hash }); reserved = true; };
         try {
           if (selection.permissionMode) {
             const native = await control.send(id, body.prompt, selection, { beforeDispatch: reserve });

@@ -6,12 +6,13 @@ import { connectorConfigPath } from './setup-connector.mjs';
 import { launchWindowsBridge } from './windows-launch.mjs';
 import { writeRecoveryFile } from '../src/recovery.mjs';
 import { connectorMayRun } from './connector-control.mjs';
+import { createCollaborationExecutor } from './collaboration-executor.mjs';
 
 export async function runSavedConnector({ configPath = connectorConfigPath } = {}) {
   if (!await connectorMayRun(resolve(configPath, '../..'))) throw new Error('连接器已暂停。');
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   if (config.version !== 1) throw new Error('连接器配置版本不兼容，请重新配对。');
-  return startConnector(config);
+  return startConnector({ ...config, collaborationExecutor: createCollaborationExecutor({ root: resolve(configPath, '../..'), config, configPath }) });
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {

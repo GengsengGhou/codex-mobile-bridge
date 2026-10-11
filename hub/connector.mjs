@@ -2,7 +2,7 @@ import http from 'node:http';
 import WebSocket from 'ws';
 import { allowedBridgeRequest, control, binary, decode, FRAME_BYTES, MAX_PAYLOAD, UPLOAD_LIMIT, DOWNLOAD_LIMIT, selectHeaders, REQUEST_HEADERS, RESPONSE_HEADERS } from './protocol.mjs';
 
-export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 4317, allowInsecureLocal = false, WebSocketImpl = WebSocket, reconnectMinMs = 500, reconnectMaxMs = 30000, requestTimeoutMs = 120000, maxInFlight = 8 } = {}) {
+export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 4317, allowInsecureLocal = false, WebSocketImpl = WebSocket, reconnectMinMs = 500, reconnectMaxMs = 30000, requestTimeoutMs = 120000, maxInFlight = 8, collaborationExecutor } = {}) {
   const hub = new URL(hubOrigin);
   if (hub.username || hub.password || hub.pathname !== '/' || hub.search || hub.hash || !(hub.protocol === 'https:' || allowInsecureLocal && hub.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(hub.hostname))) throw new Error('Invalid hub origin');
   if (!Number.isInteger(bridgePort) || bridgePort < 1 || bridgePort > 65535 || typeof deviceId !== 'string' || !deviceId || typeof deviceToken !== 'string' || !deviceToken || /[\r\n]/.test(deviceToken)) throw new Error('Invalid connector configuration');
@@ -79,6 +79,26 @@ export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 
     outgoing.setTimeout(requestTimeoutMs, () => outgoing.destroy(new Error('Local request timeout')));
     return outgoing;
   }
+  async function collaborate(request) {
+    try {
+      let status = 200, value;
+      try {
+        if (!collaborationExecutor) throw Object.assign(new Error('Computer collaboration is disabled.'), { code: 'COLLABORATION_UNAVAILABLE', status: 403 });
+        value = await collaborationExecutor({ ...request.collaboration, request: JSON.parse(Buffer.concat(request.parts).toString('utf8')) });
+      } catch (error) { status = error.status || 503; value = { code: error.code || 'COLLABORATION_UNAVAILABLE', error: error.message }; }
+      if (request.cancelled) return;
+      const bytes = Buffer.from(JSON.stringify(value));
+      if (bytes.length > 2 * 1024 * 1024) throw new Error('Collaboration result too large');
+      control(request.ws, { type: 'response', id: request.id, status, headers: { 'content-type': 'application/json', 'content-length': String(bytes.length) } });
+      for (let offset = 0; offset < bytes.length; offset += FRAME_BYTES) {
+        if (request.cancelled) return;
+        const ack = new Promise(resolve => { request.downloadAck = resolve; });
+        binary(request.ws, request.id, bytes.subarray(offset, offset + FRAME_BYTES)); await ack;
+      }
+      if (!request.cancelled) control(request.ws, { type: 'end', id: request.id, direction: 'download' });
+      dispose(request);
+    } catch { fail(request); }
+  }
   async function connect() {
     if (stopped) return;
     state = 'connecting';
@@ -97,11 +117,15 @@ export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 
           if (!allowedBridgeRequest(message.method, message.path)) { control(socket, { type: 'error', id: message.id, code: 'BRIDGE_ROUTE_UNSUPPORTED' }); return; }
           if (requests.size >= maxInFlight) { control(socket, { type: 'error', id: message.id, code: 'BRIDGE_BUSY' }); return; }
           const request = { id: message.id, ws: socket, method: message.method, path: message.path, headers: message.headers, uploadBytes: 0, uploadPending: false, uploadEnded: false, cancelled: false, downloadAck: null };
+          if (message.path === '/api/collaboration') {
+            if (!message.collaboration || Object.keys(message.collaboration).length !== 2 || message.collaboration.targetDeviceId !== deviceId || typeof message.collaboration.sourceDeviceId !== 'string') throw new Error('Invalid collaboration identity');
+            request.collaboration = message.collaboration; request.parts = [];
+          } else if (message.collaboration) throw new Error('Unexpected collaboration identity');
           requests.set(message.id, request);
           request.timer = setTimeout(() => fail(request), requestTimeoutMs);
           const length = request.headers?.['content-length'];
           if (length !== undefined && (typeof length !== 'string' || !/^\d+$/.test(length) || Number(length) > UPLOAD_LIMIT)) throw new Error('Invalid length');
-          upstream(request);
+          if (!request.collaboration) upstream(request);
           return;
         }
         const request = requests.get(message.id);
@@ -111,6 +135,7 @@ export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 
         else if (message.type === 'data' && !request.uploadPending && !request.uploadEnded) {
           request.uploadBytes += message.bytes.length;
           if (request.uploadBytes > UPLOAD_LIMIT || request.method === 'GET') throw new Error('Upload too large');
+          if (request.collaboration) { if (request.uploadBytes > 65536) throw new Error('Collaboration body too large'); request.parts.push(message.bytes); control(socket, { type: 'ack', id: request.id, direction: 'upload' }); return; }
           request.uploadPending = true;
           request.http.write(message.bytes, error => {
             if (request.cancelled) return;
@@ -118,7 +143,7 @@ export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 
             request.uploadPending = false;
             try { control(socket, { type: 'ack', id: request.id, direction: 'upload' }); } catch { disconnect(socket); }
           });
-        } else if (message.type === 'end' && message.direction === 'upload' && !request.uploadPending && !request.uploadEnded) { request.uploadEnded = true; request.http.end(); }
+        } else if (message.type === 'end' && message.direction === 'upload' && !request.uploadPending && !request.uploadEnded) { request.uploadEnded = true; if (request.collaboration) void collaborate(request); else request.http.end(); }
         else throw new Error('Unexpected frame');
       } catch { socket.close(1008, 'Invalid transport frame'); disconnect(socket); }
     });

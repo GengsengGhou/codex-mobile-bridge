@@ -5,6 +5,11 @@ $marker = Get-Content -LiteralPath (Join-Path $Root 'installed.json') -Raw | Con
 if ($marker.version -ne 1 -or [IO.Path]::GetFullPath($marker.root) -cne $Root) { throw 'Installation ownership cannot be verified.' }
 $node = Join-Path $Root 'runtime/node.exe'
 $gui = Join-Path $Root 'scripts/connector-gui.mjs'
+$collaboration = Join-Path $Root 'scripts/collaboration-lifecycle.mjs'
+if ((Test-Path -LiteralPath $node) -and (Test-Path -LiteralPath $collaboration)) {
+    $cleaned = & $node $collaboration --uninstall | ConvertFrom-Json
+    if (-not $cleaned.ok -or -not $cleaned.disabled) { throw ('Computer collaboration cleanup could not be confirmed. Existing Codex configuration was preserved. Uninstall was stopped. ' + $cleaned.error) }
+}
 if ((Test-Path -LiteralPath $node) -and (Test-Path -LiteralPath $gui)) {
     $result = '{"action":"quit"}' | & $node $gui | ConvertFrom-Json
     if (-not $result.ok -or -not $result.disconnectVerified) { throw 'Connector pause/stop could not be confirmed. Uninstall was stopped.' }
@@ -60,8 +65,8 @@ function Stop-Owned($entries, $includeGui) {
 }
 # Stop launchers/supervisors before their children so no replacement can escape a snapshot.
 Stop-Owned @('scripts/connector-login.mjs','scripts/start.mjs','scripts/supervisor.mjs') $false
-Stop-Owned @('scripts/start-connector.mjs','src/server.mjs') $true
-if (@(Owned-Processes @('scripts/connector-login.mjs','scripts/start-connector.mjs','scripts/start.mjs','scripts/supervisor.mjs','src/server.mjs') $true).Count -ne 0) { throw 'Installation processes are still running.' }
+Stop-Owned @('scripts/start-connector.mjs','scripts/collaboration-mcp.mjs','src/server.mjs') $true
+if (@(Owned-Processes @('scripts/connector-login.mjs','scripts/start-connector.mjs','scripts/start.mjs','scripts/supervisor.mjs','scripts/collaboration-mcp.mjs','src/server.mjs') $true).Count -ne 0) { throw 'Installation processes are still running.' }
 function Remove-OwnedShortcuts([string]$InstallationRoot, [string[]]$Directories) {
     $executable = Join-Path $InstallationRoot 'CodexMobileConnector.exe'
     $shell = New-Object -ComObject WScript.Shell

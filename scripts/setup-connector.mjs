@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readSecret } from './read-secret.mjs';
+import { pairingNetworkError } from './network-error.mjs';
 
 export const connectorConfigPath = fileURLToPath(new URL('../.local/hub-connector.json', import.meta.url));
 const execute = promisify(execFile);
@@ -41,7 +42,10 @@ export async function pairConnector({ information, origin, pairingCode, name, br
   if (!Number.isInteger(bridgePort) || bridgePort < 1024 || bridgePort > 65535 || typeof pairingCode !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(pairingCode) || (name !== undefined && (typeof name !== 'string' || name.length > 80))) throw new Error('配对码、设备名称或本机端口无效。');
   try { await readFile(configPath); if (!replace) throw new Error('已有连接器配置；请先撤销原设备，或明确使用 --replace。'); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const response = await fetchImpl(`${hub}/api/hub/connect`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: hub, 'X-Bridge-Client': 'mobile-v1' }, body: JSON.stringify({ pairingCode, ...(ticket && !name ? {} : { name }) }), signal: AbortSignal.timeout(15000) });
+  let response;
+  try {
+    response = await fetchImpl(`${hub}/api/hub/connect`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: hub, 'X-Bridge-Client': 'mobile-v1' }, body: JSON.stringify({ pairingCode, ...(ticket && !name ? {} : { name }) }), signal: AbortSignal.timeout(15000) });
+  } catch (error) { throw pairingNetworkError(error); }
   if (!response.ok) throw new Error('设备配对失败；请在网页检查配对码并重新生成。');
   let value;
   try { value = await response.json(); }

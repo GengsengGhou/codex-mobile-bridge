@@ -5,6 +5,8 @@
 - [快速开始](quick-start.md)：下载、校验、邀请注册、Windows 配对和常见问题。
 - [临时 HTTPS 手机访问](temporary-mobile-access.md)：源码版通过短期隧道访问单台电脑。
 - [Windows 安装说明](windows-installer.md)：安装器、升级、卸载和备用 ZIP。
+- [电脑协作](computer-collaboration.md)：同一 Hub 账号下授权另一台电脑上的 Codex 任务。
+- [配对网络诊断](network-diagnostics.md)：在 Windows 上比较连接器网络请求与系统 HTTPS 请求。
 - [语言设置](languages.md)、[模型设置](model-settings.md)、[数学公式显示](math-rendering.md)、[Mermaid 图表](mermaid-rendering.md)：使用细节。
 - [验收记录](verification.md)：按日期记录已执行的测试和未覆盖范围。
 

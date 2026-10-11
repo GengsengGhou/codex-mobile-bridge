@@ -1,9 +1,9 @@
 {
   "name": "codex-mobile-bridge",
-  "version": "1.0.5",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Mobile access and remote control for existing Codex desktop tasks through a local connector and device hub",
+  "description": "Mobile access and optional computer collaboration for Codex desktop tasks through a local connector and device hub",
   "engines": {
     "node": ">=22.16"
   },
@@ -29,6 +29,7 @@
     "mermaid": "12.1.0"
   },
   "dependencies": {
+    "@iarna/toml": "2.2.5",
     "ws": "^8.22.0"
   }
 }
