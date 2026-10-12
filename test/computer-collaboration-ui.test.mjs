@@ -23,7 +23,7 @@ function mount(t, language = 'zh-CN') {
   const answer = (request, result, ok = true) => send({ type: 'result', id: request.id, ok, ...(ok ? { result } : { error: result }) });
   answer(calls[0], { language, deviceName: 'Fixture PC', root: 'C:/fixture', version: '2.0.0', webviewVersion: '154' });
   send({ type: 'status', status: { paired: true, deviceId: 'device-self', deviceName: 'Fixture PC', hubConnected: true, bridgeConnected: true, autoStart: false } });
-  return { $, calls, answer, window: dom.window };
+  return { $, calls, answer, send, window: dom.window };
 }
 
 test('collaboration settings load on open, preserve dirty selection, validate receive scope, save exact fields, and refresh', async t => {
@@ -146,4 +146,48 @@ test('fresh lists prune only missing draft identities and never select their sam
   ui.$('backSettings').click();ui.$('settingsButton').click();
   ui.answer(ui.calls.at(-1),{collaboration:{...ready,devices:[{id:'device-replaced',name:'Office PC',online:true}]}});await tick();
   assert.equal(ui.$('collaborationDevices').querySelector('input').checked,false);assert.match(ui.$('collaborationSummary').textContent,/所选电脑或项目已改变/);assert.equal(ui.calls.filter(call=>call.action==='save-collaboration').length,0);
+});
+
+test('status binding changes invalidate grants immediately and discard delayed old reads', async t => {
+  const ui = mount(t, 'en'); await tick();
+  const origin = 'https://fixture.invalid', oldId = '11111111-1111-4111-8111-111111111111', newId = '22222222-2222-4222-8222-222222222222';
+  const old = { ...initial, hubOrigin: origin, deviceId: oldId, controlEnabled: true, receiveEnabled: true, allowedDeviceIds: ['device-b'], allowedProjectRoots: ['C:/work/a'], registration: { status: 'registered' } };
+  ui.send({ type: 'status', status: { paired: true, origin, deviceId: oldId } });
+  ui.$('settingsButton').click(); ui.answer(ui.calls.at(-1), { collaboration: old }); await tick();
+  assert.match(ui.$('collaborationSummary').textContent, /has not been verified.*Transport closed/);
+  ui.$('backSettings').click(); ui.$('settingsButton').click(); const delayed = ui.calls.at(-1);
+  ui.send({ type: 'status', status: { paired: true, origin, deviceId: newId } });
+  const current = ui.calls.at(-1); assert.notEqual(current.id, delayed.id);
+  assert.equal(ui.$('controlEnabled').checked, false); assert.equal(ui.$('receiveEnabled').checked, false); assert.equal(ui.$('saveCollaboration').disabled, true);
+  ui.$('saveCollaboration').click(); assert.equal(ui.calls.filter(call => call.action === 'save-collaboration').length, 0);
+  ui.answer(delayed, { collaboration: old }); await tick();
+  assert.equal(ui.$('saveCollaboration').disabled, true); assert.equal(ui.$('receiveEnabled').checked, false);
+  ui.answer(current, { collaboration: { ...initial, hubOrigin: origin, deviceId: newId, requiresAuthorization: true, registration: { status: 'authorization-required' } } }); await tick();
+  assert.equal(ui.$('controlEnabled').checked, false); assert.equal(ui.$('receiveEnabled').checked, false);
+  assert.ok([...ui.$('collaborationDevices').querySelectorAll('input'), ...ui.$('collaborationProjects').querySelectorAll('input')].every(box => !box.checked));
+  ui.$('controlEnabled').checked = true; ui.$('controlEnabled').dispatchEvent(new ui.window.Event('change'));
+  ui.$('saveCollaboration').click(); const save = ui.calls.at(-1);
+  assert.equal(save.payload.expectedHubOrigin, origin); assert.equal(save.payload.expectedDeviceId, newId);
+  assert.equal(save.payload.controlEnabled, true); assert.equal(save.payload.receiveEnabled, false);
+});
+
+test('an old save reply cannot restore grants or report success after another pairing', async t => {
+  const ui = mount(t); await tick();
+  const old = { ...initial, hubOrigin: 'https://fixture.invalid', deviceId: '11111111-1111-4111-8111-111111111111' };
+  ui.send({ type: 'status', status: { paired: true, origin: old.hubOrigin, deviceId: old.deviceId } });
+  ui.$('settingsButton').click(); ui.answer(ui.calls.at(-1), { collaboration: old }); await tick();
+  ui.$('controlEnabled').checked = true; ui.$('controlEnabled').dispatchEvent(new ui.window.Event('change')); ui.$('saveCollaboration').click(); const save = ui.calls.at(-1);
+  ui.send({ type: 'status', status: { paired: true, origin: old.hubOrigin, deviceId: '22222222-2222-4222-8222-222222222222' } });
+  const read = ui.calls.at(-1);
+  ui.answer(save, { collaboration: { ...old, controlEnabled: true } }); await tick();
+  assert.equal(ui.calls.at(-1).id, read.id); assert.equal(ui.$('controlEnabled').checked, false); assert.equal(ui.$('saveCollaboration').disabled, true);
+  assert.doesNotMatch(ui.$('collaborationMessage').textContent, /已保存/);
+});
+test('saving collaboration and resetting pairing cannot overlap in the desktop page', async t => {
+  const ui = mount(t); await tick(); ui.$('settingsButton').click(); ui.answer(ui.calls.at(-1), { collaboration: initial }); await tick();
+  ui.$('saveCollaboration').click(); const save = ui.calls.at(-1); assert.equal(save.action, 'save-collaboration');
+  assert.equal(ui.$('resetCollaborationPairing').disabled, true); ui.$('resetCollaborationPairing').click(); assert.equal(ui.calls.at(-1).id, save.id);
+  ui.answer(save, 'fixture save error', false); await tick(); assert.equal(ui.$('resetCollaborationPairing').disabled, false);
+  ui.$('resetCollaborationPairing').click(); const reset = ui.calls.at(-1); assert.equal(reset.action, 'reset-collaboration-pairing');
+  assert.equal(ui.$('saveCollaboration').disabled, true); ui.$('saveCollaboration').click(); assert.equal(ui.calls.at(-1).id, reset.id);
 });

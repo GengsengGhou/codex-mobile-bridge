@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readSecret } from './read-secret.mjs';
 import { pairingNetworkError } from './network-error.mjs';
-import { resetCollaborationForPairing } from './collaboration-common.mjs';
+import { resetCollaborationForPairing, withCollaborationLock, collaborationResetGeneration, assertCollaborationResetGeneration, assertNoCollaborationReset } from './collaboration-common.mjs';
 
 export const connectorConfigPath = fileURLToPath(new URL('../.local/hub-connector.json', import.meta.url));
 const execute = promisify(execFile);
@@ -35,7 +35,19 @@ export async function privateFile(path) {
   const script = `$ErrorActionPreference='Stop'; $identity=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=[Security.AccessControl.FileSecurity]::new(); $acl.SetAccessRuleProtection($true,$false); $rule=[Security.AccessControl.FileSystemAccessRule]::new($identity,'FullControl','Allow'); $acl.AddAccessRule($rule); [IO.File]::SetAccessControl(${literal},$acl)`;
   await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, timeout: 10000 });
 }
-export async function pairConnector({ information, origin, pairingCode, name, bridgePort = 4317, configPath = connectorConfigPath, replace = false, allowInsecureLocal = false, fetchImpl = fetch } = {}) {
+export async function pairConnector(options = {}) {
+  const configPath = options.configPath || connectorConfigPath;
+  const root = resolve(dirname(configPath), '..');
+  if (options.lockHeld) { await assertNoCollaborationReset(root); return pairConnectorLocked({ ...options, configPath }); }
+  const generation = await collaborationResetGeneration(root);
+  // Pairing's HTTP response and credential publication share reset/settings' lock.
+  // A response already in flight can finish only before reset takes its snapshot.
+  return withCollaborationLock(resolve(dirname(configPath), 'collaboration-settings'), async () => {
+    await assertCollaborationResetGeneration(root, generation);
+    return pairConnectorLocked({ ...options, configPath });
+  });
+}
+async function pairConnectorLocked({ information, origin, pairingCode, name, bridgePort = 4317, configPath, replace = false, allowInsecureLocal = false, fetchImpl = fetch } = {}) {
   const ticket = information === undefined ? null : parsePairingInformation(information);
   const hub = hubOrigin(ticket?.server ?? origin, allowInsecureLocal);
   pairingCode = ticket?.code ?? pairingCode;
@@ -61,7 +73,7 @@ export async function pairConnector({ information, origin, pairingCode, name, br
   } catch (error) { await unlink(temporary).catch(() => {}); throw new Error('设备已配对，但凭据未能安全保存；请从设备列表撤销该设备后重试。', { cause: error }); }
   const result = { deviceId: value.deviceId, hubOrigin: hub, deviceName: config.deviceName };
   try {
-    const reset = await resetCollaborationForPairing({ configPath, config });
+    const reset = await resetCollaborationForPairing({ configPath, config, lockHeld: true });
     return { ...result, collaborationReauthorizationRequired: reset.requiresAuthorization };
   } catch {
     // Pairing codes are consumed; saved credentials must survive cleanup failure.

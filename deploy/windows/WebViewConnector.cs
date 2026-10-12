@@ -21,7 +21,7 @@ class ConnectorWindow : Form,IConnectorWindow {
     readonly WebView2 browser=new WebView2();readonly NotifyIcon tray;
     readonly ToolStripMenuItem trayStatus,trayConnect,trayDisconnect,trayAuto;
     Dictionary<string,object> lastStatus;
-    bool busy,initializing=true,confirmingPair,uninstallPending,statusReadInFlight,refreshQueued,exiting,ready,uninstallMode;
+    bool busy,initializing=true,confirmingPair,collaborationSaveInFlight,uninstallPending,statusReadInFlight,refreshQueued,exiting,ready,uninstallMode;
     Form recoveryWindow;
     readonly object processLock=new object();readonly List<Process> activeReads=new List<Process>();
     int actionEpoch,uninstallRequests;string statusError,actionWarning;
@@ -124,6 +124,24 @@ class ConnectorWindow : Form,IConnectorWindow {
     bool BoolField(Dictionary<string,object> data,string key){object value;if(!data.TryGetValue(key,out value)||!(value is bool))throw new Exception(DesktopLocale.T("请求内容无效。"));return (bool)value;}
     string[] StringArrayField(Dictionary<string,object> data,string key,int maximumCount,int maximumLength){object raw;if(!data.TryGetValue(key,out raw)||!(raw is IList))throw new Exception(DesktopLocale.T("请求内容无效。"));var values=(IList)raw;if(values.Count>maximumCount)throw new Exception(DesktopLocale.T("请求内容无效。"));var result=new List<string>(values.Count);foreach(object value in values){if(!(value is string)||string.IsNullOrWhiteSpace((string)value)||((string)value).Length>maximumLength)throw new Exception(DesktopLocale.T("请求内容无效。"));result.Add((string)value);}return result.ToArray();}
     string[] DeviceIdArrayField(Dictionary<string,object> data,string key){string[] values=StringArrayField(data,key,10,36);foreach(string value in values){Guid parsed;if(!Guid.TryParseExact(value,"D",out parsed))throw new Exception(DesktopLocale.T("请求内容无效。"));}return values;}
+    Dictionary<string,object> CollaborationSaveRequest(Dictionary<string,object> payload) {
+        Fields(payload,"controlEnabled","receiveEnabled","allowedDeviceIds","allowedProjectRoots","expectedHubOrigin","expectedDeviceId");
+        var request=new Dictionary<string,object>{{"action","save-collaboration"},{"controlEnabled",BoolField(payload,"controlEnabled")},{"receiveEnabled",BoolField(payload,"receiveEnabled")},{"allowedDeviceIds",DeviceIdArrayField(payload,"allowedDeviceIds")},{"allowedProjectRoots",StringArrayField(payload,"allowedProjectRoots",100,4096)}};
+        ExpectedIdentityFields(payload,request);return request;
+    }
+    void ExpectedIdentityFields(Dictionary<string,object> payload,Dictionary<string,object> request) {
+        if(payload.ContainsKey("expectedHubOrigin")||payload.ContainsKey("expectedDeviceId")) {
+            string origin=TextField(payload,"expectedHubOrigin",2048),deviceId=TextField(payload,"expectedDeviceId",36);Guid parsed;ConnectorBootstrap.ValidatedHub(origin);
+            if(!Guid.TryParseExact(deviceId,"D",out parsed))throw new Exception(DesktopLocale.T("请求内容无效。"));
+            request["expectedHubOrigin"]=origin;request["expectedDeviceId"]=deviceId;
+        }
+    }
+    Dictionary<string,object> CollaborationResetRequest(Dictionary<string,object> payload) {
+        Fields(payload,"confirm","expectedHubOrigin","expectedDeviceId");
+        if(!BoolField(payload,"confirm"))throw new Exception(DesktopLocale.T("请明确确认重置配对与电脑协作。"));
+        var request=new Dictionary<string,object>{{"action","reset-collaboration-pairing"},{"confirm",true}};
+        ExpectedIdentityFields(payload,request);return request;
+    }
     async Task Receive(CoreWebView2WebMessageReceivedEventArgs e) {
         int id=0;
         try {
@@ -144,27 +162,31 @@ class ConnectorWindow : Form,IConnectorWindow {
             else if(action=="check-update"){Fields(payload,"manual");result=await CheckUpdate(BoolField(payload,"manual"));}
             else if(action=="get-update-state"){Fields(payload);var data=await Run(new{action=action});PublishUpdate(data);ScheduleUpdate((Dictionary<string,object>)data["update"]);result=data;}
             else if(action=="get-collaboration-state"){Fields(payload);result=await Run(new{action=action});}
-            else if(action=="save-collaboration"){Fields(payload,"controlEnabled","receiveEnabled","allowedDeviceIds","allowedProjectRoots");result=await Run(new{action=action,controlEnabled=BoolField(payload,"controlEnabled"),receiveEnabled=BoolField(payload,"receiveEnabled"),allowedDeviceIds=DeviceIdArrayField(payload,"allowedDeviceIds"),allowedProjectRoots=StringArrayField(payload,"allowedProjectRoots",100,4096)});}
+            else if(action=="save-collaboration"){if(busy||confirmingPair||collaborationSaveInFlight||uninstallPending)throw new Exception(DesktopLocale.T("正在完成上一操作，请稍后重试。"));collaborationSaveInFlight=true;try{result=await Run(CollaborationSaveRequest(payload));}finally{collaborationSaveInFlight=false;}}
             else if(action=="update-preferences"){Fields(payload,"automatic");bool wasEnabled=updateAutomatic;var data=await Run(new{action=action,automatic=BoolField(payload,"automatic")});PublishUpdate(data);ScheduleUpdate((Dictionary<string,object>)data["update"],!wasEnabled);result=data;}
             else if(action=="download-update"){Fields(payload);if(updateInFlight)throw new Exception(DesktopLocale.T("正在检查或下载更新，请稍后重试。"));if(busy||initializing||confirmingPair||uninstallPending)throw new Exception(DesktopLocale.T("正在完成上一操作，请稍后重试。"));updateInFlight=true;try{var data=await Run(new{action=action},300000);PublishUpdate(data);var state=(Dictionary<string,object>)data["update"];ScheduleUpdate(state);object verified,error;if(data.TryGetValue("installerVerified",out verified)&&verified is bool&&(bool)verified)LaunchVerifiedInstaller(data);else if(!state.TryGetValue("error",out error)||!(error is string)||string.IsNullOrWhiteSpace((string)error))throw new Exception(DesktopLocale.T("后台响应无效。"));result=data;}finally{updateInFlight=false;}}
             else if(action=="status"){Fields(payload);await RefreshStatus();result=new{refreshed=true};}
             else if(action=="open-web"){Fields(payload,"origin","setup");string origin=ConnectorBootstrap.ValidatedHub(TextField(payload,"origin",2048));OpenExternal(origin+(BoolField(payload,"setup")?"?setup=connector":""));result=new{opened=true};}
+            else if(action=="open-device-management"){Fields(payload,"origin");string origin=ConnectorBootstrap.ValidatedHub(TextField(payload,"origin",2048));OpenExternal(origin+"#dashboard");result=new{opened=true};}
             else if(action=="open-codex"){Fields(payload);try{ConnectorBootstrap.Open("codex://");}catch{throw new Exception(DesktopLocale.T("请从 Windows 开始菜单打开 Codex。"));}result=new{opened=true};}
             else if(action=="open-folder"){Fields(payload);ConnectorBootstrap.Open(root);result=new{opened=true};}
             else if(action=="paste-code"){Fields(payload);string code=Clipboard.GetText().Trim();if(!Regex.IsMatch(code,@"^[A-Za-z0-9_-]{43}$"))throw new Exception(DesktopLocale.T("剪贴板中不是有效的 43 位配对码。"));result=new{code=code};}
             else if(action=="paste-information"){Fields(payload);string information=Clipboard.GetText().Trim();if(information.Length>4096)throw new Exception(DesktopLocale.T("配对信息过长。"));var validated=await Run(new{action="validate-pairing",information=information});var ticket=json.Deserialize<Dictionary<string,object>>(information);result=new{origin=validated["origin"],name=validated["name"],code=ticket["code"]};}
-            else if(action=="diagnostics"){Fields(payload);var diagnostics=new{version=ConnectorBootstrap.Version,root=root,webviewVersion=browser.CoreWebView2.Environment.BrowserVersionString,paired=Flag("paired"),origin=Value("origin"),state=Value("state"),hubState=Value("hubState"),bridgeConnected=Flag("bridgeConnected"),paused=Flag("paused"),pauseScope=Value("pauseScope"),autoStart=Flag("autoStart"),statusReadSucceeded=statusError==null};Clipboard.SetText(json.Serialize(diagnostics));result=new{copied=true};}
+            else if(action=="diagnostics"){Fields(payload);var current=await Run(new{action="diagnostics"});var diagnostics=new{version=ConnectorBootstrap.Version,root=root,webviewVersion=browser.CoreWebView2.Environment.BrowserVersionString,collaboration=current["collaboration"],connectionSnapshot=new{cached=true,paired=Flag("paired"),state=Value("state"),hubState=Value("hubState"),bridgeConnected=Flag("bridgeConnected"),paused=Flag("paused"),pauseScope=Value("pauseScope"),autoStart=Flag("autoStart"),statusReadSucceeded=lastStatus!=null&&statusError==null}};Clipboard.SetText(json.Serialize(diagnostics));result=new{copied=true};}
             else if(action=="uninstall"){Fields(payload);ConnectorBootstrap.RequestUninstall(this,root);result=new{requested=true};}
-            else if(action=="pair"||action=="connect"||action=="disconnect"||action=="autostart")result=await Mutate(action,payload,"manual");
+            else if(action=="pair"||action=="connect"||action=="disconnect"||action=="autostart"||action=="reset-collaboration-pairing")result=await Mutate(action,payload,"manual");
             else throw new Exception(DesktopLocale.T("连接程序命令无效。"));
             Post(new{type="result",id=id,ok=true,result=result});
         } catch(Exception error){Post(new{type="result",id=id,ok=false,error=DesktopLocale.Diagnostic(error.Message)});}
     }
     async Task<object> Mutate(string action,Dictionary<string,object> payload,string reason) {
         if(initializing)throw new Exception(DesktopLocale.T("正在准备连接器，请稍后重试。"));
-        if(uninstallPending||(busy||confirmingPair)&&action!="disconnect"&&action!="quit")throw new Exception(DesktopLocale.T("正在完成上一操作，请稍后重试。"));
+        if(uninstallPending||(busy||confirmingPair||collaborationSaveInFlight)&&action!="disconnect"&&action!="quit")throw new Exception(DesktopLocale.T("正在完成上一操作，请稍后重试。"));
         object request;
-        if(action=="pair") {
+        if(action=="reset-collaboration-pairing") {
+            request=CollaborationResetRequest(payload);confirmingPair=true;
+            try {if(DesktopDialog.ConfirmReset(this)!=DialogResult.OK)return new{cancelled=true};}finally{confirmingPair=false;}
+        } else if(action=="pair") {
             Fields(payload,"origin","name","code");string origin=ConnectorBootstrap.ValidatedHub(TextField(payload,"origin",2048)),name=TextField(payload,"name",80).Trim(),code=TextField(payload,"code",43);
             if(name.Length==0||!Regex.IsMatch(code,@"^[A-Za-z0-9_-]{43}$"))throw new Exception(DesktopLocale.T("请输入设备名称和网页生成的 43 位配对码。"));
             if(Flag("paired")){confirmingPair=true;try{if(DesktopDialog.Show(this,DesktopLocale.T("将这台电脑配对到 ")+origin+DesktopLocale.T("？原服务器的设备需要在原网页中撤销。"),DesktopLocale.T("更换服务器"),MessageBoxButtons.OKCancel,MessageBoxIcon.Question)!=DialogResult.OK)return new{cancelled=true};}finally{confirmingPair=false;}}
@@ -175,13 +197,18 @@ class ConnectorWindow : Form,IConnectorWindow {
         try {
             var data=await Run(request);
             if(epoch!=actionEpoch){data["superseded"]=true;return data;}
+            if(action=="reset-collaboration-pairing") {
+                object raw;var reset=data.TryGetValue("reset",out raw)?raw as Dictionary<string,object>:null;
+                if(reset==null)throw new Exception(DesktopLocale.T("后台响应无效。"));
+                if(reset.ContainsKey("pairingCleared")&&reset["pairingCleared"] is bool&&(bool)reset["pairingCleared"]){lastStatus=new Dictionary<string,object>{{"paired",false},{"paused",true},{"state","paused"},{"hubConnected",false},{"bridgeConnected",false}};statusError=null;actionWarning=null;PublishStatus();}
+            }
             if(action=="disconnect"||action=="quit") {
                 if(!data.ContainsKey("paused")||!(bool)data["paused"]||!data.ContainsKey("disconnectVerified")||!(bool)data["disconnectVerified"])throw new Exception(DesktopLocale.T("未能确认断开，请重试。"));
                 if(lastStatus!=null){lastStatus["paused"]=true;lastStatus["state"]="paused";lastStatus["hubState"]="paused";lastStatus["hubConnected"]=false;}statusError=null;PublishStatus();
                 if(action=="quit"){exiting=true;tray.Visible=false;Close();return data;}
             }
             if(action=="pair"&&data.ContainsKey("paired")&&(bool)data["paired"])actionWarning=data.ContainsKey("partialSuccess")&&(bool)data["partialSuccess"]?DesktopLocale.Diagnostic(Convert.ToString(data["warning"])):null;
-            if(action=="pair"&&data.ContainsKey("paired")&&(bool)data["paired"]){if(lastStatus==null)lastStatus=new Dictionary<string,object>();lastStatus["paired"]=true;lastStatus["origin"]=ConnectorBootstrap.ValidatedHub((string)payload["origin"]);lastStatus["deviceName"]=(string)payload["name"];lastStatus["paused"]=data.ContainsKey("paused")&&(bool)data["paused"];lastStatus["hubConnected"]=false;lastStatus["bridgeConnected"]=false;lastStatus["state"]=Flag("paused")?"paused":"waiting";lastStatus["hubState"]="waiting";statusError=null;PublishStatus();}
+            if(action=="pair"&&data.ContainsKey("paired")&&(bool)data["paired"]){if(lastStatus==null)lastStatus=new Dictionary<string,object>();lastStatus["paired"]=true;lastStatus["origin"]=data["hubOrigin"];lastStatus["deviceId"]=data["deviceId"];lastStatus["deviceName"]=(string)payload["name"];lastStatus["paused"]=data.ContainsKey("paused")&&(bool)data["paused"];lastStatus["hubConnected"]=false;lastStatus["bridgeConnected"]=false;lastStatus["state"]=Flag("paused")?"paused":"waiting";lastStatus["hubState"]="waiting";statusError=null;PublishStatus();}
             if(action=="connect"&&reason=="manual"&&data.ContainsKey("recoveryCompleted")&&(bool)data["recoveryCompleted"]&&(!data.ContainsKey("paused")||!(bool)data["paused"]))actionWarning=null;
             if(action=="connect"&&lastStatus!=null){lastStatus["paused"]=data.ContainsKey("paused")&&(bool)data["paused"];lastStatus["state"]=Flag("paused")?"paused":"connecting";lastStatus["hubState"]=Flag("paused")?"paused":"connecting";lastStatus["hubConnected"]=false;statusError=null;PublishStatus();}
             return data;

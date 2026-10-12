@@ -1,16 +1,22 @@
 import { resolve } from 'node:path';
-import { effectivePolicy, readPrivate, writePrivate, localBridge, UUID, validRoot, fail, withCollaborationLock, collaborationAuthorizationMessage } from './collaboration-common.mjs';
+import { effectivePolicy, readPrivate, writePrivate, localBridge, UUID, validRoot, fail, withCollaborationLock, collaborationAuthorizationMessage, assertNoCollaborationReset, collaborationResetGeneration, assertCollaborationResetGeneration } from './collaboration-common.mjs';
 import { hubCollaboration } from './collaboration-client.mjs';
 import { registerCollaboration } from './collaboration-registration.mjs';
 
 export async function collaborationSettings(command, { root, configPath = resolve(root, '.local/hub-connector.json'), fetchImpl = fetch, bridge = localBridge, register = registerCollaboration, codexHome, nodePath } = {}) {
   if (command.action === 'save-collaboration') {
-    return withCollaborationLock(resolve(root, '.local/collaboration-settings'), () => changeSettings(command, { root, configPath, fetchImpl, bridge, register, codexHome, nodePath }));
+    const generation = await collaborationResetGeneration(root);
+    return withCollaborationLock(resolve(root, '.local/collaboration-settings'), async () => { await assertCollaborationResetGeneration(root, generation); return changeSettings(command, { root, configPath, fetchImpl, bridge, register, codexHome, nodePath }); });
   }
   return changeSettings(command, { root, configPath, fetchImpl, bridge, register, codexHome, nodePath });
 }
 async function changeSettings(command, { root, configPath, fetchImpl, bridge, register, codexHome, nodePath }) {
+  if (command.action === 'save-collaboration') await assertNoCollaborationReset(root);
   const policyPath = resolve(root, '.local/computer-collaboration.json'); const config = await readPrivate(configPath);
+  if (command.action === 'save-collaboration' && (Object.hasOwn(command, 'expectedHubOrigin') || Object.hasOwn(command, 'expectedDeviceId'))) {
+    if (typeof command.expectedHubOrigin !== 'string' || !command.expectedHubOrigin || command.expectedHubOrigin.length > 2048 || typeof command.expectedDeviceId !== 'string' || !UUID.test(command.expectedDeviceId)) fail('INVALID_COLLABORATION_SETTINGS', 400, '电脑协作设置无效。');
+    if (command.expectedHubOrigin !== config?.hubOrigin || command.expectedDeviceId !== config?.deviceId) fail('COLLABORATION_BINDING_CHANGED', 409, '配对已改变，请刷新电脑协作设置并重新选择授权。');
+  }
   const policy = effectivePolicy(await readPrivate(policyPath), config);
   const downgrade = command.action === 'save-collaboration' && typeof command.controlEnabled === 'boolean' && typeof command.receiveEnabled === 'boolean' && (!command.controlEnabled || policy.controlEnabled) && (!command.receiveEnabled || policy.receiveEnabled) && Array.isArray(command.allowedDeviceIds) && Array.isArray(command.allowedProjectRoots) && (!command.receiveEnabled || command.allowedDeviceIds.every(v => policy.allowedDeviceIds.includes(v)) && command.allowedProjectRoots.every(v => policy.allowedProjectRoots.includes(v)));
   let devices = [], projects = [], featureAvailable = false, projectsAvailable = false, error = '', featureCode;
@@ -22,7 +28,7 @@ async function changeSettings(command, { root, configPath, fetchImpl, bridge, re
   }
   let registration = await readPrivate(resolve(root, '.local/collaboration-registration-state.json'), { status: 'disabled' });
   if (command.action === 'save-collaboration') {
-    if (Object.keys(command).some(k => !['action', 'controlEnabled', 'receiveEnabled', 'allowedDeviceIds', 'allowedProjectRoots'].includes(k)) || typeof command.controlEnabled !== 'boolean' || typeof command.receiveEnabled !== 'boolean' || !Array.isArray(command.allowedDeviceIds) || !Array.isArray(command.allowedProjectRoots) || command.allowedDeviceIds.length > 10 || command.allowedProjectRoots.length > 100 || command.allowedDeviceIds.some(v => !UUID.test(v || '')) || command.allowedProjectRoots.some(v => !validRoot(v))) fail('INVALID_COLLABORATION_SETTINGS', 400, '电脑协作设置无效。');
+    if (Object.keys(command).some(k => !['action', 'controlEnabled', 'receiveEnabled', 'allowedDeviceIds', 'allowedProjectRoots', 'expectedHubOrigin', 'expectedDeviceId'].includes(k)) || typeof command.controlEnabled !== 'boolean' || typeof command.receiveEnabled !== 'boolean' || !Array.isArray(command.allowedDeviceIds) || !Array.isArray(command.allowedProjectRoots) || command.allowedDeviceIds.length > 10 || command.allowedProjectRoots.length > 100 || command.allowedDeviceIds.some(v => !UUID.test(v || '')) || command.allowedProjectRoots.some(v => !validRoot(v))) fail('INVALID_COLLABORATION_SETTINGS', 400, '电脑协作设置无效。');
     if (!downgrade && (command.controlEnabled || command.receiveEnabled) && !featureAvailable) fail(featureCode === 'DEVICE_REVOKED' ? featureCode : 'FEATURE_UNAVAILABLE', 503, error || '请先配对并连接服务器。');
     if (!downgrade && command.receiveEnabled && !projectsAvailable) fail('COLLABORATION_PROJECTS_UNAVAILABLE', 503, '本机项目列表暂时无法读取，尚未保存授权。已保留原设置；请打开 Codex，刷新电脑协作设置后重试。');
     if (!downgrade && command.receiveEnabled && (command.allowedDeviceIds.some(v => !devices.some(d => d.id === v)) || command.allowedProjectRoots.some(v => !projects.some(p => p.cwd === v)))) fail('COLLABORATION_SELECTION_CHANGED', 409, '所选电脑或项目已改变，请刷新后重新选择。');

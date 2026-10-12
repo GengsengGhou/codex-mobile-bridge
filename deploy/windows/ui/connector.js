@@ -19,6 +19,18 @@
   let update = null, updateBusy = false, updateError = '';
   let collaboration = null, collaborationDirty = false, collaborationBusy = false, collaborationError = '', collaborationMessage = '';
   let collaborationDraft = { controlEnabled: false, receiveEnabled: false, allowedDeviceIds: [], allowedProjectRoots: [] };
+  let collaborationGeneration = 0, collaborationRequest = 0;
+  let collaborationSaving = false, resetResult = null;
+  const binding = state => typeof state?.hubOrigin === 'string' && state.hubOrigin && typeof state?.deviceId === 'string' && state.deviceId ? { hubOrigin: state.hubOrigin, deviceId: state.deviceId } : null;
+  const statusBinding = state => binding({ hubOrigin: state?.origin, deviceId: state?.deviceId });
+  const bindingsDiffer = (a, b) => !!a && !!b && (a.hubOrigin !== b.hubOrigin || a.deviceId !== b.deviceId);
+  function invalidateCollaboration() {
+    collaborationGeneration++; collaborationRequest++; collaboration = null; collaborationDirty = false; collaborationBusy = false;
+    collaborationDraft = { controlEnabled: false, receiveEnabled: false, allowedDeviceIds: [], allowedProjectRoots: [] };
+    collaborationError = ''; collaborationMessage = t('配对身份已改变，请重新选择电脑协作权限后保存。');
+    renderCollaboration();
+    if (settingsVisible) refreshCollaboration({ preserveDraft: false });
+  }
   function updateDiagnostic(text) { return diagnostic(text)?.replace(/更新服务请求失败（HTTP (\d+)），请重试。/g,(_,code)=>language==='en'?`The update service returned HTTP ${code}. Try again.`:`更新服务请求失败（HTTP ${code}），请重试。`); }
   function renderUpdate() {
     $('currentVersion').textContent = update?.currentVersion ? 'v'+update.currentVersion : $('versionLabel').textContent;
@@ -34,6 +46,7 @@
   }
   function renderCollaboration() {
     const state = collaboration;
+    const busy = collaborationBusy || actionBusy;
     const paired = !!state && state.paired === true;
     const canGrant = paired && state.featureAvailable !== false && state.registration?.status !== 'recovering';
     const revokingOnly = paired && (state.controlEnabled && !collaborationDraft.controlEnabled || state.receiveEnabled && !collaborationDraft.receiveEnabled
@@ -46,9 +59,9 @@
     const canSave = canGrant || revokingOnly;
     $('controlEnabled').checked = collaborationDraft.controlEnabled;
     $('receiveEnabled').checked = collaborationDraft.receiveEnabled;
-    $('controlEnabled').disabled = collaborationBusy || !paired || !canGrant && !(state.controlEnabled || collaborationDraft.controlEnabled);
-    $('receiveEnabled').disabled = collaborationBusy || !paired || !canGrant && !(state.receiveEnabled || collaborationDraft.receiveEnabled);
-    $('saveCollaboration').disabled = collaborationBusy || !canSave;
+    $('controlEnabled').disabled = busy || !paired || !canGrant && !(state.controlEnabled || collaborationDraft.controlEnabled);
+    $('receiveEnabled').disabled = busy || !paired || !canGrant && !(state.receiveEnabled || collaborationDraft.receiveEnabled);
+    $('saveCollaboration').disabled = busy || !canSave;
     $('collaborationDevices').closest('.collaboration-group').hidden = !collaborationDraft.receiveEnabled;
     $('collaborationProjects').closest('.collaboration-group').hidden = !collaborationDraft.receiveEnabled;
     $('collaborationSummary').textContent = !state ? t('正在读取电脑协作设置…')
@@ -58,6 +71,7 @@
       : state.registration?.status === 'error' ? diagnostic(state.registration?.message || state.error) || t('电脑协作当前不可用，请检查配对状态后重试。')
       : state.featureAvailable === false ? diagnostic(state.error) || t('电脑协作当前不可用，请检查配对状态后重试。')
       : state.error ? diagnostic(state.error)
+      : state.registration?.status === 'registered' || state.registration?.status === 'ready' ? t('电脑协作配置已注册。Codex 工具连接状态尚未验证；若显示 Transport closed，请复制诊断信息。')
       : diagnostic(state.registration?.message) || '';
     const drawOptions = (container, items, key, selected, emptyText) => {
       container.replaceChildren();
@@ -71,7 +85,7 @@
         if (typeof selection !== 'string' || !selection) continue;
         const label = document.createElement('label'); label.className = 'collaboration-option';
         const input = document.createElement('input'); input.type = 'checkbox'; input.value = item.id;
-        input.checked = selected.includes(selection); input.disabled = collaborationBusy || !canGrant;
+        input.checked = selected.includes(selection); input.disabled = busy || !canGrant;
         input.addEventListener('change', () => {
           const current = new Set(collaborationDraft[key]);
           input.checked ? current.add(selection) : current.delete(selection);
@@ -92,6 +106,7 @@
   function acceptCollaborationState(result, { preserveDraft = collaborationDirty } = {}) {
     const received = result?.collaboration || result;
     if (!received || typeof received !== 'object') throw new Error(t('电脑协作设置无法读取，请重试。'));
+    if (status?.paired === false && received.paired !== false || bindingsDiffer(binding(received), statusBinding(status))) throw new Error(t('配对身份已改变，请重新选择电脑协作权限后保存。'));
     const next = { ...received };
     const sameBinding = collaboration && collaboration.deviceId === next.deviceId && collaboration.hubOrigin === next.hubOrigin;
     if (sameBinding) {
@@ -122,13 +137,15 @@
     renderCollaboration();
   }
   async function refreshCollaboration({ preserveDraft = collaborationDirty } = {}) {
+    const generation = collaborationGeneration, request = ++collaborationRequest;
     collaborationBusy = !collaboration; collaborationError = ''; renderCollaboration();
-    try { acceptCollaborationState(await command('get-collaboration-state'), { preserveDraft }); }
-    catch (error) { collaborationError = error.message; renderCollaboration(); }
-    finally { collaborationBusy = false; renderCollaboration(); }
+    try { const result = await command('get-collaboration-state'); if (generation === collaborationGeneration && request === collaborationRequest) acceptCollaborationState(result, { preserveDraft }); }
+    catch (error) { if (generation === collaborationGeneration && request === collaborationRequest) collaborationError = error.message; }
+    finally { if (generation === collaborationGeneration && request === collaborationRequest) { collaborationBusy = false; renderCollaboration(); } }
   }
   async function saveCollaboration() {
-    if (collaborationBusy) return;
+    if (collaborationBusy || actionBusy || !collaboration || status?.paired === false || bindingsDiffer(binding(collaboration), statusBinding(status))) return;
+    const generation = collaborationGeneration, request = ++collaborationRequest, expected = binding(collaboration);
     const deviceIds = new Set((collaboration?.devices || []).filter(device => device?.id && device.id !== status?.deviceId).map(device => device.id));
     const projectRoots = new Set((collaboration?.projects || []).filter(project => project?.cwd).map(project => project.cwd));
     const needsFreshAllowlist = collaborationDraft.receiveEnabled && (!collaboration.receiveEnabled
@@ -137,19 +154,21 @@
     if (needsFreshAllowlist && (!collaborationDraft.allowedDeviceIds.some(id => deviceIds.has(id)) || !collaborationDraft.allowedProjectRoots.some(path => projectRoots.has(path)))) {
       collaborationError = ''; collaborationMessage = t('启用接收前，请至少选择一台电脑和一个本机项目。'); renderCollaboration(); return;
     }
-    collaborationBusy = true; collaborationError = ''; collaborationMessage = ''; renderCollaboration();
+    collaborationBusy = true; collaborationSaving = true; collaborationError = ''; collaborationMessage = ''; render();
     let saved = false;
     try {
       const result = await command('save-collaboration', {
         controlEnabled: collaborationDraft.controlEnabled,
         receiveEnabled: collaborationDraft.receiveEnabled,
         allowedDeviceIds: [...collaborationDraft.allowedDeviceIds],
-        allowedProjectRoots: [...collaborationDraft.allowedProjectRoots]
+        allowedProjectRoots: [...collaborationDraft.allowedProjectRoots],
+        ...(expected ? { expectedHubOrigin: expected.hubOrigin, expectedDeviceId: expected.deviceId } : {})
       });
+      if (generation !== collaborationGeneration || request !== collaborationRequest) return;
       acceptCollaborationState(result, { preserveDraft: false });
       collaborationMessage = t('电脑协作设置已保存。'); saved = true;
-    } catch (error) { collaborationError = error.message; }
-    finally { collaborationBusy = false; renderCollaboration(); }
+    } catch (error) { if (generation === collaborationGeneration && request === collaborationRequest) collaborationError = error.message; }
+    finally { collaborationSaving = false; if (generation === collaborationGeneration && request === collaborationRequest) collaborationBusy = false; render(); }
     if (saved) await refreshCollaboration({ preserveDraft: collaborationDirty });
   }
   async function updateAction(action,payload={}) { if(updateBusy)return; updateBusy=true;updateError='';renderUpdate();try{const result=await command(action,payload);if(result.update)update=result.update;}catch(error){updateError=error.message;}finally{updateBusy=false;renderUpdate();} }
@@ -179,6 +198,14 @@
   }
   function render() {
     renderUpdate();
+    renderCollaboration();
+    $('resetCollaborationPairing').disabled = actionBusy || collaborationSaving;
+    $('resetOutcome').hidden = !resetResult;
+    $('resetOutcome').dataset.kind = resetResult?.completed === true && resetResult?.partialFailure !== true ? 'success' : 'error';
+    $('resetMessage').textContent = !resetResult ? '' : t(resetResult.completed === true && resetResult.partialFailure !== true ? '本机配对与电脑协作已重置。请重新配对并明确选择授权。' : '重置未完全完成。已保留无法安全处理的内容；请复制诊断信息并检查 Codex 设置后重试。');
+    $('resetRegistrationNotice').hidden = resetResult?.registrationPreserved !== true;
+    $('openPreviousDevices').hidden = !pairingOrigin(resetResult?.previousHubOrigin || '');
+    $('openPreviousDevices').disabled = actionBusy;
     const paired = status?.paired === true;
     const pairing = !paired || changingServer;
     $('pairingView').hidden = settingsVisible || !pairing;
@@ -216,7 +243,7 @@
     feedback(pairingSourceMismatch ? t('配对信息来自 {source}，与当前选择的服务器 {target} 不一致。请在目标服务器重新生成配对信息。').replace('{source}', () => pairingSourceMismatch.source).replace('{target}', () => pairingSourceMismatch.target) : diagnostic(actionError || warning || statusError));
   }
   async function act(action, payload = {}) {
-    const mutating = ['pair', 'connect', 'disconnect', 'autostart'].includes(action);
+    const mutating = ['pair', 'connect', 'disconnect', 'autostart', 'reset-collaboration-pairing'].includes(action);
     if (mutating && actionBusy && action !== 'disconnect') return null;
     if (mutating) { mutationPending++; actionBusy = true; render(); }
     actionError = '';
@@ -290,6 +317,19 @@
   $('autoStart').addEventListener('change', async () => { const enabled = $('autoStart').checked; await act('autostart', { enabled }); render(); });
   $('openFolder').addEventListener('click', () => act('open-folder'));
   $('uninstall').addEventListener('click', () => act('uninstall'));
+  $('resetCollaborationPairing').addEventListener('click', async () => {
+    if (actionBusy || collaborationSaving) return;
+    const expected = statusBinding(status);
+    const validExpected = expected && pairingOrigin(expected.hubOrigin) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(expected.deviceId);
+    const result = await act('reset-collaboration-pairing', { confirm: true, ...(validExpected ? { expectedHubOrigin: expected.hubOrigin, expectedDeviceId: expected.deviceId } : {}) });
+    if (!result?.reset || result.cancelled || result.superseded) return;
+    resetResult = result.reset;
+    if (resetResult.pairingCleared === true) { status = { paired: false, paused: true, autoStart: status?.autoStart === true }; statusError = ''; warning = ''; }
+    changingServer = false; pairingTarget = importedPairingOrigin = pairingSourceMismatch = null; pairingFlow++; $('pairingCode').value = '';
+    if (resetResult.completed === true && resetResult.partialFailure !== true) settingsVisible = false;
+    invalidateCollaboration(); render();
+  });
+  $('openPreviousDevices').addEventListener('click', () => { if (pairingOrigin(resetResult?.previousHubOrigin || '')) act('open-device-management', { origin: resetResult.previousHubOrigin }); });
   $('refreshStatus').addEventListener('click', () => act('status'));
   $('copyDiagnostics').addEventListener('click', async () => { const result = await act('diagnostics'); if (result) feedback(t('诊断信息已复制'), 'success'); });
   $('checkUpdate').addEventListener('click', () => updateAction('check-update',{manual:true}));
@@ -305,7 +345,9 @@
       const request = requests.get(data.id); if (!request) return;
       requests.delete(data.id); data.ok ? request.resolve(data.result) : request.reject(new Error(data.error));
     } else if (data.type === 'status') {
+      const previousBinding = statusBinding(status);
       if (data.status) status = data.status;
+      if (data.status && (status.paired === false && (collaboration || previousBinding) || bindingsDiffer(previousBinding, statusBinding(status)) || bindingsDiffer(binding(collaboration), statusBinding(status)))) invalidateCollaboration();
       statusError = data.error || '';
       if (!defaultsApplied && status) {
         if (!serverTouched && status.origin) $('server').value = status.origin;

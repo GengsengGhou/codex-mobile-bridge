@@ -8,10 +8,22 @@ import { registerDeferredConnectorLogin, launchConnectorLoginWatcher } from './c
 import { createConnectorControl, stopOwnedConnectorProcesses } from './connector-control.mjs';
 import { createConnectorUpdater } from './connector-updates.mjs';
 import { collaborationSettings } from './collaboration-settings.mjs';
+import { readCollaborationDiagnostics } from './collaboration-diagnostics.mjs';
+import { resetCollaborationPairing } from './collaboration-reset.mjs';
+import { withCollaborationLock, collaborationResetGeneration, assertCollaborationResetGeneration } from './collaboration-common.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 export async function guiCommand(command, deps = {}) {
   const appRoot = deps.root || root;
+  if (command.action === 'reset-collaboration-pairing') return resetCollaborationPairing(command, { ...deps.resetOptions, root: appRoot });
+  if (['connect', 'pair'].includes(command.action) && !deps.collaborationLockHeld) {
+    const generation = await collaborationResetGeneration(appRoot);
+    return withCollaborationLock(resolve(appRoot, '.local/collaboration-settings'), async () => {
+      await assertCollaborationResetGeneration(appRoot, generation);
+      return guiCommand(command, { ...deps, collaborationLockHeld: true });
+    });
+  }
+  if (command.action === 'diagnostics') return { collaboration: await readCollaborationDiagnostics({ root: appRoot, configPath: deps.configPath || resolve(appRoot, '.local/hub-connector.json') }) };
   if (['get-collaboration-state', 'save-collaboration'].includes(command.action)) return collaborationSettings(command, { root: appRoot, ...deps.collaborationOptions });
   if (['get-update-state', 'check-update', 'update-preferences', 'download-update'].includes(command.action)) {
     const updater = deps.updater || createConnectorUpdater({ root: appRoot, ...deps.updateOptions });
@@ -56,7 +68,7 @@ export async function guiCommand(command, deps = {}) {
     const priorIntent = await control.read();
     const port = old?.bridgePort || await (deps.choosePort || chooseFreePort)(4317);
     if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('本机连接端口无效。');
-    const result = await (deps.pair || pairConnector)({ ...pairing, bridgePort: port, configPath, replace: !!old });
+    const result = await (deps.pair || pairConnector)({ ...pairing, bridgePort: port, configPath, replace: !!old, lockHeld: true });
     let warning = result.warning || null;
     let completed = null;
     let recoveryCompleted = false;
@@ -65,7 +77,7 @@ export async function guiCommand(command, deps = {}) {
       if (!completed.superseded && !await control.mayRun(completed.intent.revision)) completed = { ...completed, superseded: true, intent: await control.read() };
       if (!completed.superseded) {
         if (old) await (deps.stopPrevious || (() => stopOwnedConnectorProcesses({ root: appRoot })))();
-        await (deps.registerDeferred || registerDeferredConnectorLogin)({ root: appRoot, allowBootstrap: completed.intent.bootstrapPending ?? !old, registerStartup: false });
+        await (deps.registerDeferred || registerDeferredConnectorLogin)({ root: appRoot, allowBootstrap: completed.intent.bootstrapPending ?? !old, registerStartup: false, lockHeld: true });
         if (control.finishBootstrapEnrollment) completed.intent = await control.finishBootstrapEnrollment(completed.intent.revision);
         if (control.finishStartupRegistration) completed.intent = await control.finishStartupRegistration(completed.intent.revision);
         const launched = await (deps.watch || launchConnectorLoginWatcher)({ root: appRoot });
@@ -85,7 +97,7 @@ export async function guiCommand(command, deps = {}) {
     if (!config) throw new Error('请先绑定这台电脑。');
     let intent = await control.resume(command.reason === 'startup' ? 'startup' : 'manual');
     if (intent.paused || (command.reason === 'startup' && !intent.autoStart)) return { paired: true, paused: intent.paused, pauseScope: intent.pauseScope, persistentPaused: intent.pauseScope === 'persistent', state: intent.paused ? 'paused' : 'waiting', recoveryCompleted: false };
-    await (deps.registerDeferred || registerDeferredConnectorLogin)({ root: appRoot, ...(intent.bootstrapPending ? { allowBootstrap: true } : {}), registerStartup: false });
+    await (deps.registerDeferred || registerDeferredConnectorLogin)({ root: appRoot, ...(intent.bootstrapPending ? { allowBootstrap: true } : {}), registerStartup: false, lockHeld: true });
     if (control.finishBootstrapEnrollment) intent = await control.finishBootstrapEnrollment(intent.revision);
     if (control.finishStartupRegistration) intent = await control.finishStartupRegistration(intent.revision);
     if (!await control.mayRun(intent.revision)) return { paired: true, paused: true, pauseScope: (await control.read()).pauseScope, state: 'paused', recoveryCompleted: false };

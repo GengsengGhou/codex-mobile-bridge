@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { loadRuntimeConfig } from '../src/runtime.mjs';
 import { launchWindowsBridge } from './windows-launch.mjs';
+import { assertNoCollaborationReset } from './collaboration-common.mjs';
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT_MARKERS = ['<title>Codex Mobile Bridge</title>', '<title>Codex 手机桥接</title>'];
@@ -68,6 +69,7 @@ export async function startBridge({
   launchWindows = launchWindowsBridge,
   output = console
 } = {}) {
+  await assertNoCollaborationReset(root);
   const config = await loadConfig();
   const baseUrl = `http://127.0.0.1:${config.port}`;
   if (await verifyBridge(baseUrl, fetchImpl)) {

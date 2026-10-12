@@ -4,7 +4,7 @@ import { resolve, dirname, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readPrivate, writePrivate, fail, withCollaborationLock } from './collaboration-common.mjs';
 import { privateFile } from './setup-connector.mjs';
 
@@ -95,6 +95,29 @@ async function replaceLocked(path, before, after) {
 }
 export async function registerCollaboration(options = {}) {
   return withCollaborationLock(resolve(options.root, '.local/collaboration-registration'), () => editRegistration(options));
+}
+// Explicit local reset may discard this installation's tool preferences. Its
+// ownership proof comes from the canonical launch paths, never a damaged ledger.
+// The current trusted Codex home is selected by the caller/environment only.
+export async function removeCollaborationForReset({ root, codexHome = process.env.CODEX_HOME || resolve(homedir(), '.codex'), beforeReplace } = {}) {
+  root = resolve(root);
+  return withCollaborationLock(resolve(root, '.local/collaboration-registration'), async () => {
+    const configPath = resolve(codexHome, 'config.toml'); await noLinks(configPath);
+    let before; try { before = await readFile(configPath, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return { removed: false, preserved: false }; throw error; }
+    if (Buffer.byteLength(before) > 2 * 1024 * 1024) fail('MCP_CONFIG_INVALID', 409, '现有 Codex 配置过大，已保留原文。请核对后重试重置。');
+    let parsed; try { parsed = TOML.parse(before); } catch { fail('MCP_CONFIG_INVALID', 409, 'Codex 配置无法读取，已保留原文。请修复后重试重置。'); }
+    const current = parsed.mcp_servers?.[collaborationServerName];
+    if (!current) return { removed: false, preserved: false };
+    const equalPath = (actual, expected) => typeof actual === 'string' && isAbsolute(actual) && (process.platform === 'win32' ? resolve(actual).toLowerCase() === resolve(expected).toLowerCase() : resolve(actual) === resolve(expected));
+    const knownKeys = ['command', 'args', 'tools', 'enabled', 'startup_timeout_sec', 'tool_timeout_sec', 'enabled_tools', 'disabled_tools'];
+    const owned = equalPath(current.command, resolve(root, 'runtime/node.exe')) && Array.isArray(current.args) && current.args.length === 1 && equalPath(current.args[0], resolve(root, 'scripts/collaboration-mcp.mjs')) && Object.keys(current).every(key => knownKeys.includes(key));
+    if (!owned) return { removed: false, preserved: true, code: 'MCP_RESET_REGISTRATION_UNVERIFIED' };
+    const after = removeReformattedRegistration(before, parsed);
+    const backup = resolve(root, `.local/collaboration-reset-config-backup-${randomUUID()}.toml`); await noLinks(backup);
+    const backupFile = await open(backup, 'wx', 0o600); try { await backupFile.writeFile(before); await backupFile.sync(); } finally { await backupFile.close(); } await privateFile(backup);
+    await beforeReplace?.(); await replaceLocked(configPath, before, after);
+    return { removed: true, preserved: false };
+  });
 }
 async function editRegistration({ root, enabled, codexHome = process.env.CODEX_HOME || resolve(homedir(), '.codex'), nodePath, beforeReplace } = {}) {
   const configPath = resolve(codexHome, 'config.toml'); const ledgerPath = resolve(root, '.local/collaboration-registration.json');

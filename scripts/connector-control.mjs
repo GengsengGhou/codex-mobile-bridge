@@ -4,8 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
-import { recoveryIdentity, writeRecoveryFile } from '../src/recovery.mjs';
+import { recoveryIdentity, writeRecoveryFile, createWindowsRegistration } from '../src/recovery.mjs';
 import { privateFile } from './setup-connector.mjs';
+import { collaborationResetPending, assertNoCollaborationReset } from './collaboration-common.mjs';
 
 const executeFile = promisify(execFile);
 const literal = value => `'${String(value).replaceAll("'", "''")}'`;
@@ -38,6 +39,7 @@ export async function readConnectorControl(root) {
   return { ...value, startupPending: value.startupPending === true, bootstrapPending: value.bootstrapPending === true };
 }
 export async function connectorMayRun(root, revision) {
+  if (await collaborationResetPending(root)) return false;
   const value = await readConnectorControl(root);
   return !value.paused && (!revision || value.revision === revision);
 }
@@ -81,16 +83,16 @@ if($enabled -ne ${enable ? '$true' : '$false'}){throw '登录启动设置未生�
   }
   return { read: () => invoke(), set: enabled => invoke(enabled), name, command };
 }
-export async function stopOwnedConnectorProcesses({ root, nodePath = process.execPath, execute = executeFile }) {
-  const scripts = ['connector-login.mjs', 'start-connector.mjs'].map(file => resolve(root, 'scripts', file));
+export async function stopOwnedConnectorProcesses({ root, nodePath = process.execPath, execute = executeFile, includeBridge = false }) {
+  const scripts = (includeBridge ? ['scripts/connector-login.mjs', 'scripts/start.mjs', 'scripts/supervisor.mjs', 'scripts/start-connector.mjs', 'scripts/collaboration-mcp.mjs', 'src/server.mjs'] : ['scripts/connector-login.mjs', 'scripts/start-connector.mjs', 'scripts/collaboration-mcp.mjs']).map(file => resolve(root, file));
   return powershell(`$ErrorActionPreference='Stop'
-$node=${literal(resolve(nodePath))}; $watcher=${literal(scripts[0])}; $connector=${literal(scripts[1])}
+$node=${literal(resolve(nodePath))}; $scripts=@(${scripts.map(literal).join(',')})
 function Owned($script){ @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -ceq $node -and $_.CommandLine -and ($_.CommandLine -match ('(?i)(?:^|\\s)"'+[regex]::Escape($script)+'"(?:\\s|$)') -or $_.CommandLine -match ('(?i)(?:^|\\s)'+[regex]::Escape($script)+'(?:\\s|$)')) }) }
-foreach($script in @($watcher,$connector)){foreach($p in (Owned $script)){Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop}}
-for($i=0;$i -lt 10;$i++){if((Owned $watcher).Count -eq 0 -and (Owned $connector).Count -eq 0){@{stopped=$true}|ConvertTo-Json -Compress;exit};Start-Sleep -Milliseconds 100}
+foreach($script in $scripts){foreach($p in (Owned $script)){Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop}}
+for($i=0;$i -lt 10;$i++){if(@($scripts | ForEach-Object { Owned $_ }).Count -eq 0){@{stopped=$true}|ConvertTo-Json -Compress;exit};Start-Sleep -Milliseconds 100}
 throw '无法确认连接器已停止；暂停意图已保存，请重试断开。'`, execute);
 }
-export function createConnectorControl({ root, registration, session = currentLogonSession, stop = stopOwnedConnectorProcesses } = {}) {
+export function createConnectorControl({ root, registration, bridgeRegistration, session = currentLogonSession, stop = stopOwnedConnectorProcesses } = {}) {
   const startup = registration || createCompanionRegistration({ root });
   const path = resolve(root, '.local/connector-control.json');
   const paired = async () => {
@@ -127,6 +129,7 @@ try{try{$held=$mutex.WaitOne(5000)}catch [Threading.AbandonedMutexException]{$he
   async function save(value) { await writeRecoveryFile(path, value); await privateFile(path); return value; }
   async function initialize() {
     return mutate(async () => {
+      await assertNoCollaborationReset(root);
       let value = await readConnectorControl(root);
       let changed = false;
       if (await paired()) {
@@ -146,6 +149,7 @@ try{try{$held=$mutex.WaitOne(5000)}catch [Threading.AbandonedMutexException]{$he
     read: () => readConnectorControl(root), initialize,
     mayRun: revision => connectorMayRun(root, revision),
     resume: reason => mutate(async () => {
+      await assertNoCollaborationReset(root);
       let value;
       try { value = await readConnectorControl(root); }
       catch (e) { if (reason === 'startup') throw e; value = { version: 2, paused: true, pauseScope: 'session', pausedSession: await session(), autoStart: false, autoStartSelected: false, revision: 'repair', settingsRevision: 'repair', disconnectVerified: false }; }
@@ -171,6 +175,7 @@ try{try{$held=$mutex.WaitOne(5000)}catch [Threading.AbandonedMutexException]{$he
       return result;
     },
     configure: autoStart => mutate(async () => {
+      await assertNoCollaborationReset(root);
       if (typeof autoStart !== 'boolean') throw new Error('登录启动设置无效。');
       const value = await readConnectorControl(root);
       if (await paired()) {
@@ -180,6 +185,7 @@ try{try{$held=$mutex.WaitOne(5000)}catch [Threading.AbandonedMutexException]{$he
       return save({ ...value, version: 2, autoStart, autoStartSelected: true, startupPending: false, settingsRevision: randomUUID() });
     }),
     completePairing: (expectedRevision, expectedSettingsRevision, { newPair = true } = {}) => mutate(async () => {
+      await assertNoCollaborationReset(root);
       const value = await readConnectorControl(root);
       if (value.revision !== expectedRevision) {
         let autoStart = value.autoStart;
@@ -207,6 +213,7 @@ try{try{$held=$mutex.WaitOne(5000)}catch [Threading.AbandonedMutexException]{$he
       return { superseded: false, intent: finalized };
     }),
     finishStartupRegistration: expectedRevision => mutate(async () => {
+      await assertNoCollaborationReset(root);
       const value = await readConnectorControl(root);
       if (value.revision !== expectedRevision || value.paused || !value.startupPending) return value;
       if (await paired()) {
@@ -217,9 +224,17 @@ try{try{$held=$mutex.WaitOne(5000)}catch [Threading.AbandonedMutexException]{$he
       return current.revision === value.revision && !current.paused ? save({ ...current, startupPending: false }) : current;
     }),
     finishBootstrapEnrollment: expectedRevision => mutate(async () => {
+      await assertNoCollaborationReset(root);
       const value = await readConnectorControl(root);
       if (value.revision !== expectedRevision || value.paused || !value.bootstrapPending) return value;
       return save({ ...value, bootstrapPending: false });
-    })
+    }),
+    resetForRecovery: async () => {
+      await mutate(() => save({ version: 2, paused: true, pauseScope: 'persistent', pausedSession: null, autoStart: false, autoStartSelected: true, startupPending: false, bootstrapPending: false, revision: randomUUID(), settingsRevision: randomUUID(), disconnectVerified: false, lastError: null }));
+      const stopped = await stop({ root, includeBridge: true }); if (!stopped?.stopped) throw new Error('无法确认本安装的连接器、桥接与工具进程已停止。');
+      const startupState = await startup.set(false); if (startupState?.enabled !== false) throw new Error('无法确认本安装的自动连接已关闭。');
+      const bridgeStartup = await (bridgeRegistration || createWindowsRegistration({ root })).set(false); if (bridgeStartup?.enabled !== false || bridgeStartup.conflict) throw new Error('无法确认本安装的桥接自动启动已关闭。');
+      return mutate(async () => save({ ...await readConnectorControl(root), disconnectVerified: true }));
+    }
   };
 }

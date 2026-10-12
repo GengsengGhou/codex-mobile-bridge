@@ -1,6 +1,6 @@
 # Windows graphical connector
 
-中文下载与首次配对步骤见 [简易配置教程](quick-start.md#配对-windows-电脑)。2026-10-12 重新发布的 v2.0.0 安装包和 SHA-256 清单可从[最新 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest)下载，无需 GitHub 令牌或桥接账号。旧 v2.0.0 用户需手动重新下载并选择同版本“修复安装”；同版本检查不会自动提示更新。旧 v2.0.1 用户先卸载并保留 `.local` 数据，再安装新的 v2.0.0 到原目录，安装器不会直接降级覆盖。完成后重新打开 Codex 或重新加载电脑协作连接，保留工具审批、模型提供方和 API 配置。下面记录安装器细节与构建验证。
+中文下载与首次配对步骤见 [简易配置教程](quick-start.md#配对-windows-电脑)。2026-10-12 再次重新打包、包含明确重置入口的 v2.0.0 安装包和 SHA-256 清单可从[最新 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest)下载，无需 GitHub 令牌或桥接账号。旧 v2.0.0 用户需手动重新下载并选择同版本“修复安装”；同版本检查不会自动提示更新。旧 v2.0.1 用户先卸载并保留 `.local` 数据，再安装新的 v2.0.0 到原目录，安装器不会直接降级覆盖。普通修复或重装后重新打开 Codex 或重新加载电脑协作连接，保留工具审批、模型提供方和 API 配置；明确重置会清除本安装自有协作连接的工具偏好，范围见下文。下面记录安装器细节与构建验证。
 
 Distribute `dist/CodexMobileConnector-Setup.exe` with its published SHA-256 checksum.
 The Windows x64 installer embeds the application, its `ws` dependency, Node.js,
@@ -169,6 +169,18 @@ Missing/corrupt EXE, runtime and GUI files can be repaired when ownership and in
 Repair uses the same backup/journal transaction as upgrades. Partial replacement failure restores prior files and data. When an active damaged installation cannot safely restart its old components, its active intent stays in the journal for the next forward repair. Rerun the same package after an interruption: recovery restores the transaction and then replaces application bytes even when versions match. A successful retry removes the stale install-error record. Lower-version installs remain refused and automatic update checks still require a strictly newer version.
 
 `node deploy/verify-windows-repair.mjs <repair-setup.exe> <original-2.0.0-setup.exe> <older-setup.exe>` exercises actual legacy upgrade and current same-version repair, missing/corrupt components, preserved private bytes, copy rollback, interrupted retries and refusal of malformed ownership/control. Roots are isolated under `work/installer-repair` or `CODEX_REPAIR_EVIDENCE_DIRECTORY`; it does not change the live installation or register startup entries.
+
+## 明确重置配对与电脑协作
+
+普通同版本 **修复安装 / Repair** 保留配对、授权和私有数据。只有在连接器 **设置 > 恢复连接 > 重置配对与电脑协作** 中，阅读原生确认窗口并明确确认，才执行下面的有损清理；默认按钮为“取消”。未配对、等待连接或状态读取失败时也能进入该恢复流程。
+
+重置断开本安装的连接器与桥接，清除本机配对、桥接身份及电脑协作授权。MCP 清理仅限当前选定的可信 **全局 Codex 配置**：必须能证明该连接启动当前安装的标准 `runtime/node.exe`，并且仅传入本安装的 `scripts/collaboration-mcp.mjs`。该自有连接及其 `tools` 偏好一起清除；未知同名连接、其他安装或启动内容无法确认的连接保留并报告部分失败。不会依据损坏的所有权记录改写另一配置，也不扫描项目级 Codex 覆盖；项目级同名连接需用户另外在 Codex 中核对。
+
+项目、会话、模型提供方与 API 配置、其他 MCP 连接、上传/下载、回执、outbox 和现有私有备份保留。不递归删除 `.local`，不停止 Codex 本身或其他安装。重置关闭本安装的自动连接并持久暂停恢复；新配对后请按需要重新核对登录后自动连接设置。
+
+完成后回到首次配对页，重新生成配对码并明确选择协作权限。不会自动重新配对、连接、授权或派发任务。服务器的旧设备记录没有删除；点击“打开原服务器设备管理”后，在原账号“我的设备”中手动移除。新设备 ID 必须由其他电脑重新选择并授权，同名设备不继承旧权限。
+
+部分失败时应用明确显示未完成及保留连接提示，保持重置恢复记录，阻止旧身份被连接、配对、保存或后台恢复重新写入。复制诊断信息，核对提示后从同一入口重试，不用普通 Repair 代替重置完成。成功后重新打开 Codex 或重新加载协作连接；清除注册并不证明原有 `Transport closed` 会话已恢复。详细权限与诊断边界见[电脑协作](computer-collaboration.md#明确重置与诊断)。
 
 ## 备用 ZIP 终端安装
 

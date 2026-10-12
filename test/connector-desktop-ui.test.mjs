@@ -19,6 +19,50 @@ function mount(t,{language='zh-CN',deviceName='Fixture PC'}={}) {
   return {$,calls,send,answer,input,window:dom.window};
 }
 const online={paired:true,origin:'https://old.example',deviceName:'Old PC',hubConnected:true,hubState:'online',bridgeConnected:true,state:'online',paused:false,autoStart:true};
+
+test('reset remains accessible without pairing or readable status and native cancellation changes no draft', async t => {
+  for (const state of [{ paired: false }, { ...online, state: 'waiting' }, null, { paired: true, origin: 'broken', deviceId: 'broken' }]) {
+    const ui = mount(t); await tick();
+    ui.send({ type: 'status', ...(state ? { status: state } : {}), error: 'fixture unreadable pairing' });
+    ui.$('settingsButton').click();
+    assert.equal(ui.$('resetCollaborationPairing').disabled, false);
+    ui.input('server', 'https://draft.example'); ui.input('pairingCode', 'x'.repeat(43));
+    ui.$('resetCollaborationPairing').click(); const request = ui.calls.at(-1);
+    assert.equal(request.action, 'reset-collaboration-pairing'); assert.deepEqual(JSON.parse(JSON.stringify(request.payload)), { confirm: true });
+    ui.$('resetCollaborationPairing').click(); assert.equal(ui.calls.at(-1).id, request.id);
+    ui.answer(request, { cancelled: true }); await tick();
+    assert.equal(ui.$('resetOutcome').hidden, true); assert.equal(ui.$('settingsView').hidden, false);
+    assert.equal(ui.$('server').value, 'https://draft.example'); assert.equal(ui.$('pairingCode').value, 'x'.repeat(43));
+    assert.equal(ui.calls.some(call => call.action === 'open-device-management' || call.action === 'pair'), false);
+  }
+});
+
+test('reset success returns to pairing, retains explicit cloud cleanup notice, and opens only the previous Hub on request', async t => {
+  const ui = mount(t, { language: 'en' }); await tick();
+  const deviceId = '11111111-1111-4111-8111-111111111111';
+  ui.send({ type: 'status', status: { ...online, deviceId } }); ui.$('settingsButton').click();
+  const oldRead = ui.calls.at(-1); ui.$('resetCollaborationPairing').click(); const request = ui.calls.at(-1);
+  assert.deepEqual(JSON.parse(JSON.stringify(request.payload)), { confirm: true, expectedHubOrigin: online.origin, expectedDeviceId: deviceId });
+  ui.answer(request, { reset: { completed: true, partialFailure: false, pairingCleared: true, registrationRemoved: true, registrationPreserved: false, previousHubOrigin: online.origin, serverDeviceRecordRemoved: false, needsPairing: true } }); await tick();
+  assert.equal(ui.$('pairingView').hidden, false); assert.equal(ui.$('settingsView').hidden, true);
+  assert.equal(ui.$('controlEnabled').checked, false); assert.equal(ui.$('receiveEnabled').checked, false);
+  assert.equal(ui.$('resetOutcome').hidden, false); assert.match(ui.$('resetMessage').textContent, /have been reset/);
+  assert.match(ui.$('resetOutcome').textContent, /old device record was not removed.*new device identity.*matching name does not transfer/s);
+  assert.equal(ui.calls.filter(call => ['pair', 'connect', 'open-device-management'].includes(call.action)).length, 0);
+  ui.answer(oldRead, { collaboration: { paired: true, hubOrigin: online.origin, deviceId, controlEnabled: true, receiveEnabled: true, featureAvailable: true } }); await tick();
+  assert.equal(ui.$('controlEnabled').checked, false); assert.equal(ui.$('receiveEnabled').checked, false);
+  ui.$('openPreviousDevices').click(); const open = ui.calls.at(-1); assert.equal(open.action, 'open-device-management'); assert.deepEqual(JSON.parse(JSON.stringify(open.payload)), { origin: online.origin });
+});
+
+test('partial reset stays actionable and never claims complete reset or removal of an unknown registration', async t => {
+  const ui = mount(t, { language: 'en' }); await tick(); ui.send({ type: 'status', status: online }); ui.$('settingsButton').click();
+  ui.$('resetCollaborationPairing').click(); ui.answer(ui.calls.at(-1), { reset: { completed: false, partialFailure: true, code: 'UNKNOWN_REGISTRATION_PRESERVED', pairingCleared: true, registrationRemoved: false, registrationPreserved: true, serverDeviceRecordRemoved: false, needsPairing: true } }); await tick();
+  assert.equal(ui.$('settingsView').hidden, false); assert.equal(ui.$('resetCollaborationPairing').disabled, false);
+  assert.match(ui.$('resetMessage').textContent, /did not finish completely.*was kept/); assert.doesNotMatch(ui.$('resetMessage').textContent, /have been reset/);
+  assert.equal(ui.$('resetRegistrationNotice').hidden, false); assert.match(ui.$('resetRegistrationNotice').textContent, /ownership could not be confirmed.*were kept/);
+  assert.equal(ui.$('openPreviousDevices').hidden, true); assert.equal(ui.$('saveCollaboration').disabled, true);
+  ui.$('resetCollaborationPairing').click(); assert.equal(ui.calls.at(-1).action, 'reset-collaboration-pairing');
+});
 test('editable onboarding is immediate and polling/failures preserve focus, selection and all drafts',async t=>{
   const ui=mount(t);await tick();
   assert.equal(ui.$('pairingView').hidden,false);

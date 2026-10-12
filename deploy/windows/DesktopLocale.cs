@@ -13,6 +13,20 @@ static class DesktopLocale {
     public static void Load(string root){Language=DefaultLanguage();try{var data=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(Path.Combine(root,".local","desktop-language.json")));object value;if(data!=null&&data.TryGetValue("language",out value)&&Valid(value as string))Language=(string)value;}catch{}}
     public static void Save(string root,string language){if(!Valid(language))throw new ArgumentException("Invalid language.");string directory=Path.Combine(root,".local");if(Directory.Exists(directory)&&(File.GetAttributes(directory)&FileAttributes.ReparsePoint)!=0)throw new IOException("Language preferences directory cannot be a link.");Directory.CreateDirectory(directory);string path=Path.Combine(directory,"desktop-language.json"),temp=path+"."+Guid.NewGuid().ToString("N")+".tmp";try{File.WriteAllText(temp,new JavaScriptSerializer().Serialize(new{language=language}));if(File.Exists(path))File.Replace(temp,path,null);else File.Move(temp,path);Language=language;}finally{if(File.Exists(temp))File.Delete(temp);}}
     static readonly Dictionary<string,string> English=new Dictionary<string,string>{
+{"未能确认归属或未能安全清理的协作连接已保留。请在 Codex 设置中核对。","Collaboration connections whose ownership could not be confirmed or that could not be safely removed were kept. Check them in Codex settings."},
+{"恢复连接","Restore connection"},
+{"重置配对与电脑协作","Reset pairing and collaboration"},
+{"将断开本机桥接，清除这台电脑的配对、电脑协作授权，以及能够确认属于本安装的 Codex 协作连接（包括工具偏好）。","This disconnects this PC's local bridge and clears its pairing, collaboration permissions, and the Codex collaboration connection that can be proven to belong to this installation, including its tool preferences."},
+{"项目、会话、API 与模型服务配置、其他 MCP 连接、上传/下载内容和回执均保留。","Projects, sessions, API and model provider settings, other MCP connections, uploads, downloads, and receipts are kept."},
+{"服务器上的旧设备记录不会删除；重置后可打开原服务器“我的设备”手动移除。重新配对后，其他电脑须按新的设备身份重新授权；同名设备不会继承旧权限。","The server's old device record is kept. After resetting, open My devices on the previous server to remove it manually. After pairing again, other computers must authorize the new device identity. A matching name does not transfer permissions."},
+{"服务器上的旧设备记录未删除。请在原服务器“我的设备”中手动移除旧记录。","The server's old device record was not removed. Remove it manually from My devices on the previous server."},
+{"重新配对后，其他电脑须重新选择新的设备身份；同名设备不会继承旧权限。","After pairing again, other computers must select the new device identity. A matching name does not transfer permissions."},
+{"打开原服务器设备管理","Open device management on the previous server"},
+{"本机配对与电脑协作已重置。请重新配对并明确选择授权。","Local pairing and collaboration have been reset. Pair again and explicitly select permissions."},
+{"重置未完全完成。已保留无法安全处理的内容；请复制诊断信息并检查 Codex 设置后重试。","The reset did not finish completely. Content that could not be handled safely was kept. Copy diagnostics, check Codex settings, and try again."},
+{"请明确确认重置配对与电脑协作。","Explicitly confirm resetting pairing and collaboration."},
+{"配对身份已改变，请重新选择电脑协作权限后保存。","The paired identity changed. Select collaboration permissions again and save."},
+{"电脑协作配置已注册。Codex 工具连接状态尚未验证；若显示 Transport closed，请复制诊断信息。","Collaboration configuration is registered. The Codex tool connection has not been verified; if it shows Transport closed, copy diagnostics."},
 {"电脑协作连接仍指向另一个安装目录。Codex 配置、工具设置和配对已完整保留，请先核对安装路径与工具限制后重试。","The collaboration connection still points to another installation. Codex settings, tool preferences, and pairing were preserved. Check the installation path and tool restrictions before retrying."},
 {"电脑协作已关闭。Codex 中的工具设置已完整保留，重新开启不会重置工具限制。","Computer collaboration is disabled. Codex tool settings were preserved; turning control back on will keep these restrictions."},
 {"电脑协作已关闭。Codex 中的工具设置已完整保留。卸载完成后请在 Codex 设置中检查该连接；如仍指向已卸载应用，请手动移除。","Computer collaboration is disabled. Codex tool settings were preserved. After uninstall, check this connection in Codex settings and remove it manually if it still points to the removed app."},
@@ -306,6 +320,13 @@ static class DesktopLocale {
 }
 // MessageBox buttons follow the OS language. App-owned dialogs follow the selected app language.
 static class DesktopDialog {
+    public static DialogResult ConfirmReset(IWin32Window owner) {
+        using(var dialog=CreateReset())return dialog.ShowDialog(owner);
+    }
+    static Form CreateReset() {
+        string message=DesktopLocale.T("重置配对与电脑协作")+"\n\n"+DesktopLocale.T("将断开本机桥接，清除这台电脑的配对、电脑协作授权，以及能够确认属于本安装的 Codex 协作连接（包括工具偏好）。")+"\n\n"+DesktopLocale.T("项目、会话、API 与模型服务配置、其他 MCP 连接、上传/下载内容和回执均保留。")+"\n\n"+DesktopLocale.T("服务器上的旧设备记录不会删除；重置后可打开原服务器“我的设备”手动移除。重新配对后，其他电脑须按新的设备身份重新授权；同名设备不会继承旧权限。");
+        var dialog=Create(message,MessageBoxButtons.OKCancel);dialog.ClientSize=new Size(560,410);dialog.MinimumSize=dialog.Size;dialog.ActiveControl=(Control)dialog.CancelButton;dialog.AcceptButton=dialog.CancelButton;return dialog;
+    }
     public static DialogResult Show(IWin32Window owner,string message,string caption,MessageBoxButtons buttons,MessageBoxIcon icon) {
         using(var dialog=Create(message,buttons))return dialog.ShowDialog(owner);
     }

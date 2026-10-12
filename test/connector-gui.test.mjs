@@ -26,6 +26,52 @@ const control = {
   completePairing:async()=>({superseded:false,intent:{paused:false,pauseScope:'none',autoStart:true,revision:'fixture'}}),
 };
 const guiCommand = (command,deps={}) => realGuiCommand(command,{control,...deps});
+test('GUI diagnostics reread current binding and policy without connection side effects or secrets', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'gui-diagnostics-')); t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, '.local')); const configPath = join(root, '.local/hub-connector.json');
+  const id = '11111111-1111-4111-8111-111111111111', secret = 'x'.repeat(43), hubOrigin = 'https://fixture.invalid';
+  await writeFile(configPath, JSON.stringify({ hubOrigin, deviceId: id, deviceToken: secret }));
+  const policy = { version: 1, hubOrigin, deviceId: id, controlEnabled: true, receiveEnabled: true, allowedDeviceIds: [id], allowedProjectRoots: ['C:/private-project'] };
+  await writeFile(join(root, '.local/computer-collaboration.json'), JSON.stringify(policy));
+  await writeFile(join(root, '.local/collaboration-registration-state.json'), JSON.stringify({ status: 'error', code: 'FIXTURE_ERROR', message: 'private error value' }));
+  const fail = () => { throw Error('diagnostics must not probe, control, fetch or launch'); };
+  const deps = { root, configPath, control: { read: fail }, probe: fail, read: fail, watch: fail, collaborationOptions: { fetchImpl: fail, bridge: fail, register: fail } };
+  const first = (await guiCommand({ action: 'diagnostics' }, deps)).collaboration;
+  const byRoot = (await guiCommand({ action: 'diagnostics' }, { ...deps, configPath: undefined })).collaboration;
+  assert.deepEqual(byRoot.paths, first.paths); assert.deepEqual(byRoot.binding, first.binding); assert.deepEqual(byRoot.effectivePolicy, first.effectivePolicy);
+  assert.equal(first.readOnly, true); assert.equal(first.configPathMatchesMcpPath, true); assert.equal(first.binding.deviceIdMatches, true);
+  assert.equal(first.effectivePolicy.controlEnabled, true); assert.equal(first.registrationState.code, 'OTHER'); assert.equal(first.existingCodexTransport, 'unknown');
+  const encoded = JSON.stringify(first); for (const value of [secret, id, hubOrigin, 'C:/private-project', 'private error value']) assert.equal(encoded.includes(value), false);
+  await writeFile(configPath, JSON.stringify({ hubOrigin, deviceId: '22222222-2222-4222-8222-222222222222', deviceToken: secret }));
+  const second = (await guiCommand({ action: 'diagnostics' }, deps)).collaboration;
+  assert.equal(second.binding.deviceIdMatches, false); assert.equal(second.effectivePolicy.requiresAuthorization, true); assert.equal(second.effectivePolicy.controlEnabled, false);
+  await writeFile(join(root, '.local/computer-collaboration.json'), 'invalid');
+  assert.equal((await guiCommand({ action: 'diagnostics' }, deps)).collaboration.readStatus.policy, 'invalid-json');
+});
+test('GUI reset routes only the current installation and leaves retained project and receipt files intact', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'gui-reset-')); t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, '.local')); await writeFile(join(root, 'installed.json'), JSON.stringify({ version: 1, root }));
+  const deviceId = '11111111-1111-4111-8111-111111111111', hubOrigin = 'https://fixture.invalid';
+  const pairingPath = join(root, '.local/hub-connector.json'); await writeFile(pairingPath, JSON.stringify({ deviceId, hubOrigin, deviceToken: 'x'.repeat(43) }));
+  const retained = [join(root, 'project.txt'), join(root, '.local/collaboration-receipts.json'), join(root, '.local/uploads.json')];
+  for (const path of retained) await writeFile(path, 'retained fixture');
+  const calls = [], fail = () => { throw Error('unexpected connection or network side effect'); };
+  const deps = { root, read: fail, probe: fail, watch: fail, resetOptions: { root: join(root, 'other-installation'), control: { resetForRecovery: async () => calls.push('stop') }, removeRegistration: async options => { assert.equal(options.root, root); calls.push('remove-owned-registration'); return { removed: true, preserved: false }; } } };
+  await assert.rejects(guiCommand({ action: 'reset-collaboration-pairing', confirm: false }, deps), error => error.code === 'COLLABORATION_RESET_CONFIRMATION_REQUIRED'); assert.equal(calls.length, 0);
+  const result = await guiCommand({ action: 'reset-collaboration-pairing', confirm: true, expectedHubOrigin: hubOrigin, expectedDeviceId: deviceId }, deps);
+  assert.deepEqual(calls, ['stop', 'remove-owned-registration']); assert.equal(result.reset.completed, true); assert.equal(result.reset.pairingCleared, true); assert.equal(result.reset.serverDeviceRecordRemoved, false); assert.equal(result.reset.previousHubOrigin, hubOrigin);
+  await assert.rejects(readFile(pairingPath), error => error.code === 'ENOENT'); for (const path of retained) assert.equal(await readFile(path, 'utf8'), 'retained fixture');
+});
+test('GUI connect checks reset fencing before any credential read and enrollment runs with the held lock', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'gui-connect-reset-')); t.after(() => rm(root, { recursive: true, force: true })); await mkdir(join(root, '.local'));
+  const journal = join(root, '.local/collaboration-reset.json'); await writeFile(journal, JSON.stringify({ version: 1, root, phase: 'retry-required' }));
+  let read = 0, resume = 0, enroll = 0;
+  const deps = { root, control: { ...control, resume: async () => { resume++; return { paused: false, revision: 'fixture' }; } }, read: async () => { read++; return { bridgePort: 4317 }; }, registerDeferred: async options => { assert.equal(options.lockHeld, true); enroll++; }, watch: async () => ({}) };
+  await assert.rejects(guiCommand({ action: 'connect' }, deps), error => error.code === 'COLLABORATION_RESET_PENDING');
+  await assert.rejects(guiCommand({ action: 'pair', origin: 'https://fixture.invalid', code: 'x'.repeat(43), name: 'Fixture' }, deps), error => error.code === 'COLLABORATION_RESET_PENDING');
+  assert.deepEqual([read, resume, enroll], [0, 0, 0]); await rm(journal);
+  assert.equal((await guiCommand({ action: 'connect' }, deps)).recoveryCompleted, true); assert.deepEqual([read, resume, enroll], [1, 1, 1]);
+});
 test('update GUI actions route through independent updater without reading or changing connection state',async()=>{
   const calls=[];
   const result={update:{currentVersion:'1.0.0',latestVersion:'1.1.0',available:true,status:'available'}};
@@ -85,8 +131,8 @@ test('first GUI pairing registers deferred login and starts persistent watcher b
   const calls=[];
   const paired=await guiCommand({ action:'pair', origin:'https://example.com', code:'x'.repeat(43), name:'PC' }, {
     read:async()=>null, choosePort:async()=>4321,
-    pair:async opts=>{ calls.push('pair'); assert.equal(opts.bridgePort,4321); assert.equal(opts.pairingCode,'x'.repeat(43)); return {deviceId:'fixture'}; },
-    registerDeferred:async opts=>{assert.equal(opts.allowBootstrap,true);calls.push('register');},watch:async()=>calls.push('watcher')
+    pair:async opts=>{ calls.push('pair'); assert.equal(opts.bridgePort,4321); assert.equal(opts.pairingCode,'x'.repeat(43)); assert.equal(opts.lockHeld,true); return {deviceId:'fixture'}; },
+    registerDeferred:async opts=>{assert.equal(opts.allowBootstrap,true);assert.equal(opts.lockHeld,true);calls.push('register');},watch:async()=>calls.push('watcher')
   });
   assert.equal(paired.state,'waiting'); assert.deepEqual(calls,['pair','register','watcher']);
   await guiCommand({action:'connect'}, {read:async()=>({bridgePort:4321}),registerDeferred:async opts=>{assert.equal(opts.allowBootstrap,undefined);calls.push('register');},watch:async()=>calls.push('watcher')});

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createConnection } from 'node:net';
 import { loadRuntimeConfig } from '../src/runtime.mjs';
 import { readRecoveryFile, writeRecoveryFile, RECOVERY_ROOT } from '../src/recovery.mjs';
+import { assertNoCollaborationReset } from './collaboration-common.mjs';
 
 export const restartDelay = (failures, { baseMs = 1000, maximumMs = 30000 } = {}) => Math.min(maximumMs, baseMs * 2 ** Math.min(Math.max(0, failures - 1), 20));
 
@@ -21,6 +22,7 @@ export async function runSupervisor({ root = RECOVERY_ROOT, serverPath = resolve
   isPortOccupied = portOccupied,
   sleep = ms => new Promise(done => setTimeout(done, ms)), now = Date.now,
   heartbeatMs = 1000, stableMs = 60000, backoff = {}, writeState = writeRecoveryFile } = {}) {
+  await assertNoCollaborationReset(root);
   await mkdir(resolve(root, '.local'), { recursive: true });
   const statePath = resolve(root, '.local/recovery-state.json');
   const preferencePath = resolve(root, '.local/recovery.json');
@@ -35,6 +37,7 @@ export async function runSupervisor({ root = RECOVERY_ROOT, serverPath = resolve
   let failures = 0;
   try {
     while (true) {
+      await assertNoCollaborationReset(root);
       let startedAt = now();
       let stdout, stderr;
       try {

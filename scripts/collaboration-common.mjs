@@ -54,9 +54,25 @@ export async function withCollaborationLock(path, operation) {
 }
 export const collaborationAuthorizationRequired = (value, config) => value?.requiresAuthorization === true || !!(value && config && (value.deviceId !== config.deviceId || value.hubOrigin !== config.hubOrigin));
 export const collaborationAuthorizationMessage = '配对已改变，旧电脑协作授权已失效。请刷新电脑协作设置，重新选择电脑和项目并保存；目标电脑也需授权新的设备身份。';
-export async function resetCollaborationForPairing({ configPath, config }) {
+export const collaborationResetPath = root => resolve(root, '.local/collaboration-reset.json');
+export async function collaborationResetGeneration(root) {
+  try { const value = await readPrivate(resolve(root, '.local/collaboration-reset-generation.json')); return value?.version === 1 && UUID.test(value.generation || '') ? value.generation : value === null ? 'absent' : 'invalid'; }
+  catch { return 'invalid'; }
+}
+export async function assertCollaborationResetGeneration(root, expected) {
+  await assertNoCollaborationReset(root);
+  if (await collaborationResetGeneration(root) !== expected) fail('COLLABORATION_RESET_CHANGED', 409, '本机已重置，旧请求未执行。请重新开始配对或操作。');
+}
+export async function collaborationResetPending(root) {
+  try { await access(collaborationResetPath(root)); return true; }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+}
+export async function assertNoCollaborationReset(root) {
+  if (await collaborationResetPending(root)) fail('COLLABORATION_RESET_PENDING', 409, '本机重置尚未完成，请在设置中重试重置；暂不允许连接、配对或保存协作。');
+}
+export async function resetCollaborationForPairing({ configPath, config, lockHeld = false }) {
   const directory = dirname(configPath);
-  return withCollaborationLock(resolve(directory, 'collaboration-settings'), async () => {
+  const operation = async () => {
     const paths = ['computer-collaboration.json', 'collaboration-registration.json', 'collaboration-registration-state.json'].map(name => resolve(directory, name));
     let configured = false;
     for (const path of paths) {
@@ -70,7 +86,8 @@ export async function resetCollaborationForPairing({ configPath, config }) {
     await writePrivate(paths[0], { version: 1, hubOrigin: config.hubOrigin, deviceId: config.deviceId, controlEnabled: false, receiveEnabled: false, allowedDeviceIds: [], allowedProjectRoots: [], requiresAuthorization: true });
     await writePrivate(paths[2], { status: 'authorization-required', message: collaborationAuthorizationMessage });
     return { requiresAuthorization: true };
-  });
+  };
+  return lockHeld ? operation() : withCollaborationLock(resolve(directory, 'collaboration-settings'), operation);
 }
 export function effectivePolicy(value, config) {
   const valid = value?.version === 1 && config && value.deviceId === config.deviceId && value.hubOrigin === config.hubOrigin && Array.isArray(value.allowedDeviceIds) && Array.isArray(value.allowedProjectRoots);

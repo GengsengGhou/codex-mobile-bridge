@@ -59,8 +59,8 @@ export function serveMcp({ root, input = process.stdin, output = process.stdout 
       let upgrading = false; try { await access(root + '.upgrade-journal.json'); upgrading = true; } catch (e) { if (e.code !== 'ENOENT') throw e; }
       // A changed pairing requires explicit new grants, but keep the tool transport
       // available to explain that state. Upgrade and explicit pause still stop it.
-      const authorizationPending = policy.requiresAuthorization && savedPolicy?.requiresAuthorization !== false;
-      const explicitlyDisabled = !policy.controlEnabled && savedPolicy?.requiresAuthorization === false && !policy.controlPending;
+      const authorizationPending = policy.requiresAuthorization;
+      const explicitlyDisabled = !policy.controlEnabled && !authorizationPending && savedPolicy?.requiresAuthorization === false && !policy.controlPending;
       let explainable = authorizationPending || policy.controlPending;
       if (!policy.controlEnabled && !explainable && !explicitlyDisabled) explainable = (await readPrivate(resolve(root, '.local/collaboration-registration-state.json')))?.status === 'error';
       if ((!policy.controlEnabled && (!explainable || explicitlyDisabled)) || upgrading || !await connectorMayRun(root)) { lines.close(); input.destroy(); output.end(); }

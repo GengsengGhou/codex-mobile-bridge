@@ -10,6 +10,7 @@ import { startBridge, verifyBridge } from './start.mjs';
 import { launchWindowsBridge } from './windows-launch.mjs';
 import { hubOrigin, privateFile } from './setup-connector.mjs';
 import { connectorMayRun, readConnectorControl, createConnectorControl } from './connector-control.mjs';
+import { withCollaborationLock, collaborationResetGeneration, assertCollaborationResetGeneration, assertNoCollaborationReset } from './collaboration-common.mjs';
 
 const defaultRoot = fileURLToPath(new URL('..', import.meta.url));
 const executeFile = promisify(execFile);
@@ -95,7 +96,16 @@ $current=Read-Registration` : ''}
   return { name, command, read: () => invoke(false), enable: () => invoke(true), ensureLogonTask: () => registerConnectorLogonTask({ root, execute }) };
 }
 
-export async function registerConnectorLogin({ root = defaultRoot, nodePath = process.execPath, platform = process.platform, registration, probe = probeLocalBridge, registerStartup = true } = {}) {
+async function enrollmentLocked(options, operation) {
+  const root = resolve(options.root || defaultRoot);
+  if (options.lockHeld) { await assertNoCollaborationReset(root); return operation(); }
+  const generation = await collaborationResetGeneration(root);
+  return withCollaborationLock(resolve(root, '.local/collaboration-settings'), async () => { await assertCollaborationResetGeneration(root, generation); return operation(); });
+}
+export async function registerConnectorLogin(options = {}) {
+  return enrollmentLocked(options, () => registerConnectorLoginLocked(options));
+}
+async function registerConnectorLoginLocked({ root = defaultRoot, nodePath = process.execPath, platform = process.platform, registration, probe = probeLocalBridge, registerStartup = true } = {}) {
   if (platform !== 'win32') throw new Error('连接器登录启动仅支持 Windows。');
   root = resolve(root); nodePath = resolve(nodePath);
   const config = await savedConnector(root);
@@ -122,7 +132,10 @@ export async function registerConnectorLogin({ root = defaultRoot, nodePath = pr
   return { enabled: true, name: startup.name, script: resolve(root, 'scripts/connector-login.ps1') };
 }
 
-export async function registerDeferredConnectorLogin({ root = defaultRoot, nodePath = process.execPath, platform = process.platform, registration, allowBootstrap = false, registerStartup = true } = {}) {
+export async function registerDeferredConnectorLogin(options = {}) {
+  return enrollmentLocked(options, () => registerDeferredConnectorLoginLocked(options));
+}
+async function registerDeferredConnectorLoginLocked({ root = defaultRoot, nodePath = process.execPath, platform = process.platform, registration, allowBootstrap = false, registerStartup = true } = {}) {
   if (platform !== 'win32') throw new Error('连接器登录启动仅支持 Windows。');
   root = resolve(root); nodePath = resolve(nodePath);
   const config = await savedConnector(root); await access(nodePath); await access(resolve(root, 'scripts/connector-login.ps1'));
