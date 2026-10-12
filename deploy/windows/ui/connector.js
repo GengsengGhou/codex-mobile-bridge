@@ -52,9 +52,11 @@
     $('collaborationProjects').closest('.collaboration-group').hidden = !collaborationDraft.receiveEnabled;
     $('collaborationSummary').textContent = !state ? t('正在读取电脑协作设置…')
       : state.paired !== true ? t('需要先配对这台电脑，才能设置电脑协作。')
+      : collaborationError ? diagnostic(collaborationError)
       : state.registration?.status === 'recovering' ? t('已配对；协作注册正在恢复，请稍后刷新。')
       : state.registration?.status === 'error' ? diagnostic(state.registration?.message || state.error) || t('电脑协作当前不可用，请检查配对状态后重试。')
       : state.featureAvailable === false ? diagnostic(state.error) || t('电脑协作当前不可用，请检查配对状态后重试。')
+      : state.error ? diagnostic(state.error)
       : diagnostic(state.registration?.message) || '';
     const drawOptions = (container, items, key, selected, emptyText) => {
       container.replaceChildren();
@@ -87,8 +89,18 @@
     $('collaborationMessage').dataset.kind = collaborationError ? 'error' : collaborationMessage ? 'success' : '';
   }
   function acceptCollaborationState(result, { preserveDraft = collaborationDirty } = {}) {
-    const next = result?.collaboration || result;
-    if (!next || typeof next !== 'object') throw new Error(t('电脑协作设置无法读取，请重试。'));
+    const received = result?.collaboration || result;
+    if (!received || typeof received !== 'object') throw new Error(t('电脑协作设置无法读取，请重试。'));
+    const next = { ...received };
+    const sameBinding = collaboration && collaboration.deviceId === next.deviceId && collaboration.hubOrigin === next.hubOrigin;
+    if (sameBinding) {
+      if (next.projectsAvailable === false) next.projects = collaboration.projects;
+      if (next.devicesAvailable === false) next.devices = collaboration.devices;
+    }
+    if (collaboration && (collaboration.deviceId !== next.deviceId || collaboration.hubOrigin !== next.hubOrigin || next.requiresAuthorization && !collaboration.requiresAuthorization)) {
+      preserveDraft = false;
+      collaborationMessage = '';
+    }
     collaboration = next;
     if (!preserveDraft) {
       collaborationDraft = {
@@ -98,6 +110,13 @@
         allowedProjectRoots: Array.isArray(next.allowedProjectRoots) ? [...next.allowedProjectRoots] : []
       };
       collaborationDirty = false;
+    }
+    const before = collaborationDraft.allowedDeviceIds.length + collaborationDraft.allowedProjectRoots.length;
+    if (next.devicesAvailable === true) collaborationDraft.allowedDeviceIds = collaborationDraft.allowedDeviceIds.filter(id => next.devices.some(device => device.id === id));
+    if (next.projectsAvailable === true) collaborationDraft.allowedProjectRoots = collaborationDraft.allowedProjectRoots.filter(path => next.projects.some(project => project.cwd === path));
+    if (before !== collaborationDraft.allowedDeviceIds.length + collaborationDraft.allowedProjectRoots.length) {
+      collaborationDirty = true;
+      collaborationError = t('所选电脑或项目已改变，请刷新后重新选择。');
     }
     renderCollaboration();
   }

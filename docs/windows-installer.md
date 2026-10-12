@@ -1,6 +1,6 @@
 # Windows graphical connector
 
-中文下载与首次配对步骤见 [简易配置教程](quick-start.md#配对-windows-电脑)。v2.0.0 安装包和 SHA-256 清单可从[最新 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest)下载，无需 GitHub 令牌或桥接账号。下面记录安装器细节与构建验证。
+中文下载与首次配对步骤见 [简易配置教程](quick-start.md#配对-windows-电脑)。v2.0.1 安装包和 SHA-256 清单可从[最新 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest)下载，无需 GitHub 令牌或桥接账号。v2.0.0 可直接运行新版安装包升级，无需先卸载；完成后重新打开 Codex 或重新加载电脑协作连接。下面记录安装器细节与构建验证。
 
 Distribute `dist/CodexMobileConnector-Setup.exe` with its published SHA-256 checksum.
 The Windows x64 installer embeds the application, its `ws` dependency, Node.js,
@@ -65,7 +65,7 @@ is off. A failed upgrade restores the previous application files and attempts to
 resume the previous connection. An interrupted upgrade keeps a transaction journal
 and backup beside the installation; rerunning Setup restores that transaction first.
 If restoration itself fails, Setup reports the retained backup path for recovery.
-Equal or older Setup versions and directories whose
+Same-version Setup now shows Repair and replaces application files while preserving `.local`; older Setup versions and directories whose
 ownership cannot be verified are refused. One owner per
 installation/user handles repeated app launches; repeated Setup launches for
 the same destination also wake one installer. Independent installations retain
@@ -100,8 +100,9 @@ inputs and browser handoff. Uninstall is gated centrally during pending mutation
 On Windows, `npm run release:package` produces the tar archive, Windows ZIP, EXE,
 and `dist/SHA256SUMS`. `deploy/build-windows-installer.ps1` can also build the EXE
 alone using the installed .NET Framework compiler. Its `-RuntimeExecutable`
-option is intended for local testing; release packaging uses the verified official
-runtime download.
+option can reuse an official runtime cache after its archive and extracted files
+have been checksum-verified; release packaging otherwise downloads and verifies
+the official runtime.
 
 `node --test test/connector-gui.test.mjs` checks deferred bootstrap, registration
 ordering, failed bootstrap, explicit replacement, preservation after rejection,
@@ -109,7 +110,7 @@ and token-free status with isolated fixture Hub responses. Desktop DOM tests als
 cover focus/selection/drafts, optional import, duplicates and partial recovery. Run
 `node deploy/verify-windows-installer.mjs` after building to execute the actual EXE
 in a temporary installation, run its bundled Node, capture its actual WebView2
-surface, check same-version rerun refusal, and uninstall while preserving fixture data.
+surface, check same-version repair, and uninstall while preserving fixture data.
 `node deploy/verify-windows-upgrade.mjs <new-setup.exe> <old-setup.exe> [another-old-setup.exe]`
 uses isolated roots to check real older package upgrades, preserved data, persistent
 disconnect, partial-copy rollback, interrupted transaction recovery, linked `.local`
@@ -156,6 +157,16 @@ capture runs suppress tray icons, except explicit lifecycle/tray acceptance.
 Evidence is saved under `work` or `docs/verification`; neither enters release
 bundles. Physical keyboard, native tray clicks and real monitor transitions require
 an unlocked desktop and are recorded separately from deterministic fixtures.
+
+## Repair without uninstalling
+
+Run a setup package with repair support and choose **修复安装 / Repair** for the same installed version. A version bump is unnecessary. This replaces owned program files, the bundled Node runtime and SDK components while keeping `.local` pairing, saved permissions, receipts, login preference, pause state and language. The selected installer language is saved; leaving the selection unchanged preserves the existing language. User Codex/provider/API-key configuration is not edited by repair. Previously published installer bytes cannot acquire this behavior; use the supplied repair-capable package. After repair, fully reopen Codex or reload its computer-collaboration connection because replacement intentionally stops the old MCP stdio process. Existing pairing and grants remain; re-pair or reauthorize only if credentials were revoked or device identity changed.
+
+Missing/corrupt EXE, runtime and GUI files can be repaired when ownership and installed version remain verifiable. New markers record product/version. Legacy markers also require the bundled package manifest, lockfile and product source when the old EXE is unreadable. A valid foreign EXE, unknown/linked directory, corrupt ownership or connection-control state is refused with an explanation. Keep `.local` and resolve the indicated integrity issue; repair cannot infer arbitrary deleted ownership evidence.
+
+Repair uses the same backup/journal transaction as upgrades. Partial replacement failure restores prior files and data. When an active damaged installation cannot safely restart its old components, its active intent stays in the journal for the next forward repair. Rerun the same package after an interruption: recovery restores the transaction and then replaces application bytes even when versions match. A successful retry removes the stale install-error record. Lower-version installs remain refused and automatic update checks still require a strictly newer version.
+
+`node deploy/verify-windows-repair.mjs <repair-setup.exe> <original-2.0.0-setup.exe> <older-setup.exe>` exercises actual legacy upgrade and current same-version repair, missing/corrupt components, preserved private bytes, copy rollback, interrupted retries and refusal of malformed ownership/control. Roots are isolated under `work/installer-repair` or `CODEX_REPAIR_EVIDENCE_DIRECTORY`; it does not change the live installation or register startup entries.
 
 ## 备用 ZIP 终端安装
 

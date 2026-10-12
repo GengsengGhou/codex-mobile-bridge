@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readSecret } from './read-secret.mjs';
 import { pairingNetworkError } from './network-error.mjs';
+import { resetCollaborationForPairing } from './collaboration-common.mjs';
 
 export const connectorConfigPath = fileURLToPath(new URL('../.local/hub-connector.json', import.meta.url));
 const execute = promisify(execFile);
@@ -58,7 +59,14 @@ export async function pairConnector({ information, origin, pairingCode, name, br
     await writeFile(temporary, JSON.stringify(config, null, 2), { mode: 0o600, flag: 'wx' });
     await privateFile(temporary); await rename(temporary, configPath);
   } catch (error) { await unlink(temporary).catch(() => {}); throw new Error('设备已配对，但凭据未能安全保存；请从设备列表撤销该设备后重试。', { cause: error }); }
-  return { deviceId: value.deviceId, hubOrigin: hub, deviceName: config.deviceName };
+  const result = { deviceId: value.deviceId, hubOrigin: hub, deviceName: config.deviceName };
+  try {
+    const reset = await resetCollaborationForPairing({ configPath, config });
+    return { ...result, collaborationReauthorizationRequired: reset.requiresAuthorization };
+  } catch {
+    // Pairing codes are consumed; saved credentials must survive cleanup failure.
+    return { ...result, collaborationReauthorizationRequired: true, collaborationResetPending: true, partialSuccess: true, warning: '设备已配对并安全保存，但旧电脑协作设置未能重置。请勿重复使用此配对信息；刷新电脑协作设置，重新选择授权并保存。' };
+  }
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {

@@ -3,15 +3,67 @@ import { readFile, mkdir, open, lstat, rm, access } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { isDeepStrictEqual } from 'node:util';
 import { createHash } from 'node:crypto';
 import { readPrivate, writePrivate, fail, withCollaborationLock } from './collaboration-common.mjs';
 import { privateFile } from './setup-connector.mjs';
 
 export const collaborationServerName = 'codex_mobile_computer_collaboration';
 const hash = data => createHash('sha256').update(data).digest('hex');
-const execute = promisify(execFile);
 const conflict = () => fail('MCP_REGISTRATION_CONFLICT', 409, '电脑协作配置与现有 Codex 配置冲突。请保留现有配置，在 Codex 设置中检查同名连接后重试。');
+const recoveryRequired = () => fail('MCP_REGISTRATION_RECOVERY_REQUIRED', 409, '电脑协作配置的所有权记录不完整或已改变。已保留 Codex 配置和本机数据，请先核对后重试。');
+function withoutRegistration(parsed) {
+  const value = structuredClone(parsed);
+  if (value.mcp_servers) { delete value.mcp_servers[collaborationServerName]; if (!Object.keys(value.mcp_servers).length) delete value.mcp_servers; }
+  return value;
+}
+// Split at real TOML statement boundaries, never at a header-looking line inside
+// a multiline string or array. The full document is parsed before and after edits.
+function statements(source) {
+  const result = []; let start = 0, depth = 0, quote = '', triple = false;
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (quote) {
+      if (quote === '"' && c === '\\') { i++; continue; }
+      if (c === quote) {
+        if (!triple) quote = '';
+        else if (source.slice(i, i + 3) === quote.repeat(3)) { const closing = quote; quote = ''; i += 2; while (source[i + 1] === closing) i++; }
+      }
+      continue;
+    }
+    if (c === '"' || c === "'") { quote = c; triple = source.slice(i, i + 3) === c.repeat(3); if (triple) i += 2; continue; }
+    if (c === '#') { while (i < source.length && source[i] !== '\n') i++; }
+    else if (c === '[' || c === '{') depth++;
+    else if (c === ']' || c === '}') depth--;
+    if ((source[i] === '\n' || i === source.length) && depth === 0) { result.push({ start, end: i + (i < source.length ? 1 : 0), text: source.slice(start, i + 1) }); start = i + 1; }
+  }
+  if (start < source.length) result.push({ start, end: source.length, text: source.slice(start) });
+  return result;
+}
+function removeReformattedRegistration(before, parsed) {
+  const spans = []; let header = '', ownedTable = false;
+  for (const statement of statements(before)) {
+    const trimmed = statement.text.trimStart();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    if (trimmed.startsWith('[')) {
+      header = statement.text;
+      const value = TOML.parse(header);
+      ownedTable = !!value.mcp_servers?.[collaborationServerName] && !Object.keys(withoutRegistration(value)).length;
+      if (ownedTable) spans.push(statement);
+      continue;
+    }
+    if (ownedTable) { spans.push(statement); continue; }
+    // Also support dotted assignments and an inline entry within [mcp_servers].
+    const value = TOML.parse(header + statement.text);
+    if (value.mcp_servers?.[collaborationServerName] && !Object.keys(withoutRegistration(value)).length) spans.push(statement);
+  }
+  if (!spans.length) conflict();
+  let after = before;
+  for (const span of spans.reverse()) after = after.slice(0, span.start) + after.slice(span.end);
+  let updated; try { updated = TOML.parse(after); } catch { conflict(); }
+  if (updated.mcp_servers?.[collaborationServerName] || !isDeepStrictEqual(withoutRegistration(parsed), withoutRegistration(updated))) conflict();
+  return after;
+}
 async function noLinks(path) {
   let current = resolve(path);
   while (true) {
@@ -38,7 +90,7 @@ async function editRegistration({ root, enabled, codexHome = process.env.CODEX_H
   const configPath = resolve(codexHome, 'config.toml'); const ledgerPath = resolve(root, '.local/collaboration-registration.json');
   await noLinks(configPath); await noLinks(ledgerPath);
   let before = ''; try { before = await readFile(configPath, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  if (Buffer.byteLength(before) > 2 * 1024 * 1024) conflict();
+  if (Buffer.byteLength(before) > 2 * 1024 * 1024) fail('MCP_CONFIG_INVALID', 409, '现有 Codex 配置超过安全读取大小。请先核对配置后重试。');
   let ledger = await readPrivate(ledgerPath);
   const backup = resolve(root, '.local/collaboration-config-backup.toml'); await noLinks(backup);
   if (ledger?.pending) {
@@ -51,8 +103,15 @@ async function editRegistration({ root, enabled, codexHome = process.env.CODEX_H
   }
   let parsed; try { parsed = TOML.parse(before); } catch { fail('MCP_CONFIG_INVALID', 409, '现有 Codex 配置无法读取。请先在 Codex 中修复配置后重试。'); }
   const current = parsed.mcp_servers?.[collaborationServerName];
-  const owned = ledger?.version === 1 && ledger.configPath === configPath && typeof ledger.block === 'string' && ledger.blockHash === hash(ledger.block) && before.split(ledger.block).length === 2;
-  if (current && !owned || owned && JSON.stringify(current) !== JSON.stringify(ledger.entry) || ledger && !owned) conflict();
+  let ledgerEntry;
+  if (ledger) {
+    if (ledger.version !== 1 || ledger.configPath !== configPath || typeof ledger.block !== 'string' || ledger.blockHash !== hash(ledger.block)) recoveryRequired();
+    try { const value = TOML.parse(ledger.block); ledgerEntry = value.mcp_servers?.[collaborationServerName]; if (Object.keys(withoutRegistration(value)).length) recoveryRequired(); } catch { recoveryRequired(); }
+    if (!ledgerEntry || !isDeepStrictEqual(ledgerEntry, ledger.entry)) recoveryRequired();
+  }
+  const owned = !!ledger && !!current && isDeepStrictEqual(current, ledgerEntry);
+  if (current && !owned) conflict();
+  if (ledger && !current) { await rm(ledgerPath, { force: true }); ledger = null; }
   if (enabled && owned) return { status: 'registered', message: '电脑协作已就绪。请在 Codex 中重新加载连接。' };
   if (!enabled && !current && !ledger) return { status: 'disabled' };
   let after, block, entry;
@@ -61,12 +120,12 @@ async function editRegistration({ root, enabled, codexHome = process.env.CODEX_H
     entry = { command: nodePath, args: [resolve(root, 'scripts/collaboration-mcp.mjs')] };
     block = `# BEGIN codex-mobile-bridge computer collaboration v1\n[mcp_servers.${collaborationServerName}]\ncommand = ${JSON.stringify(entry.command)}\nargs = ${JSON.stringify(entry.args)}\n# END codex-mobile-bridge computer collaboration v1\n`;
     after = before + (before && !before.endsWith('\n') ? '\n' : '') + block;
-  } else after = before.replace(ledger.inserted || ledger.block, '');
+  } else {
+    const exact = ledger.inserted || ledger.block;
+    after = before.split(exact).length === 2 ? before.replace(exact, '') : removeReformattedRegistration(before, parsed);
+  }
   let updated; try { updated = TOML.parse(after); } catch { conflict(); }
-  const previousSemantic = structuredClone(parsed), nextSemantic = structuredClone(updated);
-  if (previousSemantic.mcp_servers) { delete previousSemantic.mcp_servers[collaborationServerName]; if (!Object.keys(previousSemantic.mcp_servers).length) delete previousSemantic.mcp_servers; }
-  if (nextSemantic.mcp_servers) { delete nextSemantic.mcp_servers[collaborationServerName]; if (!Object.keys(nextSemantic.mcp_servers).length) delete nextSemantic.mcp_servers; }
-  if (JSON.stringify(previousSemantic) !== JSON.stringify(nextSemantic) || enabled && JSON.stringify(updated.mcp_servers?.[collaborationServerName]) !== JSON.stringify(entry) || !enabled && updated.mcp_servers?.[collaborationServerName]) conflict();
+  if (!isDeepStrictEqual(withoutRegistration(parsed), withoutRegistration(updated)) || enabled && !isDeepStrictEqual(updated.mcp_servers?.[collaborationServerName], entry) || !enabled && updated.mcp_servers?.[collaborationServerName]) conflict();
   await mkdir(dirname(configPath), { recursive: true }); await noLinks(configPath);
   await mkdir(dirname(backup), { recursive: true, mode: 0o700 }); await noLinks(backup);
   const backupFile = await open(backup, 'w', 0o600); try { await backupFile.writeFile(before); await backupFile.sync(); } finally { await backupFile.close(); } await privateFile(backup);

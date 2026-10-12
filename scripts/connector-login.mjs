@@ -228,9 +228,18 @@ export async function restoreConnectorLogin({ root = defaultRoot, ensureBridge, 
     if (signal?.aborted) return { submitted: false, cancelled: true };
     if (!await mayRun(root)) return { submitted: false, paused: true };
     try {
-      const state = monitor ? await readState(resolve(root, '.local/hub-connector-state.json'), {}) : {};
+      let state = {};
+      if (monitor) {
+        try { state = await readState(resolve(root, '.local/hub-connector-state.json'), {}); }
+        catch (error) {
+          // This disposable heartbeat is not authorization or saved configuration.
+          // A malformed cache must not prevent the owned launcher from restoring it.
+          if (!(error instanceof SyntaxError)) throw error;
+        }
+        if (!state || typeof state !== 'object' || Array.isArray(state)) state = {};
+      }
       const age = now() - Date.parse(state.updatedAt);
-      if (monitor && Number.isFinite(age) && age >= 0 && age < 6000 && state.state !== 'stopped') {
+      if (monitor && state.hubOrigin === config.hubOrigin && state.deviceId === config.deviceId && Number.isFinite(age) && age >= 0 && age < 6000 && state.state !== 'stopped') {
         await sleep(10000); continue;
       }
       if (!await mayRun(root)) return { submitted: false, paused: true };

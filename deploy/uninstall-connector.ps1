@@ -1,5 +1,13 @@
-param([Parameter(Mandatory=$true)][string]$Root)
+﻿param([Parameter(Mandatory=$true)][string]$Root, [switch]$Notify)
 $ErrorActionPreference = 'Stop'
+function Show-UninstallNotice([string]$Message, [bool]$Failed) {
+    if (-not $Notify) { return }
+    Add-Type -AssemblyName System.Windows.Forms
+    $icon = if ($Failed) { [Windows.Forms.MessageBoxIcon]::Warning } else { [Windows.Forms.MessageBoxIcon]::Information }
+    [void][Windows.Forms.MessageBox]::Show($Message, 'Codex Mobile Bridge', [Windows.Forms.MessageBoxButtons]::OK, $icon)
+}
+try {
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $Root = [IO.Path]::GetFullPath($Root)
 $marker = Get-Content -LiteralPath (Join-Path $Root 'installed.json') -Raw | ConvertFrom-Json
 if ($marker.version -ne 1 -or [IO.Path]::GetFullPath($marker.root) -cne $Root) { throw 'Installation ownership cannot be verified.' }
@@ -91,4 +99,15 @@ if ($Root -ieq $default) {
 Start-Sleep -Seconds 2
 foreach ($item in Get-ChildItem -LiteralPath $Root -Force) {
     if ($item.Name -ne '.local') { Remove-Item -LiteralPath $item.FullName -Recurse -Force }
+}
+$warning = if ($cleaned.configurationPreserved) { [string]$cleaned.warning } else { $null }
+[Console]::Out.WriteLine((@{ ok=$true; uninstalled=$true; configurationPreserved=[bool]$cleaned.configurationPreserved; warning=$warning } | ConvertTo-Json -Compress))
+$message = "卸载已完成。已保存的配对和本机数据已保留。`nUninstall completed. Saved pairing and local data were retained."
+if ($warning) { $message += "`n`n" + $warning }
+Show-UninstallNotice $message $false
+} catch {
+    $failure = $_.Exception.Message
+    [Console]::Out.WriteLine((@{ ok=$false; uninstalled=$false; error=$failure } | ConvertTo-Json -Compress))
+    try { Show-UninstallNotice ("卸载未完成。请保留本机数据并按下面信息重试。`nUninstall did not complete. Keep local data and retry after resolving this issue.`n`n" + $failure) $true } catch { [Console]::Error.WriteLine($_.Exception.Message) }
+    exit 1
 }

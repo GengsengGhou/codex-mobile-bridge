@@ -13,6 +13,13 @@ static class DesktopLocale {
     public static void Load(string root){Language=DefaultLanguage();try{var data=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(Path.Combine(root,".local","desktop-language.json")));object value;if(data!=null&&data.TryGetValue("language",out value)&&Valid(value as string))Language=(string)value;}catch{}}
     public static void Save(string root,string language){if(!Valid(language))throw new ArgumentException("Invalid language.");string directory=Path.Combine(root,".local");if(Directory.Exists(directory)&&(File.GetAttributes(directory)&FileAttributes.ReparsePoint)!=0)throw new IOException("Language preferences directory cannot be a link.");Directory.CreateDirectory(directory);string path=Path.Combine(directory,"desktop-language.json"),temp=path+"."+Guid.NewGuid().ToString("N")+".tmp";try{File.WriteAllText(temp,new JavaScriptSerializer().Serialize(new{language=language}));if(File.Exists(path))File.Replace(temp,path,null);else File.Move(temp,path);Language=language;}finally{if(File.Exists(temp))File.Delete(temp);}}
     static readonly Dictionary<string,string> English=new Dictionary<string,string>{
+{"修复安装","Repair"},
+{"正在修复应用，保留配对和本机数据…","Repairing the app while keeping pairing and local data…"},
+{"安装路径包含链接；请保留本机数据并使用原安装目录重试。","Installation paths contain links. Keep local data and retry in the original ordinary directory."},
+{"本机项目列表暂时无法读取，尚未保存授权。已保留原设置；请打开 Codex，刷新电脑协作设置后重试。","Local projects could not be loaded, so authorization was not saved. Previous settings were kept. Open Codex, refresh collaboration settings, and try again."},
+{"配对已改变，旧电脑协作授权已失效。请刷新电脑协作设置，重新选择电脑和项目并保存；目标电脑也需授权新的设备身份。","Pairing changed and the previous collaboration authorization is no longer valid. Refresh settings, choose computers and projects again, and save. Target computers must also authorize the new device identity."},
+{"设备已配对并安全保存，但旧电脑协作设置未能重置。请勿重复使用此配对信息；刷新电脑协作设置，重新选择授权并保存。","Pairing was saved securely, but the old collaboration settings could not be reset. Do not reuse the consumed pairing information. Refresh collaboration settings, choose authorization again, and save."},
+{"服务器未接受当前设备凭据。请核对当前服务器和配对身份；必要时重新配对，再明确保存电脑协作授权。","The server did not accept these device credentials. Check the server and paired identity; pair again if needed, then explicitly save collaboration authorization."},
 {"电脑协作设置无法读取，请重试。","Computer collaboration settings could not be loaded. Try again."},
 {"电脑协作设置已保存。","Collaboration settings saved."},
 {"电脑协作设置无效。","Computer collaboration settings are invalid."},
@@ -25,6 +32,7 @@ static class DesktopLocale {
 {"电脑协作配置与现有 Codex 配置冲突。请保留现有配置，在 Codex 设置中检查同名连接后重试。","Computer collaboration conflicts with existing Codex settings. Keep the existing settings, check for a connection with the same name in Codex, and try again."},
 {"电脑协作已就绪。请在 Codex 中重新加载连接。","Computer collaboration is ready. Reload connections in Codex."},
 {"电脑协作设置正在保存，请稍后重试。","Computer collaboration settings are being saved. Try again shortly."},
+{"电脑协作注册未完成。请在连接器设置中检查错误后重试。","Computer collaboration registration did not finish. Check the error in connector settings and try again."},
 {"连接器已断开。请先连接，再使用电脑协作。","The connector is disconnected. Connect it before using computer collaboration."},
 {"连接器正在升级，请完成升级后重新加载 Codex 连接。","The connector is upgrading. Finish the upgrade, then reload the Codex connection."},
 {"请在连接器设置中开启“本机 Codex 指挥其他电脑”。","Turn on “Use this PC's Codex to control other computers” in the connector settings."},
@@ -196,7 +204,7 @@ static class DesktopLocale {
 {"退出","Quit"},
 {"请输入 HTTPS 服务器地址，不包含路径、账号或参数。","Enter an HTTPS server address without a path, account, or parameters."},
 {"快捷方式属于其他程序，无法替换：","The shortcut belongs to another app and cannot be replaced: "},
-{"连接器组件无法载入。请保留本机数据，卸载后重新安装。","App components could not load. Keep local data, uninstall, and reinstall."},
+{"连接器组件无法载入。请保留本机数据，重新运行安装包并选择修复安装。","App components could not load. Keep local data, rerun setup, and choose Repair."},
 {"正在完成上一操作，请稍后卸载。","An operation is in progress. Try uninstalling again shortly."},
 {"卸载应用和登录启动项？已保存的配对和本机数据将保留。","Uninstall the app and sign-in startup entries? Saved pairing and local data will be kept."},
 {"无法启动卸载","Unable to start uninstall"},

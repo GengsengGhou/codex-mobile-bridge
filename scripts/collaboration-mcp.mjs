@@ -54,9 +54,16 @@ export function serveMcp({ root, input = process.stdin, output = process.stdout 
   const lifecycle = setInterval(async () => {
     try {
       const config = await readPrivate(resolve(root, '.local/hub-connector.json'));
-      const policy = effectivePolicy(await readPrivate(resolve(root, '.local/computer-collaboration.json')), config);
+      const savedPolicy = await readPrivate(resolve(root, '.local/computer-collaboration.json'));
+      const policy = effectivePolicy(savedPolicy, config);
       let upgrading = false; try { await access(root + '.upgrade-journal.json'); upgrading = true; } catch (e) { if (e.code !== 'ENOENT') throw e; }
-      if (!policy.controlEnabled || upgrading || !await connectorMayRun(root)) { lines.close(); input.destroy(); output.end(); }
+      // A changed pairing requires explicit new grants, but keep the tool transport
+      // available to explain that state. Upgrade and explicit pause still stop it.
+      const authorizationPending = policy.requiresAuthorization && savedPolicy?.requiresAuthorization !== false;
+      const explicitlyDisabled = !policy.controlEnabled && savedPolicy?.requiresAuthorization === false && !policy.controlPending;
+      let explainable = authorizationPending || policy.controlPending;
+      if (!policy.controlEnabled && !explainable && !explicitlyDisabled) explainable = (await readPrivate(resolve(root, '.local/collaboration-registration-state.json')))?.status === 'error';
+      if ((!policy.controlEnabled && (!explainable || explicitlyDisabled)) || upgrading || !await connectorMayRun(root)) { lines.close(); input.destroy(); output.end(); }
     } catch { lines.close(); input.destroy(); output.end(); }
   }, 1000);
   lifecycle.unref(); lines.once('close', () => clearInterval(lifecycle));

@@ -227,7 +227,7 @@ test('abandoned native settings mutex releases and isolated uninstall preserves 
   await writePrivate(resolve(root, '.local/computer-collaboration.json'), { controlEnabled: true, receiveEnabled: true });
   const cleaned = await disableCollaborationForUninstall({ root }); assert.equal(cleaned.ownedRegistrationRemoved, true); assert.equal(await readFile(config, 'utf8'), 'model="fixture"\n');
   await registerCollaboration({ root, codexHome, enabled: true }); const edited = (await readFile(config, 'utf8')).replace('command = ', 'command = "edited" # '); await writeFile(config, edited);
-  await assert.rejects(disableCollaborationForUninstall({ root }), e => e.code === 'MCP_REGISTRATION_CONFLICT'); assert.equal(await readFile(config, 'utf8'), edited); assert.equal((await readPrivate(resolve(root, '.local/computer-collaboration.json'))).controlEnabled, false);
+  const preserved = await disableCollaborationForUninstall({ root }); assert.equal(preserved.disabled, true); assert.equal(preserved.configurationPreserved, true); assert.equal(preserved.ownedRegistrationRemoved, false); assert.equal(await readFile(config, 'utf8'), edited); assert.equal((await readPrivate(resolve(root, '.local/computer-collaboration.json'))).controlEnabled, false);
   const moduleUrl = new URL('../scripts/collaboration-common.mjs', import.meta.url).href;
   const lockPath = resolve(root, '.local/abandoned-mutex');
   const child = spawn(process.execPath, ['--input-type=module', '-e', `import {withCollaborationLock} from ${JSON.stringify(moduleUrl)};await withCollaborationLock(${JSON.stringify(lockPath)},async()=>{console.log('held');await new Promise(()=>{});});`], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });

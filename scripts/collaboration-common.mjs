@@ -1,4 +1,4 @@
-import { readFile, mkdir, open, rename, rm, link } from 'node:fs/promises';
+import { readFile, mkdir, open, rename, rm, link, access } from 'node:fs/promises';
 import { dirname, resolve, relative, isAbsolute, parse } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -52,9 +52,30 @@ export async function withCollaborationLock(path, operation) {
     return await operation();
   } finally { child.stdin.end('\n'); lines.close(); await closed; }
 }
+export const collaborationAuthorizationRequired = (value, config) => value?.requiresAuthorization === true || !!(value && config && (value.deviceId !== config.deviceId || value.hubOrigin !== config.hubOrigin));
+export const collaborationAuthorizationMessage = '配对已改变，旧电脑协作授权已失效。请刷新电脑协作设置，重新选择电脑和项目并保存；目标电脑也需授权新的设备身份。';
+export async function resetCollaborationForPairing({ configPath, config }) {
+  const directory = dirname(configPath);
+  return withCollaborationLock(resolve(directory, 'collaboration-settings'), async () => {
+    const paths = ['computer-collaboration.json', 'collaboration-registration.json', 'collaboration-registration-state.json'].map(name => resolve(directory, name));
+    let configured = false;
+    for (const path of paths) {
+      try { await access(path); configured = true; }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    if (!configured) return { requiresAuthorization: false };
+    const current = await readPrivate(configPath);
+    if (current?.deviceId !== config.deviceId || current?.hubOrigin !== config.hubOrigin || current?.deviceToken !== config.deviceToken) return { requiresAuthorization: true, superseded: true };
+    // Preserve owned Codex configuration and receipts; never transfer old grants.
+    await writePrivate(paths[0], { version: 1, hubOrigin: config.hubOrigin, deviceId: config.deviceId, controlEnabled: false, receiveEnabled: false, allowedDeviceIds: [], allowedProjectRoots: [], requiresAuthorization: true });
+    await writePrivate(paths[2], { status: 'authorization-required', message: collaborationAuthorizationMessage });
+    return { requiresAuthorization: true };
+  });
+}
 export function effectivePolicy(value, config) {
   const valid = value?.version === 1 && config && value.deviceId === config.deviceId && value.hubOrigin === config.hubOrigin && Array.isArray(value.allowedDeviceIds) && Array.isArray(value.allowedProjectRoots);
-  return valid ? { ...value, controlEnabled: value.controlEnabled === true, receiveEnabled: value.receiveEnabled === true } : { version: 1, controlEnabled: false, receiveEnabled: false, allowedDeviceIds: [], allowedProjectRoots: [] };
+  const requiresAuthorization = collaborationAuthorizationRequired(value, config);
+  return valid ? { ...value, requiresAuthorization, controlEnabled: !requiresAuthorization && !value.controlPending && value.controlEnabled === true, receiveEnabled: !requiresAuthorization && value.receiveEnabled === true } : { version: 1, requiresAuthorization, controlEnabled: false, receiveEnabled: false, allowedDeviceIds: [], allowedProjectRoots: [] };
 }
 export async function localBridge(config, path, body, { maxBytes = 2 * 1024 * 1024, timeoutMs = 20000, binary = false } = {}) {
   const origin = `http://127.0.0.1:${config.bridgePort}`;

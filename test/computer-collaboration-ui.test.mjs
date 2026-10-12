@@ -110,3 +110,40 @@ test('registration errors leave settings retryable after the local conflict is r
   const save = ui.calls.at(-1);
   assert.equal(save.action, 'save-collaboration'); assert.equal(save.payload.controlEnabled, true);
 });
+
+test('a changed pairing clears dirty grants and shows bilingual reauthorization steps', async t => {
+  const ui = mount(t, 'en'); await tick(); ui.$('settingsButton').click();
+  ui.answer(ui.calls.at(-1), { collaboration: { ...initial, hubOrigin:'https://old.example',deviceId:'old-self' } }); await tick();
+  for (const id of ['controlEnabled','receiveEnabled']) { ui.$(id).checked=true; ui.$(id).dispatchEvent(new ui.window.Event('change')); }
+  for (const container of ['collaborationDevices','collaborationProjects']) { const box=ui.$(container).querySelector('input');box.checked=true;box.dispatchEvent(new ui.window.Event('change')); }
+  ui.$('backSettings').click(); ui.$('settingsButton').click();
+  ui.answer(ui.calls.at(-1), { collaboration: { ...initial, hubOrigin:'https://new.example',deviceId:'new-self',requiresAuthorization:true,registration:{status:'authorization-required',message:'配对已改变，旧电脑协作授权已失效。请刷新电脑协作设置，重新选择电脑和项目并保存；目标电脑也需授权新的设备身份。'} } }); await tick();
+  assert.equal(ui.$('controlEnabled').checked,false); assert.equal(ui.$('receiveEnabled').checked,false);
+  assert.ok([...ui.$('collaborationDevices').querySelectorAll('input'),...ui.$('collaborationProjects').querySelectorAll('input')].every(box=>!box.checked));
+  assert.match(ui.$('collaborationSummary').textContent,/Pairing changed.*choose computers and projects again/);
+  assert.equal(ui.calls.filter(call=>call.action==='save-collaboration').length,0);
+});
+
+test('project reload and save errors retain dirty choices and replace an old ready summary', async t => {
+  const ui=mount(t,'en');await tick();ui.$('settingsButton').click();
+  const ready={...initial,hubOrigin:'https://fixture.invalid',deviceId:'device-self',projectsAvailable:true,devicesAvailable:true,registration:{status:'registered',message:'电脑协作已就绪。请在 Codex 中重新加载连接。'}};
+  ui.answer(ui.calls.at(-1),{collaboration:ready});await tick();
+  for(const container of ['collaborationDevices','collaborationProjects']){const box=ui.$(container).querySelector('input');box.checked=true;box.dispatchEvent(new ui.window.Event('change'));}
+  ui.$('receiveEnabled').checked=true;ui.$('receiveEnabled').dispatchEvent(new ui.window.Event('change'));
+  ui.$('saveCollaboration').click();const request=ui.calls.at(-1);assert.equal(request.action,'save-collaboration');
+  ui.answer(request,'本机项目列表暂时无法读取，尚未保存授权。已保留原设置；请打开 Codex，刷新电脑协作设置后重试。',false);await tick();
+  assert.match(ui.$('collaborationSummary').textContent,/authorization was not saved/);assert.doesNotMatch(ui.$('collaborationSummary').textContent,/is ready/);
+  ui.$('backSettings').click();ui.$('settingsButton').click();ui.answer(ui.calls.at(-1),{collaboration:{...ready,projects:[],projectsAvailable:false,error:'本机 Codex 尚未就绪，请打开 Codex 后重试。'}});await tick();
+  assert.equal(ui.$('receiveEnabled').checked,true);assert.equal(ui.$('collaborationProjects').querySelector('input').checked,true);assert.equal(ui.$('collaborationDevices').querySelector('input').checked,true);
+  assert.equal(ui.calls.filter(call=>call.action==='save-collaboration').length,1);
+});
+
+test('fresh lists prune only missing draft identities and never select their same-name replacement', async t=>{
+  const ui=mount(t);await tick();ui.$('settingsButton').click();
+  const ready={...initial,deviceId:'device-self',hubOrigin:'https://fixture.invalid',devicesAvailable:true,projectsAvailable:true};
+  ui.answer(ui.calls.at(-1),{collaboration:ready});await tick();
+  const old=ui.$('collaborationDevices').querySelector('input');old.checked=true;old.dispatchEvent(new ui.window.Event('change'));
+  ui.$('backSettings').click();ui.$('settingsButton').click();
+  ui.answer(ui.calls.at(-1),{collaboration:{...ready,devices:[{id:'device-replaced',name:'Office PC',online:true}]}});await tick();
+  assert.equal(ui.$('collaborationDevices').querySelector('input').checked,false);assert.match(ui.$('collaborationSummary').textContent,/所选电脑或项目已改变/);assert.equal(ui.calls.filter(call=>call.action==='save-collaboration').length,0);
+});

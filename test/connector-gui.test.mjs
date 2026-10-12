@@ -48,7 +48,8 @@ test('GUI status preserves a control read failure instead of reporting checking 
 });
 test('GUI status reads fresh hub evidence after the Codex probe and keeps hub and local availability independent',async()=>{
   const calls=[];
-  const status=await guiCommand({action:'status'},{read:async()=>({hubOrigin:'https://example.com',bridgePort:4317}),probe:async()=>{calls.push('probe');return null;},readState:async()=>{calls.push('state');return {state:'online',updatedAt:new Date().toISOString()};}});
+  const identity={hubOrigin:'https://example.com',deviceId:'11111111-1111-4111-8111-111111111111'};
+  const status=await guiCommand({action:'status'},{read:async()=>({...identity,bridgePort:4317}),probe:async()=>{calls.push('probe');return null;},readState:async()=>{calls.push('state');return {...identity,state:'online',updatedAt:new Date().toISOString()};}});
   assert.deepEqual(calls,['probe','state']);assert.equal(status.bridgeConnected,false);assert.equal(status.hubConnected,true);assert.equal(status.hubState,'online');assert.equal(status.state,'waiting');
   for(const updatedAt of ['2000-01-01T00:00:00Z','2099-01-01T00:00:00Z','invalid']) {
     const stale=await guiCommand({action:'status'},{read:async()=>({bridgePort:4317}),probe:async()=>({connected:true}),readState:async()=>({state:'online',updatedAt})});

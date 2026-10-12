@@ -1,7 +1,7 @@
 import { resolve, basename } from 'node:path';
 import { open, mkdir, lstat, access } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
-import { effectivePolicy, readPrivate, reservePrivate, UUID, fail, definitiveRejection } from './collaboration-common.mjs';
+import { effectivePolicy, readPrivate, reservePrivate, UUID, fail, definitiveRejection, collaborationAuthorizationMessage } from './collaboration-common.mjs';
 import { connectorMayRun } from './connector-control.mjs';
 
 export async function hubCollaboration(config, targetDeviceId, request, { fetchImpl = fetch, timeoutMs = 25000 } = {}) {
@@ -14,7 +14,7 @@ export async function hubCollaboration(config, targetDeviceId, request, { fetchI
   for await (const part of response.body) { size += part.length; if (size > 2 * 1024 * 1024) fail('RESULT_TOO_LARGE', 413); parts.push(part); }
   let result; try { result = JSON.parse(Buffer.concat(parts).toString()); } catch { fail('FEATURE_UNAVAILABLE', 503, '服务器尚未支持电脑协作，请由管理员更新服务器后重试。'); }
   if (!targetDeviceId && !response.ok && ['FORBIDDEN', 'LOGIN_REQUIRED', 'NOT_FOUND'].includes(result.code)) fail('FEATURE_UNAVAILABLE', 503, '服务器尚未支持电脑协作，请由管理员更新服务器后重试。');
-  if (!response.ok) fail(result.code || 'FEATURE_UNAVAILABLE', response.status, result.error);
+  if (!response.ok) fail(result.code || 'FEATURE_UNAVAILABLE', response.status, result.code === 'DEVICE_REVOKED' ? '服务器未接受当前设备凭据。请核对当前服务器和配对身份；必要时重新配对，再明确保存电脑协作授权。' : result.error);
   if (!targetDeviceId && (result.version !== 1 || result.sourceDeviceId !== config.deviceId || !Array.isArray(result.devices))) fail('FEATURE_UNAVAILABLE', 503);
   return result;
 }
@@ -27,7 +27,13 @@ export function createCollaborationClient({ root, fetchImpl = fetch } = {}) {
     if (!await connectorMayRun(root)) fail('COLLABORATION_CONNECTOR_PAUSED', 403, '连接器已断开。请先连接，再使用电脑协作。');
     try { await access(root + '.upgrade-journal.json'); fail('COLLABORATION_UPGRADING', 503, '连接器正在升级，请完成升级后重新加载 Codex 连接。'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
     const config = await readPrivate(configPath); const policy = effectivePolicy(await readPrivate(policyPath), config);
-    if (!config || !policy.controlEnabled) fail('COLLABORATION_CONTROL_DISABLED', 403, '请在连接器设置中开启“本机 Codex 指挥其他电脑”。');
+    if (policy.requiresAuthorization) fail('COLLABORATION_BINDING_CHANGED', 403, collaborationAuthorizationMessage);
+    if (policy.controlPending) fail('COLLABORATION_SETTINGS_PENDING', 503, '电脑协作设置正在保存，请稍后重试。');
+    if (!config || !policy.controlEnabled) {
+      const registration = await readPrivate(resolve(root, '.local/collaboration-registration-state.json'));
+      if (registration?.status === 'error') fail(registration.code || 'COLLABORATION_REGISTRATION_FAILED', 409, registration.message || '电脑协作注册未完成。请在连接器设置中检查错误后重试。');
+      fail('COLLABORATION_CONTROL_DISABLED', 403, '请在连接器设置中开启“本机 Codex 指挥其他电脑”。');
+    }
     return config;
   }
   async function remote(deviceId, request, options = {}) {

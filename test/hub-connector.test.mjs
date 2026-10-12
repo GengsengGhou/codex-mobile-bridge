@@ -166,3 +166,37 @@ test('streaming upload size is enforced without content-length and oversized dow
   const download = await fetch(`${origin}/api/status`);
   assert.equal(download.status, 502); assert.equal((await download.json()).code, 'BRIDGE_UNAVAILABLE');
 });
+
+async function stalledHandshakeFixture(t, recover) {
+  const local = http.createServer((_req, res) => { res.setHeader('Set-Cookie', `bridge_session=${'a'.repeat(64)}; Path=/`); res.end('local'); });
+  const hub = http.createServer(), wss = new WebSocketServer({ noServer: true });
+  const sockets = new Set(); let attempts = 0;
+  hub.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
+  hub.on('upgrade', (req, socket, head) => {
+    attempts++;
+    // Accept TCP but withhold the first HTTP upgrade response, as a stalled proxy can.
+    if (recover && attempts > 1) wss.handleUpgrade(req, socket, head, () => {});
+  });
+  local.listen(0, '127.0.0.1'); hub.listen(0, '127.0.0.1');
+  await Promise.all([once(local, 'listening'), once(hub, 'listening')]);
+  const connector = startConnector({ hubOrigin: `http://127.0.0.1:${hub.address().port}`, deviceId: 'isolated', deviceToken: 'test-secret', bridgePort: local.address().port, allowInsecureLocal: true, handshakeTimeoutMs: 60, reconnectMinMs: 10, reconnectMaxMs: 20 });
+  t.after(async () => {
+    connector.stop(); for (const client of wss.clients) client.terminate(); wss.close();
+    for (const socket of sockets) socket.destroy(); local.closeAllConnections();
+    await Promise.all([new Promise(resolve => hub.close(resolve)), new Promise(resolve => local.close(resolve))]);
+  });
+  return { connector, attempts: () => attempts };
+}
+
+test('connector abandons an unanswered WebSocket handshake and reconnects successfully', async t => {
+  const { connector, attempts } = await stalledHandshakeFixture(t, true);
+  await waitFor(() => connector.status().connected);
+  assert.equal(attempts(), 2); assert.equal(connector.status().state, 'online');
+});
+
+test('stopping during an unanswered WebSocket handshake cancels future connection attempts', async t => {
+  const { connector, attempts } = await stalledHandshakeFixture(t, false);
+  await waitFor(() => attempts() === 1); connector.stop();
+  await new Promise(resolve => setTimeout(resolve, 180));
+  assert.equal(attempts(), 1); assert.equal(connector.status().state, 'stopped');
+});

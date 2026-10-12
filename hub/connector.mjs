@@ -2,10 +2,11 @@ import http from 'node:http';
 import WebSocket from 'ws';
 import { allowedBridgeRequest, control, binary, decode, FRAME_BYTES, MAX_PAYLOAD, UPLOAD_LIMIT, DOWNLOAD_LIMIT, selectHeaders, REQUEST_HEADERS, RESPONSE_HEADERS } from './protocol.mjs';
 
-export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 4317, allowInsecureLocal = false, WebSocketImpl = WebSocket, reconnectMinMs = 500, reconnectMaxMs = 30000, requestTimeoutMs = 120000, maxInFlight = 8, collaborationExecutor } = {}) {
+export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 4317, allowInsecureLocal = false, WebSocketImpl = WebSocket, reconnectMinMs = 500, reconnectMaxMs = 30000, handshakeTimeoutMs = 10000, requestTimeoutMs = 120000, maxInFlight = 8, collaborationExecutor } = {}) {
   const hub = new URL(hubOrigin);
   if (hub.username || hub.password || hub.pathname !== '/' || hub.search || hub.hash || !(hub.protocol === 'https:' || allowInsecureLocal && hub.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(hub.hostname))) throw new Error('Invalid hub origin');
   if (!Number.isInteger(bridgePort) || bridgePort < 1 || bridgePort > 65535 || typeof deviceId !== 'string' || !deviceId || typeof deviceToken !== 'string' || !deviceToken || /[\r\n]/.test(deviceToken)) throw new Error('Invalid connector configuration');
+  if (!Number.isSafeInteger(handshakeTimeoutMs) || handshakeTimeoutMs < 1 || handshakeTimeoutMs > 2147483647) throw new Error('Invalid handshake timeout');
   const backend = new URL(`http://127.0.0.1:${bridgePort}`), endpoint = new URL('/api/hub/connector', hub);
   endpoint.protocol = hub.protocol === 'https:' ? 'wss:' : 'ws:';
   endpoint.searchParams.set('deviceId', deviceId);
@@ -104,7 +105,7 @@ export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 
     state = 'connecting';
     try { await acquire(); } catch { if (!stopped) { state = 'offline'; timer = setTimeout(connect, Math.min(reconnectMaxMs, reconnectMinMs * 2 ** Math.min(attempt++, 10))); } return; }
     if (stopped) return;
-    const socket = new WebSocketImpl(endpoint, { headers: { Authorization: `Bearer ${deviceToken}`, 'X-Bridge-Protocol': '1' }, maxPayload: MAX_PAYLOAD });
+    const socket = new WebSocketImpl(endpoint, { headers: { Authorization: `Bearer ${deviceToken}`, 'X-Bridge-Protocol': '1' }, maxPayload: MAX_PAYLOAD, handshakeTimeout: handshakeTimeoutMs });
     ws = socket;
     socket.on('open', () => { if (ws === socket) { state = 'online'; attempt = 0; } });
     socket.on('close', () => disconnect(socket)); socket.on('error', () => disconnect(socket));

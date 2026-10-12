@@ -30,8 +30,8 @@ export async function guiCommand(command, deps = {}) {
     const intent = await control.read();
     let state = {};
     try { state = deps.readState ? await deps.readState() : JSON.parse(await readFile(resolve(appRoot, '.local/hub-connector-state.json'), 'utf8')); } catch {}
-    const age = Date.now() - Date.parse(state.updatedAt);
-    const fresh = !!config && Number.isFinite(age) && age >= 0 && age < 6000;
+    const age = Date.now() - Date.parse(state?.updatedAt);
+    const fresh = !!config && typeof config.hubOrigin === 'string' && typeof config.deviceId === 'string' && state?.hubOrigin === config.hubOrigin && state?.deviceId === config.deviceId && Number.isFinite(age) && age >= 0 && age < 6000;
     const hubState = intent.paused ? 'paused' : fresh && ['online','connected','connecting','offline','stopped'].includes(state.state) ? state.state : 'waiting';
     const hubConnected = !intent.paused && fresh && (state.state === 'online' || state.state === 'connected');
     return { paired: !!config, origin: config?.hubOrigin, deviceId: config?.deviceId, deviceName: config?.deviceName || process.env.COMPUTERNAME || hostname(), bridgeConnected, hubConnected, hubState, paused: intent.paused, pauseScope: intent.pauseScope, persistentPaused: intent.pauseScope === 'persistent', autoStart: intent.autoStart === true, lastError: intent.lastError, state: intent.paused ? (intent.disconnectVerified ? 'paused' : 'stopping') : fresh && bridgeConnected ? state.state : 'waiting' };
@@ -57,7 +57,7 @@ export async function guiCommand(command, deps = {}) {
     const port = old?.bridgePort || await (deps.choosePort || chooseFreePort)(4317);
     if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('本机连接端口无效。');
     const result = await (deps.pair || pairConnector)({ ...pairing, bridgePort: port, configPath, replace: !!old });
-    let warning = null;
+    let warning = result.warning || null;
     let completed = null;
     let recoveryCompleted = false;
     try {
@@ -74,10 +74,10 @@ export async function guiCommand(command, deps = {}) {
         else recoveryCompleted = true;
       }
     } catch {
-      warning = '设备已配对，但后台启动未完成。请勿重复使用此配对信息；打开连接器后检查状态并重试连接。';
+      warning = [warning, '设备已配对，但后台启动未完成。请勿重复使用此配对信息；打开连接器后检查状态并重试连接。'].filter(Boolean).join(' ');
     }
     const intent = completed?.intent || await control.read().catch(() => ({ paused: true, pauseScope: 'persistent' }));
-    if (completed?.superseded) return { paired: true, ...result, autoStart: intent.autoStart === true, state: intent.paused ? 'paused' : 'waiting', paused: intent.paused, pauseScope: intent.pauseScope, persistentPaused: intent.pauseScope === 'persistent', recoveryCompleted: false };
+    if (completed?.superseded) return { paired: true, ...result, autoStart: intent.autoStart === true, state: intent.paused ? 'paused' : 'waiting', paused: intent.paused, pauseScope: intent.pauseScope, persistentPaused: intent.pauseScope === 'persistent', recoveryCompleted: false, partialSuccess: !!warning, ...(warning ? { warning } : {}) };
     return { paired: true, ...result, autoStart: intent.autoStart === true, state: warning ? 'partial' : intent.paused ? 'paused' : 'waiting', paused: intent.paused, pauseScope: intent.pauseScope, persistentPaused: intent.pauseScope === 'persistent', recoveryCompleted, partialSuccess: !!warning, ...(warning ? { warning } : {}) };
   }
   if (command.action === 'connect') {

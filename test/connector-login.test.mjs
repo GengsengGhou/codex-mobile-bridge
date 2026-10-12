@@ -91,7 +91,7 @@ test('persistent login recovery retries failed launch, retains offline live conn
   let launches = 0, waits = 0;
   const result = await restoreConnectorLogin({ root, monitor: true, signal: controller.signal,
     output: { log() {} }, probe: async () => ({ connected: true }), now: () => 10000,
-    readState: async () => waits === 2 ? { state: 'offline', updatedAt: new Date(9500).toISOString() } : { state: 'online', updatedAt: new Date(0).toISOString() },
+    readState: async () => ({hubOrigin:config.hubOrigin,deviceId:config.deviceId,...(waits === 2 ? { state: 'offline', updatedAt: new Date(9500).toISOString() } : { state: 'online', updatedAt: new Date(0).toISOString() })}),
     launch: async () => { launches++; if (launches === 1) throw new Error('Transient WMI failure'); return { pid: 123 }; },
     sleep: async () => { if (++waits === 4) controller.abort(); },
   });
@@ -110,6 +110,50 @@ test('persistent login recovery restores a bridge that exits after connector lau
     sleep: async () => { if (++waits === 2) controller.abort(); },
   });
   assert.equal(starts, 1);
+});
+
+test('persistent login recovery treats malformed heartbeat files as missing without altering saved configuration', async t => {
+  for (const [label, content] of [['truncated', '{"state":'], ['zero-filled', Buffer.alloc(121)], ['empty', ''], ['null', 'null']]) {
+    await t.test(label, async child => {
+      const root = await fixture(child), controller = new AbortController();
+      const heartbeatPath = resolve(root, '.local/hub-connector-state.json');
+      await writeFile(heartbeatPath, content);
+      const before = await readFile(heartbeatPath);
+      let launches = 0;
+      await restoreConnectorLogin({ root, monitor: true, signal: controller.signal,
+        output: { log() {} }, probe: async () => ({ connected: true }),
+        launch: async options => {
+          launches++;
+          assert.equal(options.root, root);
+          assert.equal(options.instanceName, 'hub-connector');
+          assert.equal(options.supervisorPath, resolve(root, 'scripts/start-connector.mjs'));
+          assert.deepEqual(options.env, {});
+          return { pid: 123 };
+        },
+        sleep: async () => controller.abort(),
+      });
+      assert.equal(launches, 1);
+      assert.deepEqual(await readFile(heartbeatPath), before);
+      assert.deepEqual(JSON.parse(await readFile(resolve(root, '.local/hub-connector.json'), 'utf8')), config);
+      assert.deepEqual(JSON.parse(await readFile(resolve(root, '.local/runtime.json'), 'utf8')), runtime);
+    });
+  }
+});
+
+test('heartbeat permission errors remain blocking instead of being treated as cache corruption', async t => {
+  const root = await fixture(t), controller = new AbortController();
+  let launches = 0, reads = 0;
+  const errors = ['EACCES', 'EPERM'];
+  await restoreConnectorLogin({ root, monitor: true, signal: controller.signal,
+    output: { log() {} }, probe: async () => ({ connected: true }),
+    readState: async () => { throw Object.assign(new Error('Heartbeat access denied'), { code: errors[reads++] }); },
+    launch: async () => { launches++; return { pid: 123 }; },
+    sleep: async () => { if (reads === errors.length) controller.abort(); },
+  });
+  assert.equal(reads, errors.length);
+  assert.equal(launches, 0);
+  assert.deepEqual(JSON.parse(await readFile(resolve(root, '.local/hub-connector.json'), 'utf8')), config);
+  assert.deepEqual(JSON.parse(await readFile(resolve(root, '.local/runtime.json'), 'utf8')), runtime);
 });
 
 test('logon task uses the current interactive user, retries at logon, and rejects foreign actions', async () => {
@@ -178,7 +222,7 @@ test('explicit first pairing registers before Codex and logon watcher finishes b
     },
     finishBootstrap:options=>registerConnectorLogin({...options,platform:'win32',registration}),
     launch:async options=>{launches++;assert.equal(options.instanceName,'hub-connector');return {pid:123};},
-    readState:async()=> launches ? {state:'online',updatedAt:new Date(10000).toISOString()} : {},
+    readState:async()=> launches ? {hubOrigin:config.hubOrigin,deviceId:config.deviceId,state:'online',updatedAt:new Date(10000).toISOString()} : {},
     sleep:async()=>{if(++waits===5)controller.abort();},
   });
   assert.equal(attempts,3); assert.equal(launches,1); assert.equal(registrations,1);

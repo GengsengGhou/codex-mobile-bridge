@@ -59,7 +59,7 @@ for (const oldSetup of oldSetups) {
     assert.deepEqual(JSON.parse(await readFile(join(local,'desktop-language.json'),'utf8')),{language:'en'});
 
     assert.deepEqual(JSON.parse(await readFile(control, 'utf8')), paused);
-    assert.deepEqual(JSON.parse(await readFile(join(target, 'installed.json'), 'utf8')), { root: target, version: 1 });
+    assert.deepEqual(JSON.parse(await readFile(join(target, 'installed.json'), 'utf8')), { root: target, version: 1, application: 'codex-mobile-bridge', appVersion: releaseVersion });
     await assert.rejects(access(target + '.upgrade-journal.json'));
     await assert.rejects(access(target + '.upgrade-backup'));
     cases.push({ fromSetupSha256: oldHash, upgradeUi: 'passed', pausedUpgrade: 'passed', preservedLocal: 'passed', preservedLanguage:'en', installedVersion: releaseVersion });
@@ -267,6 +267,7 @@ try {
 const defaultAfter = await Promise.all(defaultFiles.map(file => digest(file).catch(() => null)));
 assert.deepEqual(defaultAfter, defaultBefore, 'Default installation program or marker changed during isolated verification');
 const evidence = { cases, strangerRejected: true, damagedOwnershipRejected: true, defaultInstallationProgramAndMarkerUnchanged: true, newSetupSha256: await digest(setup) };
-await mkdir(join(project, 'work/verification'), { recursive: true });
-await writeFile(join(project, 'work/verification/windows-upgrade-evidence.json'), JSON.stringify(evidence, null, 2) + '\n');
+const evidenceDirectory = resolve(process.env.CODEX_UPGRADE_EVIDENCE_DIRECTORY || join(project, 'work/verification'));
+await mkdir(evidenceDirectory, { recursive: true });
+await writeFile(join(evidenceDirectory, 'windows-upgrade-evidence.json'), JSON.stringify(evidence, null, 2) + '\n');
 console.log(JSON.stringify(evidence, null, 2));

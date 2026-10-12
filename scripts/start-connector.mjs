@@ -12,7 +12,15 @@ export async function runSavedConnector({ configPath = connectorConfigPath } = {
   if (!await connectorMayRun(resolve(configPath, '../..'))) throw new Error('连接器已暂停。');
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   if (config.version !== 1) throw new Error('连接器配置版本不兼容，请重新配对。');
-  return startConnector({ ...config, collaborationExecutor: createCollaborationExecutor({ root: resolve(configPath, '../..'), config, configPath }) });
+  const connector = startConnector({ ...config, collaborationExecutor: createCollaborationExecutor({ root: resolve(configPath, '../..'), config, configPath }) });
+  return {
+    ...connector,
+    status: () => ({ ...connector.status(), hubOrigin: config.hubOrigin, deviceId: config.deviceId }),
+    bindingCurrent: async () => {
+      const current = JSON.parse(await readFile(configPath, 'utf8'));
+      return current.hubOrigin === config.hubOrigin && current.deviceId === config.deviceId && current.deviceToken === config.deviceToken;
+    },
+  };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
@@ -34,7 +42,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       };
       await publish();
       const heartbeat = setInterval(async () => {
-        try { if (!await connectorMayRun(fileURLToPath(new URL('..', import.meta.url)))) { stop(); return; } await publish(); }
+        try { if (!await connectorMayRun(fileURLToPath(new URL('..', import.meta.url))) || !await connector.bindingCurrent()) { stop(); return; } await publish(); }
         catch { stop(); }
       }, 1000);
       const stop = () => { clearInterval(heartbeat); connector.stop(); publish().catch(() => {}); };
