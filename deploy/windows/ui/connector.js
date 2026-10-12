@@ -15,6 +15,7 @@
   let requestId = 0, status = null, settingsVisible = false, changingServer = false;
   let actionBusy = false, nativeBusy = false, mutationPending = 0, busyReason = '', statusError = '', actionError = '', warning = '', viewBeforeSettings = 'pairing';
   let serverTouched = false, nameTouched = false, defaultsApplied = false;
+  let pairingTarget = null, importedPairingOrigin = null, pairingFlow = 0, pairingSourceMismatch = null;
   let update = null, updateBusy = false, updateError = '';
   let collaboration = null, collaborationDirty = false, collaborationBusy = false, collaborationError = '', collaborationMessage = '';
   let collaborationDraft = { controlEnabled: false, receiveEnabled: false, allowedDeviceIds: [], allowedProjectRoots: [] };
@@ -212,13 +213,14 @@
     $('startupSummary').textContent = t('Windows 登录后自动连接 · ') + (status?.autoStart ? t('已开启') : t('已关闭'));
     $('diagnosticState').textContent = diagnostic(statusError) || description();
     $('footerState').textContent = statusError ? t('状态读取失败') : paired ? description() : t('尚未配对');
-    feedback(diagnostic(actionError || warning || statusError));
+    feedback(pairingSourceMismatch ? t('配对信息来自 {source}，与当前选择的服务器 {target} 不一致。请在目标服务器重新生成配对信息。').replace('{source}', () => pairingSourceMismatch.source).replace('{target}', () => pairingSourceMismatch.target) : diagnostic(actionError || warning || statusError));
   }
   async function act(action, payload = {}) {
     const mutating = ['pair', 'connect', 'disconnect', 'autostart'].includes(action);
     if (mutating && actionBusy && action !== 'disconnect') return null;
     if (mutating) { mutationPending++; actionBusy = true; render(); }
     actionError = '';
+    pairingSourceMismatch = null;
     try { const result = await command(action, payload); return result; }
     catch (error) { actionError = error.message; render(); return null; }
     finally { if (mutating) { mutationPending--; actionBusy = nativeBusy || mutationPending > 0; render(); } }
@@ -227,8 +229,16 @@
     const value = $('server').value.trim();
     return value && !/^[a-z][a-z\d+.-]*:\/\//i.test(value) && !/^[a-z][a-z\d+.-]*:/i.test(value.replace(/:\d+\/?$/, '')) ? 'https://' + value : value;
   }
+  function pairingOrigin(value) {
+    try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash ? url.origin : null; }
+    catch { return null; }
+  }
   $('language').addEventListener('change', async () => { const selected = $('language').value; try { const result = await command('set-language', { language: selected }); applyLanguage(result.language); } catch(error) { actionError=error.message; $('language').value=language; render(); } });
-  $('server').addEventListener('input', () => { serverTouched = true; });
+  $('server').addEventListener('input', () => {
+    serverTouched = true; pairingTarget = pairingOrigin(normalizedServer());
+    pairingSourceMismatch = null;
+    if (importedPairingOrigin && importedPairingOrigin !== pairingTarget) { $('pairingCode').value = ''; importedPairingOrigin = null; }
+  });
   $('deviceName').addEventListener('input', () => { nameTouched = true; });
   $('pairingForm').addEventListener('submit', async event => {
     event.preventDefault();
@@ -236,30 +246,38 @@
     const result = await act('pair', { origin: normalizedServer(), name: $('deviceName').value.trim(), code: $('pairingCode').value });
     if (result?.paired && !result.superseded) {
       changingServer = false;
+      pairingTarget = importedPairingOrigin = null; pairingFlow++;
       $('pairingCode').value = '';
       warning = result.partialSuccess ? result.warning : '';
       render();
     }
   });
-  $('openSetup').addEventListener('click', () => act('open-web', { origin: normalizedServer(), setup: true }));
+  $('openSetup').addEventListener('click', () => { pairingTarget = pairingOrigin(normalizedServer()); act('open-web', { origin: normalizedServer(), setup: true }); });
   $('pasteCode').addEventListener('click', async () => {
     const result = await act('paste-code');
-    if (result) { $('pairingCode').value = result.code; $('pairingCode').focus(); }
+    if (result) { $('pairingCode').value = result.code; importedPairingOrigin = null; $('pairingCode').focus(); }
   });
   $('pasteInformation').addEventListener('click', async () => {
+    const flow = pairingFlow;
     const result = await act('paste-information');
-    if (result) {
+    if (result && flow === pairingFlow) {
+      if (pairingTarget && pairingOrigin(result.origin) !== pairingTarget) {
+        $('pairingCode').value = ''; importedPairingOrigin = null;
+        pairingSourceMismatch = { source: result.origin, target: pairingTarget };
+        render(); return;
+      }
       $('server').value = result.origin; $('deviceName').value = result.name; $('pairingCode').value = result.code;
+      importedPairingOrigin = pairingOrigin(result.origin);
       serverTouched = nameTouched = true; $('pairingCode').focus();
     }
   });
-  $('cancelPairing').addEventListener('click', () => { changingServer = false; render(); });
+  $('cancelPairing').addEventListener('click', () => { changingServer = false; pairingTarget = importedPairingOrigin = pairingSourceMismatch = null; pairingFlow++; render(); });
   $('settingsButton').addEventListener('click', () => {
     viewBeforeSettings = changingServer || !status?.paired ? 'pairing' : 'connection';
     settingsVisible = !settingsVisible; render(); if (settingsVisible) refreshCollaboration();
   });
   $('backSettings').addEventListener('click', () => { settingsVisible = false; changingServer = status?.paired && viewBeforeSettings === 'pairing'; render(); });
-  $('changeServer').addEventListener('click', () => { settingsVisible = false; changingServer = true; actionError = ''; render(); $('server').focus(); });
+  $('changeServer').addEventListener('click', () => { settingsVisible = false; changingServer = true; pairingTarget = importedPairingOrigin = pairingSourceMismatch = null; pairingFlow++; actionError = ''; render(); $('server').focus(); });
   async function connect() {
     const result = await act('connect');
     if (result?.recoveryCompleted === true && !result.paused && !result.superseded) { warning = ''; render(); }

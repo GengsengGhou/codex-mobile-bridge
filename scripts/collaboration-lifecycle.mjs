@@ -10,7 +10,10 @@ export async function disableCollaborationForUninstall({ root, register = regist
   const ledger = await readPrivate(resolve(root, '.local/collaboration-registration.json'));
   // A foreign same-name entry with no ownership ledger belongs to the user and is left alone.
   if (ledger) {
-    try { await register({ root, enabled: false, codexHome: dirname(ledger.configPath) }); }
+    try {
+      const registration = await register({ root, enabled: false, codexHome: dirname(ledger.configPath) });
+      if (registration.configurationPreserved) return { disabled: true, ownedRegistrationRemoved: false, configurationPreserved: true, warning: '电脑协作已关闭。Codex 中的工具设置已完整保留。卸载完成后请在 Codex 设置中检查该连接；如仍指向已卸载应用，请手动移除。 / Computer collaboration is disabled. Codex tool settings were preserved. After uninstall, check this connection in Codex settings and remove it manually if it still points to the removed app.' };
+    }
     catch (error) {
       // Only a verified ownership ledger with a changed/foreign entry can take
       // this path. Unsafe files, broken ledgers, interrupted writes and locks

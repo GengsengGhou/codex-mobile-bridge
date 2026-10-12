@@ -13,6 +13,11 @@ static class DesktopLocale {
     public static void Load(string root){Language=DefaultLanguage();try{var data=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(Path.Combine(root,".local","desktop-language.json")));object value;if(data!=null&&data.TryGetValue("language",out value)&&Valid(value as string))Language=(string)value;}catch{}}
     public static void Save(string root,string language){if(!Valid(language))throw new ArgumentException("Invalid language.");string directory=Path.Combine(root,".local");if(Directory.Exists(directory)&&(File.GetAttributes(directory)&FileAttributes.ReparsePoint)!=0)throw new IOException("Language preferences directory cannot be a link.");Directory.CreateDirectory(directory);string path=Path.Combine(directory,"desktop-language.json"),temp=path+"."+Guid.NewGuid().ToString("N")+".tmp";try{File.WriteAllText(temp,new JavaScriptSerializer().Serialize(new{language=language}));if(File.Exists(path))File.Replace(temp,path,null);else File.Move(temp,path);Language=language;}finally{if(File.Exists(temp))File.Delete(temp);}}
     static readonly Dictionary<string,string> English=new Dictionary<string,string>{
+{"电脑协作连接仍指向另一个安装目录。Codex 配置、工具设置和配对已完整保留，请先核对安装路径与工具限制后重试。","The collaboration connection still points to another installation. Codex settings, tool preferences, and pairing were preserved. Check the installation path and tool restrictions before retrying."},
+{"电脑协作已关闭。Codex 中的工具设置已完整保留，重新开启不会重置工具限制。","Computer collaboration is disabled. Codex tool settings were preserved; turning control back on will keep these restrictions."},
+{"电脑协作已关闭。Codex 中的工具设置已完整保留。卸载完成后请在 Codex 设置中检查该连接；如仍指向已卸载应用，请手动移除。","Computer collaboration is disabled. Codex tool settings were preserved. After uninstall, check this connection in Codex settings and remove it manually if it still points to the removed app."},
+{"电脑协作已关闭。Codex 中的工具设置已完整保留。卸载完成后请在 Codex 设置中检查该连接；如仍指向已卸载应用，请手动移除。 / Computer collaboration is disabled. Codex tool settings were preserved. After uninstall, check this connection in Codex settings and remove it manually if it still points to the removed app.","Computer collaboration is disabled. Codex tool settings were preserved. After uninstall, check this connection in Codex settings and remove it manually if it still points to the removed app."},
+{"配对信息来自 {source}，与当前选择的服务器 {target} 不一致。请在目标服务器重新生成配对信息。","This pairing information comes from {source}, but the selected server is {target}. Generate new pairing information on the selected server."},
 {"修复安装","Repair"},
 {"正在修复应用，保留配对和本机数据…","Repairing the app while keeping pairing and local data…"},
 {"安装路径包含链接；请保留本机数据并使用原安装目录重试。","Installation paths contain links. Keep local data and retry in the original ordinary directory."},
@@ -30,6 +35,7 @@ static class DesktopLocale {
 {"所选电脑或项目已改变，请刷新后重新选择。","The selected computer or project changed. Refresh and select it again."},
 {"请至少选择一台允许的电脑和一个本机项目。","Choose at least one allowed computer and one local project."},
 {"电脑协作配置与现有 Codex 配置冲突。请保留现有配置，在 Codex 设置中检查同名连接后重试。","Computer collaboration conflicts with existing Codex settings. Keep the existing settings, check for a connection with the same name in Codex, and try again."},
+{"电脑协作连接仍指向另一个安装目录。已保留 Codex 配置和配对；确认是本产品的旧连接后，关闭指挥并保存，再重新开启并保存。","The collaboration connection still points to another installation. Codex settings and pairing were kept. If this is this app's old connection, turn off control and save, then turn it on and save again."},
 {"电脑协作已就绪。请在 Codex 中重新加载连接。","Computer collaboration is ready. Reload connections in Codex."},
 {"电脑协作设置正在保存，请稍后重试。","Computer collaboration settings are being saved. Try again shortly."},
 {"电脑协作注册未完成。请在连接器设置中检查错误后重试。","Computer collaboration registration did not finish. Check the error in connector settings and try again."},

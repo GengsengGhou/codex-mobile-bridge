@@ -239,7 +239,8 @@ export async function restoreConnectorLogin({ root = defaultRoot, ensureBridge, 
         if (!state || typeof state !== 'object' || Array.isArray(state)) state = {};
       }
       const age = now() - Date.parse(state.updatedAt);
-      if (monitor && state.hubOrigin === config.hubOrigin && state.deviceId === config.deviceId && Number.isFinite(age) && age >= 0 && age < 6000 && state.state !== 'stopped') {
+      const currentBinding = monitor ? await savedConnector(root) : config;
+      if (monitor && state.hubOrigin === currentBinding.hubOrigin && state.deviceId === currentBinding.deviceId && Number.isFinite(age) && age >= 0 && age < 6000 && state.state !== 'stopped') {
         await sleep(10000); continue;
       }
       if (!await mayRun(root)) return { submitted: false, paused: true };

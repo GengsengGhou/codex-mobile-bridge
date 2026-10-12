@@ -1,6 +1,6 @@
 import TOML from '@iarna/toml';
 import { readFile, mkdir, open, lstat, rm, access } from 'node:fs/promises';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
@@ -12,6 +12,16 @@ export const collaborationServerName = 'codex_mobile_computer_collaboration';
 const hash = data => createHash('sha256').update(data).digest('hex');
 const conflict = () => fail('MCP_REGISTRATION_CONFLICT', 409, '电脑协作配置与现有 Codex 配置冲突。请保留现有配置，在 Codex 设置中检查同名连接后重试。');
 const recoveryRequired = () => fail('MCP_REGISTRATION_RECOVERY_REQUIRED', 409, '电脑协作配置的所有权记录不完整或已改变。已保留 Codex 配置和本机数据，请先核对后重试。');
+function validToolSettings(tools) {
+  const table = value => !!value && Object.getPrototypeOf(value) === Object.prototype;
+  if (!table(tools)) return false;
+  return Object.entries(tools).every(([name, settings]) => name.length > 0 && table(settings) && Object.entries(settings).every(([key, value]) => key === 'approval_mode' && ['auto', 'prompt', 'writes', 'approve'].includes(value) || key === 'output_token_limit' && Number.isSafeInteger(value) && value > 0));
+}
+function sameOwnedCoreWithTools(current, ledgerEntry) {
+  if (!current || !Object.hasOwn(current, 'tools') || Object.hasOwn(ledgerEntry, 'tools') || !validToolSettings(current.tools)) return false;
+  const core = { ...current }; delete core.tools;
+  return isDeepStrictEqual(core, ledgerEntry);
+}
 function withoutRegistration(parsed) {
   const value = structuredClone(parsed);
   if (value.mcp_servers) { delete value.mcp_servers[collaborationServerName]; if (!Object.keys(value.mcp_servers).length) delete value.mcp_servers; }
@@ -109,11 +119,27 @@ async function editRegistration({ root, enabled, codexHome = process.env.CODEX_H
     try { const value = TOML.parse(ledger.block); ledgerEntry = value.mcp_servers?.[collaborationServerName]; if (Object.keys(withoutRegistration(value)).length) recoveryRequired(); } catch { recoveryRequired(); }
     if (!ledgerEntry || !isDeepStrictEqual(ledgerEntry, ledger.entry)) recoveryRequired();
   }
-  const owned = !!ledger && !!current && isDeepStrictEqual(current, ledgerEntry);
+  // Codex adds per-tool preferences independently of the launch registration.
+  // Accept only that bounded subtree on a verified, otherwise unchanged entry;
+  // never import these preferences into the ownership ledger or rewrite them.
+  const ownedTools = !!ledger && sameOwnedCoreWithTools(current, ledgerEntry);
+  const owned = !!ledger && !!current && (isDeepStrictEqual(current, ledgerEntry) || ownedTools);
   if (current && !owned) conflict();
   if (ledger && !current) { await rm(ledgerPath, { force: true }); ledger = null; }
-  if (enabled && owned) return { status: 'registered', message: '电脑协作已就绪。请在 Codex 中重新加载连接。' };
+  if (enabled && owned) {
+    // A copied ledger can prove the unchanged entry yet still launch another
+    // installation's pairing files. Never report this root as ready or rewrite
+    // that entry automatically; explicit disable/enable uses verified ownership.
+    const script = ledgerEntry.args?.[0], expected = resolve(root, 'scripts/collaboration-mcp.mjs');
+    const comparable = value => process.platform === 'win32' ? value.toLowerCase() : value;
+    if (!Array.isArray(ledgerEntry.args) || ledgerEntry.args.length !== 1 || typeof script !== 'string' || !isAbsolute(script) || comparable(resolve(script)) !== comparable(expected)) fail('MCP_REGISTRATION_ROOT_MISMATCH', 409, ownedTools ? '电脑协作连接仍指向另一个安装目录。Codex 配置、工具设置和配对已完整保留，请先核对安装路径与工具限制后重试。' : '电脑协作连接仍指向另一个安装目录。已保留 Codex 配置和配对；确认是本产品的旧连接后，关闭指挥并保存，再重新开启并保存。');
+    return { status: 'registered', message: '电脑协作已就绪。请在 Codex 中重新加载连接。' };
+  }
   if (!enabled && !current && !ledger) return { status: 'disabled' };
+  // Removing the entry would also erase the user's tool restrictions. The
+  // caller has already disabled local authorization, so retain both config and
+  // ownership evidence for a later explicit enable without resetting limits.
+  if (!enabled && ownedTools) return { status: 'disabled', configurationPreserved: true, ownedRegistrationRemoved: false, message: '电脑协作已关闭。Codex 中的工具设置已完整保留，重新开启不会重置工具限制。' };
   let after, block, entry;
   if (enabled) {
     nodePath ||= resolve(root, 'runtime/node.exe'); try { await access(nodePath); } catch { nodePath = process.execPath; }

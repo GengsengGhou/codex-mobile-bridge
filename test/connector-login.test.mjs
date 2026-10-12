@@ -112,6 +112,20 @@ test('persistent login recovery restores a bridge that exits after connector lau
   assert.equal(starts, 1);
 });
 
+test('a surviving watcher compares heartbeat with the new saved pairing rather than its startup identity',async t=>{
+  for(const heartbeat of ['new','old'])await t.test(heartbeat+' identity heartbeat',async child=>{
+    const root=await fixture(child),controller=new AbortController();let launches=0,waits=0;
+    const next={...config,hubOrigin:'https://new-hub.invalid',deviceId:'22222222-2222-4222-8222-222222222222',deviceToken:'n'.repeat(43)};
+    const heartbeatPath=resolve(root,'.local/hub-connector-state.json');
+    const publish=current=>writeFile(heartbeatPath,JSON.stringify({hubOrigin:current.hubOrigin,deviceId:current.deviceId,state:'online',updatedAt:new Date().toISOString()}));
+    await publish(config);
+    await restoreConnectorLogin({root,monitor:true,signal:controller.signal,probe:async()=>({connected:true}),output:{log(){}},launch:async()=>{launches++;return{pid:123};},sleep:async()=>{if(++waits===1){await writeFile(resolve(root,'.local/hub-connector.json'),JSON.stringify(next));await publish(heartbeat==='new'?next:config);}else controller.abort();}});
+    assert.equal(launches,heartbeat==='new'?0:1);
+    assert.deepEqual(JSON.parse(await readFile(resolve(root,'.local/hub-connector.json'),'utf8')),next);
+    assert.deepEqual(JSON.parse(await readFile(resolve(root,'.local/runtime.json'),'utf8')),runtime);
+  });
+});
+
 test('persistent login recovery treats malformed heartbeat files as missing without altering saved configuration', async t => {
   for (const [label, content] of [['truncated', '{"state":'], ['zero-filled', Buffer.alloc(121)], ['empty', ''], ['null', 'null']]) {
     await t.test(label, async child => {

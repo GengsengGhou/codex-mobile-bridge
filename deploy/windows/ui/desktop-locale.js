@@ -1,4 +1,9 @@
 window.desktopTranslations = {
+  "电脑协作连接仍指向另一个安装目录。Codex 配置、工具设置和配对已完整保留，请先核对安装路径与工具限制后重试。": "The collaboration connection still points to another installation. Codex settings, tool preferences, and pairing were preserved. Check the installation path and tool restrictions before retrying.",
+  "电脑协作已关闭。Codex 中的工具设置已完整保留，重新开启不会重置工具限制。": "Computer collaboration is disabled. Codex tool settings were preserved; turning control back on will keep these restrictions.",
+  "电脑协作已关闭。Codex 中的工具设置已完整保留。卸载完成后请在 Codex 设置中检查该连接；如仍指向已卸载应用，请手动移除。": "Computer collaboration is disabled. Codex tool settings were preserved. After uninstall, check this connection in Codex settings and remove it manually if it still points to the removed app.",
+  "配对信息来自 {source}，与当前选择的服务器 {target} 不一致。请在目标服务器重新生成配对信息。": "This pairing information comes from {source}, but the selected server is {target}. Generate new pairing information on the selected server.",
+  "电脑协作连接仍指向另一个安装目录。已保留 Codex 配置和配对；确认是本产品的旧连接后，关闭指挥并保存，再重新开启并保存。": "The collaboration connection still points to another installation. Codex settings and pairing were kept. If this is this app's old connection, turn off control and save, then turn it on and save again.",
   "本机项目列表暂时无法读取，尚未保存授权。已保留原设置；请打开 Codex，刷新电脑协作设置后重试。": "Local projects could not be loaded, so authorization was not saved. Previous settings were kept. Open Codex, refresh collaboration settings, and try again.",
   "配对已改变，旧电脑协作授权已失效。请刷新电脑协作设置，重新选择电脑和项目并保存；目标电脑也需授权新的设备身份。": "Pairing changed and the previous collaboration authorization is no longer valid. Refresh settings, choose computers and projects again, and save. Target computers must also authorize the new device identity.",
   "设备已配对并安全保存，但旧电脑协作设置未能重置。请勿重复使用此配对信息；刷新电脑协作设置，重新选择授权并保存。": "Pairing was saved securely, but the old collaboration settings could not be reset. Do not reuse the consumed pairing information. Refresh collaboration settings, choose authorization again, and save.",

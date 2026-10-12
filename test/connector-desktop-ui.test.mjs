@@ -84,6 +84,38 @@ test('validated full JSON import fills visible fields without automatic enrollme
   assert.equal(request.action,'paste-information');ui.answer(request,{origin:'https://import.example',name:'Imported PC',code:'j'.repeat(43)});await tick();
   assert.equal(ui.$('server').value,'https://import.example');assert.equal(ui.$('deviceName').value,'Imported PC');assert.equal(ui.$('pairingCode').value,'j'.repeat(43));assert.equal(ui.calls.some(call=>call.action==='pair'),false);
 });
+
+test('full information cannot replace an explicitly selected or opened Hub in either language',async t=>{
+  for(const language of ['zh-CN','en'])for(const selectedBy of ['input','open-web'])await t.test(language+' '+selectedBy,async child=>{
+    const ui=mount(child,{language});await tick();ui.send({type:'status',status:online});ui.$('changeServer').click();
+    if(selectedBy==='input')ui.input('server','new.example/');
+    else {ui.$('server').value='https://new.example';ui.$('openSetup').click();ui.answer(ui.calls.at(-1),{opened:true});await tick();}
+    ui.input('deviceName','My renamed PC');ui.input('pairingCode','b'.repeat(43));ui.$('pasteInformation').click();
+    ui.answer(ui.calls.at(-1),{origin:'https://old.example',name:'Old ticket name',code:'a'.repeat(43)});await tick();
+    assert.equal(ui.$('server').value,selectedBy==='input'?'new.example/':'https://new.example');assert.equal(ui.$('deviceName').value,'My renamed PC');assert.equal(ui.$('pairingCode').value,'');
+    assert.match(ui.$('feedback').textContent,/https:\/\/old\.example/);assert.match(ui.$('feedback').textContent,/https:\/\/new\.example/);
+    assert.match(ui.$('feedback').textContent,language==='en'?/Generate new pairing information/:/重新生成配对信息/);
+    const switched=language==='en'?'zh-CN':'en';ui.$('language').value=switched;ui.$('language').dispatchEvent(new ui.window.Event('change'));ui.answer(ui.calls.at(-1),{language:switched});await tick();
+    assert.match(ui.$('feedback').textContent,switched==='en'?/Generate new pairing information/:/重新生成配对信息/);
+    ui.$('pairingForm').dispatchEvent(new ui.window.Event('submit',{bubbles:true,cancelable:true}));assert.equal(ui.calls.some(call=>call.action==='pair'),false);
+  });
+});
+
+test('matching full information permits name edits and later server edits invalidate its imported code',async t=>{
+  const ui=mount(t);await tick();ui.send({type:'status',status:online});ui.$('changeServer').click();ui.input('server','new.example/');
+  ui.$('pasteInformation').click();ui.answer(ui.calls.at(-1),{origin:'https://new.example',name:'Ticket PC',code:'b'.repeat(43)});await tick();
+  ui.input('deviceName','Manually renamed PC');ui.send({type:'status',status:online});assert.equal(ui.$('server').value,'https://new.example');assert.equal(ui.$('pairingCode').value,'b'.repeat(43));
+  ui.$('pairingForm').dispatchEvent(new ui.window.Event('submit',{bubbles:true,cancelable:true}));const request=ui.calls.at(-1);assert.equal(request.action,'pair');assert.equal(request.payload.origin,'https://new.example');assert.equal(request.payload.name,'Manually renamed PC');
+  ui.answer(request,{cancelled:true});await tick();ui.input('server','third.example');assert.equal(ui.$('pairingCode').value,'');
+});
+
+test('target intent belongs to the current switch flow and cancelled imports cannot alter a later flow',async t=>{
+  const ui=mount(t);await tick();ui.send({type:'status',status:online});ui.$('changeServer').click();ui.input('server','new.example');
+  ui.$('pasteInformation').click();const oldRequest=ui.calls.at(-1);ui.$('cancelPairing').click();ui.$('changeServer').click();
+  ui.answer(oldRequest,{origin:'https://old.example',name:'Late old ticket',code:'a'.repeat(43)});await tick();assert.equal(ui.$('server').value,'new.example');assert.notEqual(ui.$('deviceName').value,'Late old ticket');
+  ui.$('pasteInformation').click();ui.answer(ui.calls.at(-1),{origin:'https://third.example',name:'New flow ticket',code:'c'.repeat(43)});await tick();
+  assert.equal(ui.$('server').value,'https://third.example');assert.equal(ui.$('deviceName').value,'New flow ticket');assert.equal(ui.$('pairingCode').value,'c'.repeat(43));assert.equal(ui.calls.some(call=>call.action==='pair'),false);
+});
 test('partial enrollment retry remains connect-only until explicit recovery succeeds',async t=>{
   const ui=mount(t);await tick();ui.send({type:'status',status:{...online,hubConnected:false,bridgeConnected:false},warning:'Pending background registration'});
   ui.$('retryButton').click();assert.equal(ui.calls.at(-1).action,'connect');ui.answer(ui.calls.at(-1),'Try again',false);await tick();assert.equal(ui.$('retryButton').hidden,false);
