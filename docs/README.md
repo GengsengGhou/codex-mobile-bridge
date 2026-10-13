@@ -1,31 +1,27 @@
 # 文档索引
 
-## 用户
+## 开始使用
 
-- [快速开始](quick-start.md)：下载、校验、邀请注册、Windows 配对和常见问题。
-- [临时 HTTPS 手机访问](temporary-mobile-access.md)：源码版通过短期隧道访问单台电脑。
-- [Windows 安装说明](windows-installer.md)：安装器、升级、卸载和备用 ZIP。
-- [电脑协作](computer-collaboration.md)：同一 Hub 账号下授权另一台电脑上的 Codex 任务。
-- [配对网络诊断](network-diagnostics.md)：在 Windows 上比较连接器网络请求与系统 HTTPS 请求。
-- [语言设置](languages.md)、[模型设置](model-settings.md)、[数学公式显示](math-rendering.md)、[Mermaid 图表](mermaid-rendering.md)：使用细节。
-- [验收记录](verification.md)：按日期记录已执行的测试和未覆盖范围。
+- [快速开始](quick-start.md)：下载校验、账号邀请、Windows 配对与常见问题。
+- [Windows 安装说明](windows-installer.md)：安装、升级、修复、重置与卸载。
+- [电脑协作](computer-collaboration.md)：跨电脑的设备与项目授权、操作范围和恢复方式。
+- [临时 HTTPS 手机访问](temporary-mobile-access.md)：源码版通过临时隧道访问一台电脑。
+- [功能与权限说明](thread-context-permissions.md)：会话上下文、下一轮权限与待处理交互。
+- [模型设置](model-settings.md)、[语言设置](languages.md)、[公式显示](math-rendering.md)、[Mermaid 图表](mermaid-rendering.md)：界面和会话功能细节。
 
-## 服务管理员
+## 部署与维护
 
-- [VPS Hub 结构与权限边界](vps-device-hub.md)：账号、设备配对、连接结构及信任边界。
-- [原生 VPS 部署](native-vps-deployment.md)：Ubuntu / Debian 首次安装、升级、备份和排错。
-- [Docker Compose 部署](compose-deployment.md)：适用于已配置 Docker 的 VPS。
-- [Hub 资源与保留策略](hub-resource-limits.md)：运行限制、数据保留和发布激活说明。
+- [Hub 结构与权限边界](vps-device-hub.md)：账号、设备、连接结构和服务信任边界。
+- [Ubuntu / Debian VPS 部署](native-vps-deployment.md)：安装、HTTPS、管理员、备份、升级与排错。
+- [Docker Compose 部署](compose-deployment.md)：在已有 Docker 环境部署 Hub。
+- [Hub 资源与保留策略](hub-resource-limits.md)：默认限制、数据保留和运行约束。
+- [配对网络诊断](network-diagnostics.md)：在 Windows 上比较连接器与系统 HTTPS 请求。
+- [上传存储](upload-storage.md)：工作区附件位置、迁移与文件访问边界。
 
-## 功能与兼容说明
+## 开发维护
 
-- [远程使用条件](remote-readiness.md)：电脑状态、连接恢复和各项能力的验证状态。
-- [会话上下文与权限](thread-context-permissions.md)：上下文展示及下一轮权限覆盖。
-- [历史与会话同步](history-sync.md)、[侧栏排序](desktop-sidebar-order.md)：会话列表与历史行为。
-- [上传存储](upload-storage.md)：按工作目录配置附件位置、迁移与文件访问边界。
-- [Hub 前端](hub-frontend.md)：服务页面结构。
-- [Codex App Server 协议记录](protocol-notes.md)：已安装 CLI 的只读协议探查及其局限。
-
-## 开发者
-
-源码运行和项目命令见仓库根目录 [README](../README.md#开发者)。协议与边界信息见[协议记录](protocol-notes.md)。本仓库不公开机器本地 `.local/`、`work/`、`dist/` 或 `docs/verification/` 中的生成文件和运行证据。
+- [开发验证指南](verification.md)：从源码运行和执行当前检查。
+- [协议与兼容边界](protocol-notes.md)：Codex 桌面接口依赖、适配边界和验证方法。
+- [会话与历史同步](history-sync.md)、[桌面侧栏排序](desktop-sidebar-order.md)：同步和排序行为。
+- [Hub 页面结构](hub-frontend.md)：登录、设备入口与前端隔离约束。
+- 项目简介见仓库根目录 [README](../README.md)。

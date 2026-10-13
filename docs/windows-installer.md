@@ -1,193 +1,42 @@
-# Windows graphical connector
+# Windows 安装说明
 
-中文下载与首次配对步骤见 [简易配置教程](quick-start.md#配对-windows-电脑)。2026-10-12 再次重新打包、包含明确重置入口的 v2.0.0 安装包和 SHA-256 清单可从[最新 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest)下载，无需 GitHub 令牌或桥接账号。旧 v2.0.0 用户需手动重新下载并选择同版本“修复安装”；同版本检查不会自动提示更新。旧 v2.0.1 用户先卸载并保留 `.local` 数据，再安装新的 v2.0.0 到原目录，安装器不会直接降级覆盖。普通修复或重装后重新打开 Codex 或重新加载电脑协作连接，保留工具审批、模型提供方和 API 配置；明确重置会清除本安装自有协作连接的工具偏好，范围见下文。下面记录安装器细节与构建验证。
+下载、校验、账号登录和首次配对步骤见[快速开始](quick-start.md)。从[最新 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest)下载 Windows x64 图形安装器和同一发行版的 `SHA256SUMS`，安装前核对哈希。安装器内置 Node.js 和连接器依赖，无需手动安装 Node.js。Windows 需要 WebView2 Runtime；缺少时按安装器提示安装微软运行时。安装程序当前未签名，Windows 可能显示发布者或信誉提示。
 
-Distribute `dist/CodexMobileConnector-Setup.exe` with its published SHA-256 checksum.
-The Windows x64 installer embeds the application, its `ws` dependency, Node.js,
-and the managed WebView2 SDK assemblies and x64 native loader. The WebView2 SDK
-is pinned by version and SHA-256 in `deploy/windows/webview2-sdk.json`; its license
-is included. Microsoft Edge WebView2 Runtime is supplied by Windows/Edge. When
-it is absent, a native recovery window opens Microsoft's official installer
-download. Setup and cold uninstall work without WebView2 or SDK assemblies.
-The desktop shell uses .NET Framework 4.8 and per-monitor DPI V2.
-The release build downloads Node.js 22 from the official distribution and verifies
-its published SHA-256 before embedding it. No manual Node installation is needed.
-The EXE is unsigned; Windows may show publisher reputation information.
+## 安装与配对
 
-Installation uses `%LOCALAPPDATA%\CodexMobileConnector` and current-user Start menu
-and desktop shortcuts named `Codex Mobile Bridge`. Search Start for `Codex Mobile Bridge`.
-Setup and upgrades create both shortcuts; ordinary app launches repair only the Start menu
-entry, so deleting the desktop shortcut is respected until the next install or upgrade.
-Owned legacy `Codex Mobile Connector` and `Codex 手机桥接` shortcuts are migrated, and uninstall removes only
-shortcuts targeting this installation with its working directory and no arguments.
-The executable has an application filename and English product metadata; shortcuts and
-the running process share the stable AppUserModelID `CodexMobileBridge.Connector`.
-A successful first pairing enables current-user login recovery unless the user
-previously chose to keep it off. Existing saved preferences or verifiable owned startup
-entries preserve the automatic choice; an old v0.1.0 uninstall removes startup
-entries, so check and select login recovery again after reinstalling.
-It does not request administrator rights.
-The installer and app support Chinese and English. Select the language before
-installation, or change it afterward in Settings. See [language settings](languages.md).
-Enter the server address (a plain hostname
-is normalized to HTTPS) and open login in the system browser. Log in or register
-with an invitation there, generate a one-time code, and enter it with this
-computer's name in the desktop window. Server, name and masked 43-character code
-fields are always visible during onboarding. A validated full JSON ticket can
-also be imported from the clipboard into those fields; importing never pairs
-automatically. No personal server domain is prefilled. Pairing can finish before
-Codex is open. Pairing records one-time bootstrap authorization and the selected
-login preference in private local state before attempting OS registration. A failed
-registration can be retried with “连接” without using the ticket again. Successful
-first pairing enables login recovery by default unless the user had already selected
-a preference, then launches the independent persistent watcher for this session.
-The window can be hidden to the tray while this connection continues.
-The watcher waits for Codex and an existing ordinary local conversation, then
-saves the verified bridge identity, clears pending bootstrap authorization, and
-continues bridge/connector recovery. It never creates or sends a conversation
-to bootstrap the connection. The pairing ticket stays in process memory and is never
-logged; pairing codes are masked and passed through stdin;
-device tokens are saved with a current-user-only file ACL.
+- 安装到当前 Windows 用户，默认目录为 `%LOCALAPPDATA%\CodexMobileConnector`，不需要管理员权限。安装器创建开始菜单和桌面快捷方式。
+- 打开连接器，填写 Hub 的 HTTPS 地址并在系统浏览器登录。注册新账号需使用管理员提供的一次性邀请；电脑绑定使用登录后新生成的一次性配对码。
+- 配对码会在电脑端短暂保存在进程内并遮蔽显示；设备令牌写入当前用户私有目录，不会写入日志。账号密码仅在浏览器登录页输入。
+- 如果替换配对失败，旧配对与连接会保留；只有新配对成功后才切换到新身份。旧设备记录需在原 Hub 的设备管理页面手动撤销。
 
-The companion includes separate server and verified local Codex availability,
-connect/disconnect/retry, Open Web, Open Codex, settings and diagnostics,
-explicit replacement pairing, and uninstall. An expired or rejected replacement
-code preserves the previous credentials and connection. A verified replacement
-stops only this installation's old connector. Revoke the old device in its original
-Hub afterward. Uninstall removes owned app/startup entries and preserves `.local`
-pairing and runtime data. Reinstall can reuse that preserved data. Running the
-newer installer over a verified older installation shows Upgrade and replaces the
-application in place. Setup checks `installed.json` root/schema and the installed
-EXE version before stopping only this installation's GUI, watcher, connector and
-bridge processes. It keeps `.local`, automatic-login preference and explicit
-disconnect intent. A manually started connection resumes even when automatic login
-is off. A failed upgrade restores the previous application files and attempts to
-resume the previous connection. An interrupted upgrade keeps a transaction journal
-and backup beside the installation; rerunning Setup restores that transaction first.
-If restoration itself fails, Setup reports the retained backup path for recovery.
-Same-version Setup now shows Repair and replaces application files while preserving `.local`; older Setup versions and directories whose
-ownership cannot be verified are refused. One owner per
-installation/user handles repeated app launches; repeated Setup launches for
-the same destination also wake one installer. Independent installations retain
-their own state and identity.
+## 托盘与登录启动
 
-The installed interface is local HTML/CSS/JavaScript hosted by WebView2. Native
-C# owns setup, tray, lifecycle and a validated command bridge. Only bundled local
-assets can load in the embedded browser. External navigation, new windows,
-downloads, permissions and host objects are blocked; password autosave and form
-autofill are disabled. There is no desktop control
-HTTP server. Passive polling uses its own read guard and action epoch, never
-disables inputs or replaces drafts, and defers during mutations/confirmation.
-Initialization blocks mutations until intent is read while preserving editable
-inputs and browser handoff. Uninstall is gated centrally during pending mutations.
+成功配对后默认开启当前用户的 Windows 登录后自动连接；配对前明确关闭时会保留关闭状态。窗口 X 只隐藏到托盘，连接继续。托盘“断开连接”会持久暂停，需明确点“连接”恢复。托盘“退出”停止本安装的监测和连接器，不会停止 Codex 或其任务。
 
-## 检查更新与原位升级
+登录后自动连接只启动连接器，不会自动登录 Windows 或启动 Codex。使用手机时仍要求 Windows 已登录、电脑在线、Codex 桌面和连接器运行。关闭自动连接只影响后续 Windows 登录；主动断开仍需用户明确重新连接。
 
-“设置”提供“自动检查更新”“检查更新”和“下载并升级”。自动检查默认开启，在启动与托盘运行期间按节流策略检查 GitHub 最新稳定版：正常检查间隔为 24 小时，检查失败后的自动重试间隔为 1 小时。手动检查可用于立即重试，即使自动检查已关闭；网络失败不会阻止当前连接器工作。检查版本不会改变配对、连接意图或登录启动设置，也不会自动执行升级。
+## 更新与修复
 
-发现更高版本后，点击“下载并升级”。程序从官方项目 Release 下载 EXE 与校验清单，校验文件后打开原位安装界面，由你确认升级。不要在有待确认操作时开始升级；升级过程保留本机配对、运行配置、语言、登录启动偏好和主动断开状态。下载或校验失败不会启动安装器；仍可从最新 Release 手动下载并校验 EXE。
+连接器设置支持自动检查更新、手动检查和“下载并升级”。检查不会自动安装；发现较新版本后，下载经过 SHA-256 校验，再由用户确认打开安装器。也可从 Release 页面手动下载并核对哈希。
 
-此次替换发行复用 v2.0.0 版本号：旧 v2.0.0 不会收到同版本更新提示，旧 v2.0.1 不会被自动降级。两者都需手动下载本次最新文件；旧 v2.0.0 可修复，旧 v2.0.1 需先卸载并保留数据后重装。
+同版本安装器选择“修复安装 / Repair”可恢复可验证归属的程序文件、内置运行时和 SDK 文件，同时保留本机配对、设置、权限、回执和暂停状态。普通修复不会清理 Codex 配置、模型提供方或 API 密钥。更换服务器或设备身份改变时，电脑协作授权仍需重新确认。修复或升级会停止本安装的 MCP 进程；完成后重新打开 Codex 或重新加载协作连接。
 
-## 托盘、退出与登录启动
-
-首次成功配对默认开启 Windows 登录后自动连接，并立即在托盘等待 Codex。若用户在配对前已明确关闭设置，则沿用关闭状态。
-
-窗口 X 只隐藏窗口，托盘图标仍在，连接不会中断。双击图标或点击托盘“显示窗口”恢复窗口；普通打开窗口不会恢复连接。托盘“连接”明确恢复保存的配对；“断开连接”暂停连接并跨 Windows 登录持久保留，只有再次明确“连接”才会恢复。托盘“退出”停止本安装拥有的恢复监测和连接器，保留配对、配置和数据；不停止独立桥接、Codex 或其任务，也不清理其他安装的进程。本次 Windows 登录内暂停阻止后台重连；下次登录按自动连接设置运行。
-
-登录启动项属于当前用户，不提升权限。首次成功配对默认登记登录后自动连接；配对前明确关闭时不会开启。下次登录以隐藏托盘模式启动并恢复监测。关闭该设置只取消之后的登录自动启动，本次连接仍保持。主动退出不会修改这个设置；若仍为开启，下次登录 Windows 会重新恢复并等待 Codex。跨登录的主动断开优先阻止恢复，即使仍开启自动启动，也需用户再次明确连接。已有新版偏好或可验证本安装拥有的旧登录任务 / 启动项时，保留自动选择并迁移到应用托盘入口，不替换外部程序的入口。旧 v0.1.0 的保留数据卸载会移除其登录入口且未保存独立自动偏好，重装后需重新核对、按需要勾选自动连接开关；不能从身份或配对标记推断此选择。它不支持登录前控制、自动开启 Codex 或睡眠唤醒。
-
-## Building and verification
-
-On Windows, `npm run release:package` produces the tar archive, Windows ZIP, EXE,
-and `dist/SHA256SUMS`. `deploy/build-windows-installer.ps1` can also build the EXE
-alone using the installed .NET Framework compiler. Its `-RuntimeExecutable`
-option can reuse an official runtime cache after its archive and extracted files
-have been checksum-verified; release packaging otherwise downloads and verifies
-the official runtime.
-
-`node --test test/connector-gui.test.mjs` checks deferred bootstrap, registration
-ordering, failed bootstrap, explicit replacement, preservation after rejection,
-and token-free status with isolated fixture Hub responses. Desktop DOM tests also
-cover focus/selection/drafts, optional import, duplicates and partial recovery. Run
-`node deploy/verify-windows-installer.mjs` after building to execute the actual EXE
-in a temporary installation, run its bundled Node, capture its actual WebView2
-surface, check same-version repair, and uninstall while preserving fixture data.
-`node deploy/verify-windows-upgrade.mjs <new-setup.exe> <old-setup.exe> [another-old-setup.exe]`
-uses isolated roots to check real older package upgrades, preserved data, persistent
-disconnect, partial-copy rollback, interrupted transaction recovery, linked `.local`
-rejection and an active manually connected v0.1.6 watcher. The TLS fixture uses a
-private test CA: watcher and connector process restart is checked automatically;
-WSS reconnection is checked with that CA injected into a direct connector process.
-`node deploy/verify-pending-watcher.mjs` additionally launches the actual WMI
-watcher in an isolated app root with an empty Codex home, checks that it survives
-without a GUI, prevents duplicate watchers, and is stopped by owned uninstall.
-The isolated check does not register real login entries. Deterministic login
-tests cover later bootstrap readiness, marker clearing, and retention of saved
-scope. An older installation with missing runtime and no explicit first-pairing
-marker cannot silently choose a new caller. Corrupt or mismatched saved runtime
-is never replaced by deferred bootstrap.
-
-`node deploy/verify-connector-tray.mjs` runs the final EXE in an isolated installation
-with a local TLS/WSS fixture. It checks owned watcher/connector shutdown, preserved
-unrelated Node and independent bridge processes, same-logon pause, actual WinForms
-X-hide, tray state, second-instance behavior, and explicit Quit. It exercises the
-actual form methods; native mouse clicks on the Windows tray and real login-entry
-migration are not claimed. Isolated QA does not modify live pairing or startup entries.
-
-`node deploy/windows/verify-webview-ui.mjs <setup.exe> <output-directory>` drives
-the installed WebView2 surface with isolated CDP input. It checks slow polling,
-initialization guards, browser handoff, Enter/duplicates, failures/retries,
-replacement drafts, assets, responsive bounds and native DPI/browser pixel ratio.
-It records browser-engine input separately from physical Windows keyboard input.
-Simulated device scales do not change or prove OS monitor DPI transitions.
-`node deploy/windows/verify-bootstrap.mjs <setup.exe> <output-directory>` checks
-actual setup/app single-instance wake, missing-runtime/SDK recovery, and cold
-uninstall cancellation/removal while preserving data. Its injected fixture
-confirmation does not claim native clicks. `DrawToBitmap` is used only for native
-recovery dialogs; the main interface uses WebView2 captures. The filled tray icon
-can be regenerated with `deploy/windows/generate-icons.mjs --brand-only` and a
-maintainer-only resvg installation. Its ICO includes 16/20/24/32/48/64/256px images.
-
-`powershell.exe -NoProfile -ExecutionPolicy Bypass -File deploy/verify-windows-shortcuts.ps1`
-checks the built EXE metadata and real COM shortcut lifecycle in temporary folders: identity,
-owned migration, install/upgrade creation, launch deletion preference, conflict preservation
-and owned uninstall cleanup. It does not modify live shortcuts or prove Windows search indexing.
-
-QA overrides do not add login entries or Start menu shortcuts. Isolated debug and
-capture runs suppress tray icons, except explicit lifecycle/tray acceptance.
-Evidence is saved under `work` or `docs/verification`; neither enters release
-bundles. Physical keyboard, native tray clicks and real monitor transitions require
-an unlocked desktop and are recorded separately from deterministic fixtures.
-
-## Repair without uninstalling
-
-Run a setup package with repair support and choose **修复安装 / Repair** for the same installed version. A version bump is unnecessary. This replaces owned program files, the bundled Node runtime and SDK components while keeping `.local` pairing, saved permissions, receipts, login preference, pause state and language. The selected installer language is saved; leaving the selection unchanged preserves the existing language. User Codex/provider/API-key configuration is not edited by repair. Previously published installer bytes cannot acquire this behavior; use the supplied repair-capable package. After repair, fully reopen Codex or reload its computer-collaboration connection because replacement intentionally stops the old MCP stdio process. Existing pairing and grants remain; re-pair or reauthorize only if credentials were revoked or device identity changed.
-
-Missing/corrupt EXE, runtime and GUI files can be repaired when ownership and installed version remain verifiable. New markers record product/version. Legacy markers also require the bundled package manifest, lockfile and product source when the old EXE is unreadable. A valid foreign EXE, unknown/linked directory, corrupt ownership or connection-control state is refused with an explanation. Keep `.local` and resolve the indicated integrity issue; repair cannot infer arbitrary deleted ownership evidence.
-
-Repair uses the same backup/journal transaction as upgrades. Partial replacement failure restores prior files and data. When an active damaged installation cannot safely restart its old components, its active intent stays in the journal for the next forward repair. Rerun the same package after an interruption: recovery restores the transaction and then replaces application bytes even when versions match. A successful retry removes the stale install-error record. Lower-version installs remain refused and automatic update checks still require a strictly newer version.
-
-`node deploy/verify-windows-repair.mjs <repair-setup.exe> <original-2.0.0-setup.exe> <older-setup.exe>` exercises actual legacy upgrade and current same-version repair, missing/corrupt components, preserved private bytes, copy rollback, interrupted retries and refusal of malformed ownership/control. Roots are isolated under `work/installer-repair` or `CODEX_REPAIR_EVIDENCE_DIRECTORY`; it does not change the live installation or register startup entries.
+若安装归属、目录结构或控制状态无法验证，安装器会停止并说明问题，不猜测或覆盖未知数据。更新失败或中断时按窗口提示用同一安装器重试；不要手动删除 `.local` 或复制设备令牌。
 
 ## 明确重置配对与电脑协作
 
-普通同版本 **修复安装 / Repair** 保留配对、授权和私有数据。只有在连接器 **设置 > 恢复连接 > 重置配对与电脑协作** 中，阅读原生确认窗口并明确确认，才执行下面的有损清理；默认按钮为“取消”。未配对、等待连接或状态读取失败时也能进入该恢复流程。
+重置是独立的有损操作，不等同于修复。连接器中选择 **设置 > 恢复连接 > 重置配对与电脑协作**，阅读原生确认窗口并明确确认；默认操作为取消。
 
-重置断开本安装的连接器与桥接，清除本机配对、桥接身份及电脑协作授权。MCP 清理仅限当前选定的可信 **全局 Codex 配置**：必须能证明该连接启动当前安装的标准 `runtime/node.exe`，并且仅传入本安装的 `scripts/collaboration-mcp.mjs`。该自有连接及其 `tools` 偏好一起清除；未知同名连接、其他安装或启动内容无法确认的连接保留并报告部分失败。不会依据损坏的所有权记录改写另一配置，也不扫描项目级 Codex 覆盖；项目级同名连接需用户另外在 Codex 中核对。
+重置断开本安装的桥接连接，并清除本机配对、桥接身份和电脑协作授权。只移除当前选择的可信全局 Codex 配置中，可证明由本安装标准入口启动的自有协作 MCP 连接及其工具偏好。未知同名连接、其他安装或启动内容无法确认的连接会保留并报告部分失败；项目级 Codex 配置覆盖不会扫描。
 
-项目、会话、模型提供方与 API 配置、其他 MCP 连接、上传/下载、回执、outbox 和现有私有备份保留。不递归删除 `.local`，不停止 Codex 本身或其他安装。重置关闭本安装的自动连接并持久暂停恢复；新配对后请按需要重新核对登录后自动连接设置。
+项目、会话、模型提供方和 API 配置、其他 MCP、上传下载、回执、outbox 与私有备份保留。服务器上的旧设备记录不会自动删除；需要时在原 Hub 账号的设备页面手动撤销。重新配对产生新设备身份后，其他电脑须重新选择该设备并明确保存项目授权；同名不会继承权限。
 
-完成后回到首次配对页，重新生成配对码并明确选择协作权限。不会自动重新配对、连接、授权或派发任务。服务器的旧设备记录没有删除；点击“打开原服务器设备管理”后，在原账号“我的设备”中手动移除。新设备 ID 必须由其他电脑重新选择并授权，同名设备不继承旧权限。
+## 卸载
 
-部分失败时应用明确显示未完成及保留连接提示，保持重置恢复记录，阻止旧身份被连接、配对、保存或后台恢复重新写入。复制诊断信息，核对提示后从同一入口重试，不用普通 Repair 代替重置完成。成功后重新打开 Codex 或重新加载协作连接；清除注册并不证明原有 `Transport closed` 会话已恢复。详细权限与诊断边界见[电脑协作](computer-collaboration.md#明确重置与诊断)。
+在连接器设置或托盘菜单中选择卸载，并确认原生提示。卸载会移除本安装的程序和它拥有的登录启动项，保留 `.local` 配对、运行配置和回执数据；不会自动撤销 Hub 上的设备。需要断开该设备时，请在原 Hub 账号的设备管理页面手动撤销。带工具设置的协作连接、同名外部连接或无法确认归属的配置会保留并提示人工核对。
 
-## 备用 ZIP 终端安装
+## 备用 ZIP
 
-下载 `codex-mobile-connector-windows.zip` 并按 `SHA256SUMS` 校验同名项，在自己的用户目录解压。不要放在 EXE 已有安装目录内，也不要混用两个安装目录的 `.local` 数据。
+Windows ZIP 是需要终端操作的备用安装方式。解压到固定目录，在该目录运行 `deploy/install-connector.cmd`。安装脚本优先使用已有 Node.js 22.16 或更新版本；否则下载官方 Windows x64 Node.js 并校验 SHA-256，将运行时保存在包内 `.local/tools`，不修改系统 PATH。安装目录和 Node 路径不要移动。
 
-打开 Codex 并确保已有普通本机会话，双击解压目录中的 `deploy/install-connector.cmd`。按终端提示填写自己的 HTTPS 入口、从该入口网页生成的 10 分钟一次性配对码和设备名称；没有已配置桥接时，需要明确选择一个现有普通本机会话作为启动身份。桌面离线或身份有歧义时会停止，不消费配对码。
-
-ZIP 安装器优先使用已有 Node.js 22.16+，否则下载官方 Windows x64 运行时并验证 SHA-256，保存到包内 `.local/tools`，不改系统 PATH。包内已有 ws，无需手动下载 npm 运行依赖。安装目录随后不要移动，电脑重新登录 Windows 后再打开 Codex，连接器会恢复；详细恢复条件见 [VPS 方案](vps-device-hub.md#windows-首次安装与再次启动)。
-
-此高级终端流程仍显式登记 legacy 当前用户登录恢复，属于自动模式；它没有 EXE 的托盘窗口。CLI 监测和连接器也遵守同一安装目录的本次登录暂停状态；不会通过旧登录入口绕过图形应用主动退出。
+有关源码构建、自动化检查和生成发行包的命令见[开发验证指南](verification.md)。

@@ -1,15 +1,9 @@
-# Hub Frontend
+# Hub 前端
 
-The hub serves `hub/public/index.html`, `hub.js`, and `hub.css` at its central origin. The root shows login, invitation registration, and an authenticated list of the current account's devices. Pairing and invitation secrets remain in page memory only. Failed network mutations are reconciled with a read; the frontend never repeats a mutation automatically.
+Hub 根页面提供登录、邀请注册和当前账号的设备列表。邀请与配对信息只在页面内存中短暂使用。网络写操作结果不明时，前端读取当前状态确认结果，不自动重发变更。
 
-Each device opens `/devices/:UUID/`. Serve the existing `public/index.html` and its allowed assets under that prefix. Device context helpers are exported by the existing `connection.js` so an active temporary gateway does not need a new asset allowlist. The index and dynamically loaded panel styles use relative asset URLs. Before creating panels or reading browser state, the app authenticates `GET /devices/:UUID/context`, which returns `user.id`, `device.id`, `device.name`, `device.online`, and `mode: "hub"`.
+每台设备使用独立的 `/devices/:UUID/` 页面。进入页面前，前端读取该设备的已认证上下文；账号、设备、草稿、文件预览和回执状态都按当前设备隔离。登出失效会保留未发送草稿、阻止写操作并引导用户重新登录。
 
-`createDeviceContext` wraps explicit injected fetch and storage dependencies. API requests, file previews, uploads, archives, recovery settings, and receipt checks remain under the immutable device prefix. Browser keys are scoped by authenticated account ID and device ID. Standalone access retains the existing keys and API paths. No global fetch or storage implementation is changed.
+Hub 传输状态和本机 Codex 可用状态分别显示。设备离线、等待 Codex、忙碌、暂不支持的路由和超时是不同状态；不能把任一种请求错误都显示成设备离线。
 
-Device pages display the device name and a link back to the central device list. Login expiry preserves drafts, blocks mutations, and directs the user to central login. Offline devices reject new mutations while reads can detect a reconnect. Backend denials before delivery should use `DEVICE_OFFLINE`; uncertain transport outcomes must use a different code so existing receipt recovery remains active.
-
-Device transport reachability and the local Codex connection are separate. Only an explicit `DEVICE_OFFLINE` response or the hub's fresh device context marks the device offline; busy, unsupported-route and timeout responses do not. Fresh successful relay responses, including bodyless conditional 304s, can restore transport reachability. Snapshot cache callbacks never overwrite it, and request sequence fencing ignores late responses older than the latest transport decision. The top indicator and composer receive the same device-state change; the indicator distinguishes computer connected, waiting for Codex, device offline, busy and timeout states. Transport errors retain their diagnostic codes and show readable Chinese messages.
-
-Relevant checks: `test/hub-ui.test.mjs`, `test/device-scope-ui.test.mjs`, and existing UI, upload, file, access, and connection tests. DOM checks do not establish browser visual quality.
-
-Subagents open in a separate GET-only history dialog with private paging, disclosure and reading state. The main conversation, draft, URL, pending questions, snapshot cache and ordinary sidebar stay in place. Confirmed child IDs and explicit delegated metadata remove only child rows from the ordinary sidebar; unnamed root chats are retained. Old child links and unclassified cached rows are read before changing the main selection, and pending identity reads block composer dispatch while keeping its draft editable. Login expiry aborts and clears the viewer. Context defaults show permission, a short working-directory label, Git branch/workspace state and active agents; completed agents, sources and long metadata are folded with counts.
+子智能体内容在独立只读窗口查看，可分页和刷新，不切换主会话，不改变主输入框、草稿或阅读位置。没有稳定子智能体身份的数据会先读取确认，避免把普通会话错误隐藏。

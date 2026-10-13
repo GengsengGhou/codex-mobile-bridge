@@ -10,4 +10,4 @@
 
 会话文本不能改变初始化配置、主题 CSS 或安全等级，不支持 HTML、图标、资源 URL 及流程图的点击、样式指令。URL 字符串也保守地退回源码。图表采用固定字体和主题，SVG 仅允许文本、几何及本地片段引用；脚本、事件、外部资源、`foreignObject` 和动态 CSS 被拒绝。最终结果通过无交互的 SVG 图片显示，不绑定 Mermaid 回调。现有 CSP 的 script/eval/connect/style 规则保持；生成 CSS 通过非渲染的描述载体转为内联声明，Cytoscape 的固定容器样式来自现有本地 CSS。上游插入点变化会使有精确匹配守卫的 vendor 构建失败。
 
-上述功能正式纳入 v1.0.4，此前已在 1.0.3 完成同版本试用。完整资源文件集为 `public/markdown.js`、`public/mermaid.js`、`public/style.css`、`public/i18n-messages.js`、`public/vendor/mermaid/mermaid.mjs`、`public/vendor/mermaid/LICENSE`、`public/vendor/mermaid/manifest.json` 与 `src/static-assets.mjs`。静态白名单在模块初始化时建立，完整文件集替换并核对后需要刷新专用 bridge child 与 Hub 进程；仅刷新浏览器不足以让旧进程识别新资源。本次已完成必要进程刷新，已有网页刷新后可使用。此轮试用站点保留既有远端 package 版本，正式安装包包含完整资源。回退应恢复完整文件集并重新载入相关进程；实际部署记录与未覆盖范围见 [验收记录](verification.md)。
+Mermaid 模块与样式随本地静态资源分发，不从外部 CDN 加载。源码开发可运行 `npm run vendor:mermaid` 更新打包资源；应用会校验资源清单后再加载。修改供应资源后，按[开发验证指南](verification.md)检查发行包和静态文件清单。

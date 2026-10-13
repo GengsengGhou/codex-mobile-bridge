@@ -14,6 +14,16 @@ if (-not (Test-Path -LiteralPath $compiler)) { throw 'Windows .NET Framework com
 $stage = Join-Path $env:TEMP ('codex-exe-build-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
+    # Inspect originals: Copy-Item can dereference a directory link and lose its
+    # reparse-point metadata before the staged-input guard sees it.
+    foreach ($source in @('src','hub','public','scripts','deploy','docs','node_modules/ws','node_modules/@iarna/toml')) {
+        $sourcePath = Join-Path $root $source
+        foreach ($item in @((Get-Item -LiteralPath $sourcePath -Force)) + @(Get-ChildItem -LiteralPath $sourcePath -Recurse -Force)) {
+            $relative = $item.FullName.Substring($root.Length + 1).Replace([IO.Path]::DirectorySeparatorChar,[char]'/')
+            if ($relative -eq 'docs/verification' -or $relative.StartsWith('docs/verification/')) { continue }
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $relative -match '(^|/)(\.local|work|data|mobile-uploads|coverage|\.cache)(/|$)' -or ($item.Name -ne '.env.example' -and $item.Name -match '^\.env(\.|$)') -or $item.Name -match '\.(sqlite(-.*)?|db(-.*)?|pem|key|pfx|p12|log|tmp)$') { throw "Private or local-only installer input rejected: $relative" }
+        }
+    }
     $app = Join-Path $stage 'app'
     New-Item -ItemType Directory -Path $app | Out-Null
     foreach ($item in @('package.json','package-lock.json','README.md','CHANGELOG.md','src','hub','public','scripts','deploy','docs')) { Copy-Item -LiteralPath (Join-Path $root $item) -Destination $app -Recurse }
@@ -22,6 +32,15 @@ try {
     foreach ($item in Get-ChildItem -LiteralPath $app -Recurse -Force) {
         $relative = $item.FullName.Substring($app.Length + 1).Replace([IO.Path]::DirectorySeparatorChar,[char]'/')
         if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $relative -match '(^|/)(\.local|work|data|mobile-uploads|coverage|\.cache)(/|$)' -or ($item.Name -ne '.env.example' -and $item.Name -match '^\.env(\.|$)') -or $item.Name -match '\.(sqlite(-.*)?|db(-.*)?|pem|key|pfx|p12|log|tmp)$') { throw "Private or local-only installer input rejected: $relative" }
+    }
+    # Keep the installer payload aligned with the Hub archive and Windows ZIP.
+    # Validate all inputs before filtering so a developer-only file cannot hide private state.
+    $releaseExcludes = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'release-excludes.json') | ConvertFrom-Json
+    foreach ($item in Get-ChildItem -LiteralPath $app -Recurse -Force -File) {
+        $relative = $item.FullName.Substring($app.Length + 1).Replace([IO.Path]::DirectorySeparatorChar,[char]'/')
+        foreach ($pattern in $releaseExcludes) {
+            if ($relative -like $pattern) { Remove-Item -LiteralPath $item.FullName -Force; break }
+        }
     }
     New-Item -ItemType Directory -Path (Join-Path $app 'node_modules') | Out-Null
     foreach ($dependency in @('ws','@iarna/toml')) {

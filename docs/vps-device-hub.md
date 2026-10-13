@@ -1,6 +1,6 @@
 # VPS 统一入口与设备配对方案
 
-状态：已实现并完成受控部署验收。下文使用 `https://codex.example.com` 作为示例地址，自行部署时替换为自己的域名。
+下文使用 `https://codex.example.com` 作为示例地址，自行部署时替换为自己的域名。
 
 首次使用先读 [简易配置教程](quick-start.md)，新 VPS 按 [原生 Ubuntu / Debian 部署](native-vps-deployment.md) 或 [Docker Compose 部署](compose-deployment.md) 选择一种方案。本文主要解释结构与权限边界。
 
@@ -45,32 +45,22 @@
 
 ## 部署交付
 
-原生 Ubuntu 部署使用 systemd 服务、专用 codexhub 用户、独立 Node.js 运行时及 Caddy；Hub 只监听 `127.0.0.1:4319`，账号与凭据哈希保存在 SQLite。数据目录权限 0700，数据库 0600。操作步骤见 `native-vps-deployment.md`。Docker Compose 方案也已提供且配置验证通过，但没有运行本机容器验收。
+原生 Ubuntu 部署使用 systemd 服务、专用 `codexhub` 用户、独立 Node.js 运行时及 Caddy；Hub 只监听 `127.0.0.1:4319`，账号与凭据哈希保存在 SQLite。数据目录权限为 0700，数据库权限为 0600。操作步骤见[原生 VPS 部署](native-vps-deployment.md)。Docker Compose 方案见[Compose 部署](compose-deployment.md)。
 
 部署向导需要入口域名、首次管理员初始化和持久化目录。首次管理员仅能通过服务器端一次性初始化建立，不能由公网访问者抢先认领；密码和设备密钥不写入仓库或安装脚本。
 
-`npm run release:package` 生成服务器 tar.gz、Windows ZIP、Windows EXE 及 `SHA256SUMS`，均在 `dist/`。不包含 `.local`、数据库、设备密钥或验收工作文件。v1.0.0 稳定版资产见[最新 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest)，下载无需桥接账号。受邀用户先用管理员私下提供的网址和邀请注册，之后再生成电脑配对码；自行部署者提供自己的 VPS 和域名。升级应保留数据与设备归属，支持版本核对、失败回退和单独撤销设备。
-
-## 分阶段验收
-
-1. 本地模拟 VPS：账号登录、配对码单次消费、设备归属隔离、撤销与重连。
-2. 两台独立模拟设备：选择与切换、同名设备、相同会话 ID、不串草稿与文件、旧响应丢弃、写请求不重放。
-3. 接入真实本机桥接：只读会话与文件验证；聊天和审批变更使用单独授权的测试会话。
-4. VPS 部署：TLS、固定域名、后台运行、持久化与备份；通过手机流量实际测试登录、选择设备及断线恢复。
-5. 发布安装包：新用户从下载、配对到使用的完整流程；另一台真实电脑与账号交叉访问验证。
-
-已通过模拟多账号隔离、真实本机桥接、真实 VPS HTTPS 登录与当前电脑持久 WSS 连接。公网前端验收用真实页面模块在 jsdom 中执行，仅发 GET，没有聊天或审批变更。真实手机流量、触摸与视觉、第二台实际电脑尚未验收，详细结果见 `verification.md`。
+`npm run release:package` 生成服务器 tar.gz、Windows ZIP、Windows EXE 及 `SHA256SUMS`，均在 `dist/`。不包含 `.local`、数据库、设备密钥或本地工作文件。v2.0.0 发行资源见[发行页面](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v2.0.0)，下载无需桥接账号。受邀用户先用管理员私下提供的网址和邀请注册，之后再生成电脑配对码；自行部署者准备自己的 VPS 和域名。升级前核对版本和哈希，并保留数据库备份。
 
 ## Windows 首次安装与再次启动
 
 普通 Windows 用户优先使用中文 EXE，按 [简易教程](quick-start.md#配对-windows-电脑) 下载校验并配对。下面是备用 ZIP 的终端流程，两者不要同时安装到同一目录。
 
-EXE 新图形安装默认手动启动，可在设置中开启当前用户登录后自动连接，已有新版偏好或可验证的旧登录入口会保留选择。旧 v0.1.0 保留配对卸载重装后，需要重新核对、勾选自动连接开关。窗口 X 隐藏到托盘；主动退出停止本安装的监测和连接器，并保留本次登录内的暂停，不停止独立桥接或 Codex 任务。手动再次打开会恢复；已开启自动模式时，下次 Windows 登录隐藏启动到托盘并恢复。详见 [托盘与自动启动](quick-start.md#托盘与自动启动)。
+EXE 首次配对默认开启当前 Windows 用户登录后自动连接；配对前明确关闭该设置时会保留关闭状态。窗口 X 隐藏到托盘；主动退出停止本安装的监测和连接器，不停止独立桥接或 Codex 任务。手动再次打开后可明确连接；已开启自动连接时，下次 Windows 登录会隐藏启动到托盘并恢复。详见[托盘与自动启动](quick-start.md#托盘与自动启动)。
 
 解压 Windows ZIP，双击 `deploy/install-connector.cmd`。安装器优先使用已有 Node.js 22.16+；否则下载官方 Windows x64 Node.js，验证 SHA256，并保存在包内 `.local/tools`，不修改系统 PATH。包包含 ws，不需要 npm 下载运行依赖。
 
 安装器先确认本机桥接和 Codex 桌面已连接。若没有已有桥接，会让用户从本机普通会话中明确选择启动身份；桌面离线或身份有歧义时停止，不消费配对码。然后输入配对码，设备凭据以 Windows 私有 ACL 保存到 `.local/hub-connector.json`，账号密码不落盘。连接器提交后台启动后，应在 Hub 核对在线状态。
 
-上述 ZIP 高级终端安装仍显式注册当前用户独立命名的 legacy Windows 登录恢复（交互用户、不提升权限），恢复已保存的本机桥接，再启动连接器；Codex 尚未打开时会等待，不重新配对或选择会话。它不是新图形安装的默认模式。重复触发使用同一互斥锁，只运行一个恢复监测，且同一目录的 CLI 入口遵守本次登录暂停状态。只修改本安装目录拥有的任务与启动项，遇到同名外部命令会拒绝覆盖。任务与启动项不存账号密码或设备令牌。后台连接器独立于安装终端运行。
+ZIP 高级终端安装会为当前用户注册本安装专属的 Windows 登录恢复任务，以交互用户身份运行且不提升权限。它会恢复已保存的本机桥接并启动连接器；Codex 尚未打开时会等待，不重新配对或选择会话。此模式不是图形安装器的默认方式。安装器只修改本安装目录拥有的任务和启动项，遇到同名外部命令会拒绝覆盖；任务与启动项不保存账号密码或设备令牌。后台连接器独立于安装终端运行。
 
 电脑重启后仍需用户登录 Windows 并打开 Codex；不会自动开启 Codex，不提供登录前控制、睡眠唤醒或断电恢复。登录脚本将恢复监测提交给独立 WMI 进程，每 10 秒检查保存端口和连接器心跳，重试临时启动失败并恢复退出的进程；已有离线连接器继续自行重连，不反复启动。启动脚本诊断记录在 `.local/connector-login-bootstrap.log`，监测日志在 `.local/connector-login.stdout.log` / `.stderr.log`，连接器状态在 `.local/hub-connector-state.json`。Windows 禁用启动项、保存配置损坏或 Node 路径失效仍需本机修复。安装目录或 Node 路径移动后须重新运行安装器。可手动运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/connector-login.ps1` 恢复完整监测。已有绑定若属于其他入口或桥接端口，会拒绝自动覆盖，先停止旧连接器并在原账号撤销设备后重新配置。

@@ -98,19 +98,10 @@ policy, enables the timer, and leaves release activation to the operator. It
 does not modify the origin/environment file, database, Caddy site, system Node,
 or another service. Verify local/public health with the existing hostname.
 
-## Cache scope and validation
+## Cache behavior
 
 Static non-HTML assets use SHA-256 ETags with `private, no-cache`; each reuse
 revalidates current content. Device asset responses still require the current
 session and ownership before returning 304. HTML and hub authentication/context
 JSON use `no-store`. Relay validators/ETags and bodyless 304 pass through without
 a VPS JSON cache or any shared-account response cache.
-
-Run `node --test test/hub-resources.test.mjs test/hub-relay.test.mjs
-test/hub-server.test.mjs test/hub-connector.test.mjs` for fake-clock cleanup,
-current-data preservation, admission, fair pacing, cancellation, backup safety,
-conditional response auth boundaries and existing no-replay guarantees.
-On 2026-09-27 the focused hub checks passed locally on Windows. The load check completed
-24 concurrent downloads (3 MiB total) in 1001 ms, with 24 pending frames at peak
-and 17.1 MiB process RSS growth including clients and their response buffers.
-This is a measured fixture, not a VPS load or capacity certification.

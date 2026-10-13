@@ -56,4 +56,4 @@ docker compose restart hub
 
 持久数据在 Compose 的 `hub_data` volume，TLS 证书在 `caddy_data`，配置在 `deploy/.env` 和 Caddyfile。`docker compose down` 默认保留这些 volume；**不要执行 `down -v`**，该操作会删除账号、设备归属和证书数据。数据库使用 WAL，运行中不能只复制一个 `hub.sqlite` 文件。可靠备份应使用 SQLite 备份 API，或在停止 Hub 后备份整个数据 volume；备份文件保存在私有目录，并确认恢复过程可用。此方案未提供自动数据库备份或一键升级。
 
-Compose 配置已验证，但没有运行真实容器端到端验收；原生服务方案有受控部署验收。资源限制见 [Hub 资源策略](hub-resource-limits.md)。
+容器资源上限和数据保留规则见 [Hub 资源策略](hub-resource-limits.md)。
