@@ -15,14 +15,14 @@
 
 ## 下载与校验
 
-稳定版为 v1.0.5。请从 [最新稳定版 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest) 下载所需文件和同一版本的 `SHA256SUMS`：
+稳定版为 v1.0.0。请从 [v1.0.0 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v1.0.0) 下载所需文件和同一版本的 `SHA256SUMS`：
 
 | 文件 | 用途 |
 | --- | --- |
-| [CodexMobileConnector-Setup.exe](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/CodexMobileConnector-Setup.exe) | Windows x64 图形安装器，普通用户优先使用；内置 Node.js 和连接依赖 |
-| [codex-mobile-connector-windows.zip](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/codex-mobile-connector-windows.zip) | Windows 终端安装备用包 |
-| [codex-device-hub.tar.gz](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/codex-device-hub.tar.gz) | VPS 服务及部署脚本 |
-| [SHA256SUMS](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/SHA256SUMS) | 三个安装产物的 SHA-256 清单 |
+| [CodexMobileConnector-Setup.exe](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v1.0.0/CodexMobileConnector-Setup.exe) | Windows x64 图形安装器，普通用户优先使用；内置 Node.js 和连接依赖 |
+| [codex-mobile-connector-windows.zip](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v1.0.0/codex-mobile-connector-windows.zip) | Windows 终端安装备用包 |
+| [codex-device-hub.tar.gz](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v1.0.0/codex-device-hub.tar.gz) | VPS 服务及部署脚本 |
+| [SHA256SUMS](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v1.0.0/SHA256SUMS) | 三个安装产物的 SHA-256 清单 |
 
 公开仓库与 Release 可直接下载，不需要 GitHub 令牌。下载源码或安装包不会授予任何桥接账号；使用已有服务仍需管理员私下提供入口和邀请。不要把实际入口、邀请或配对码放进公开 issue 或截图。
 
@@ -72,7 +72,7 @@ Get-Content .\SHA256SUMS
 
 连接器默认自动检查最新稳定版，也可在设置页手动“检查更新”，或关闭“自动检查更新”。检查不会改变连接、配对或主动断开状态，也不会后台安装。发现新版时点击“下载并升级”，程序校验下载文件后打开安装器，由你确认升级；网络检查失败时仍可使用当前版本并稍后重试，或从 Release 下载 EXE。
 
-运行更高版本安装器并点击“升级”，会原位更新应用并保留 `.local` 配对、自动连接设置和主动断开状态；相同或更旧版本会拒绝覆盖。旧 v0.1.0 卸载器会删除登录启动设置，因此保留配对重装后，重新核对、按需要勾选自动连接开关；不会从配对或身份标记猜测你曾选择的自动模式。安装目录和内置 Node 路径不要移动。详细安装、替换服务器、卸载与备用 ZIP 操作见 [Windows 安装说明](windows-installer.md)。
+运行更高版本安装器并点击“升级”，会原位更新应用并保留 `.local` 配对、自动连接设置和主动断开状态；相同或更旧版本会拒绝覆盖。安装目录和内置 Node 路径不要移动。详细安装、替换服务器、卸载与备用 ZIP 操作见 [Windows 安装说明](windows-installer.md)。
 
 网页上的语言选择会保存，并在设备入口与会话页间共用；桌面软件也能从“设置 / Settings”切换。界面换语言会保留草稿，消息和文件内容保持原文，见 [语言说明](languages.md)。
 
@@ -97,4 +97,4 @@ Get-Content .\SHA256SUMS
 | 重启后未恢复 | 确认已开启登录后自动连接、当前 Windows 用户已登录、没有主动断开连接，且安装目录及内置 Node 未移动 |
 | 已提交但结果未知 | 先核对会话和回执，不要直接重复发送；网络恢复不会自动重放操作 |
 
-实体手机触摸、第二台实际电脑及完整交互桌面的验收边界见 [验收摘要](verification.md)。VPS 健康检查、日志、备份与重启排错见 [部署教程](native-vps-deployment.md#健康检查与排错)。
+VPS 健康检查、日志、备份与重启排错见 [部署教程](native-vps-deployment.md#健康检查与排错)。

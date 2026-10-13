@@ -1,0 +1,10 @@
+[
+  "deploy/verify-*",
+  "deploy/windows/verify-*",
+  "deploy/windows/native-qa-status.mjs",
+  "deploy/windows/generate-icons.mjs",
+  "scripts/vendor-*.mjs",
+  "deploy/package.mjs",
+  "deploy/build-windows-installer.ps1",
+  "deploy/release-excludes.json"
+]

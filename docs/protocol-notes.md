@@ -1,67 +1,9 @@
-# App-server protocol probe
+# 桌面协议适配
 
-## Conditional response compatibility trial (2026-10-04, remains v1.0.3)
+连接器通过本机 Codex 桌面的内部接口访问已存在会话，Hub 转发受账号和设备范围约束的请求。它不启动一个替代桌面的模型服务。
 
-The follow-up "incomplete data" report was reproduced with the unchanged v1.0.3 API helper behind the real installed Caddy v2.11.4 binary. The loopback-only chain used the current `createBridgeServer`, `startConnector` and `HubRelay` with synthetic data; it did not access a business task or create a public diagnostic endpoint. For gzip, the compressed 200 carried the strong ETag `"hash-gzip"`; the next bodyless 304 carried `"hash"`. Zstd likewise changed `"hash-zstd"` to `"hash"`. The original exact comparison raised `RESPONSE_INVALID` for both, while the same connector remained online. The actual server did not merely add or remove `W/`, correcting the initial weak-marker hypothesis. No broken JSON, wrong thread identity or business-history corruption was observed in this probe.
+读取会话、状态和上下文与写入操作分开。发送、创建、问题回答和审批通过请求身份及持久回执处理未知结果，不自动重放。模型、权限和停止能力根据实际桌面接口判断，不支持时返回不可用。
 
-The trial source changes only `public/connection.js`: valid weak comparisons accept a difference in the `W/` marker; genuinely different opaque values require one independently validated, unconditional GET. No compression suffix is stripped to equate unrelated validators. Successful recovery pauses conditional reads for that path for 30 seconds, without renewing the deadline on each full response. The next read after expiry tries conditional validation again. Repeated 304s, JSON errors, wrong thread IDs and bad turns shapes fail closed; mutations are never retried. Errors add fixed `reason`/`stage` fields without retaining body text or credentials. No Hub/backend/Caddy configuration change is needed.
+桌面的内部接口与数据格式没有稳定性承诺。通用 App Server 文档不能证明某个桌面版本暴露了同样的接口或支持全部并发场景。更新适配时应使用隔离测试，避免把未知状态当作成功或空会话。
 
-Candidate verification used actual compressed wire responses for gzip and zstd, with nineteen requests per encoding across initial 200, repeated 304 recovery, single-request cooldown polls, deadline expiry, changed content followed by 304, a second task, an older cursor and a new API cache instance. All thirty-eight synthetic desktop reads retained their requested identity and current content; the connector stayed online and there were no mutation requests. Local round-trip durations and per-step call counts are recorded in `work/conditional-response-fix/candidate-caddy-evidence.json`; these are same-host loopback measurements, not phone/network timing. The fixture accelerated only its JavaScript client clock to test the 30-second deadline. Node 22 Fetch does not automatically decode zstd, so the fixture explicitly used native `zstdDecompressSync` while retaining the original wire headers. This adapter verifies the bytes and protocol, without claiming a physical phone's decoding behavior.
-
-Baseline and candidate scripts/configuration/evidence live under ignored `work/conditional-response-fix/` locally and the corresponding application work directory on the first VPS. Temporary Caddy had its admin API and HTTPS disabled, listened only on loopback, and was terminated with the synthetic bridge/relay after each probe. Production Hub/Caddy PIDs, configuration and original static hashes remained unchanged. Both VPSes use the same Caddy v2.11.4 build and original API helper hash. The installed v1.0.3 static HTTP response was verified byte-for-byte against its file; local and Hub asset handlers read files for each request, permitting a same-version trial without restarting services. This source-validation record precedes trial deployment; it does not publish a version, build an installer, push a commit or replace pairing/login/upload data. Authenticated public-browser and physical-phone stability still require trial feedback.
-
-## Desktop history output-hydration failure (2026-10-04)
-
-A GET-only probe reproduced the reported existing desktop task failure through the installed v1.0.2 connector. `read_thread` with `includeOutputs:true` returned JSON-RPC `-32000` (`Codex app tool request failed`); the same task, caller, host and one-turn limit with `includeOutputs:false` returned the expected `schemaVersion/thread/page/turns` shape and exact target identity. Both the saved connector caller and the current desktop caller produced the same result. This establishes a failure in the desktop output-reading path for this task; the generic native error does not identify which individual tool output caused it.
-
-The bridge now makes at most one output-free fallback for a `DESKTOP_REJECTED` read. It preserves all read arguments except `includeOutputs`, validates identity and shape, and never treats mismatches or unrelated protocol/transport faults as successful reads. Successful reads still attempt outputs, preserving recognized delegation envelopes when available. This is not a retry mechanism for mutations. A read that fails in both forms remains an error.
-
-The corrected source was verified against the same real pipe behind an isolated, read-only localhost HTTP server. Three latest pages returned 200 in 865–1000 ms; each retained ten turns, eleven ordinary user items and 487 assistant items. Output-reading rejections took 463–585 ms, without timeouts. An older cursor returned the same task successfully with outputs included, confirming that blanket or permanent output suppression would discard available history. These local measurements support retaining the bounded fallback on each poll; they do not establish timing for other desktop versions or mobile networks.
-
-The separately reported frontend mismatch has a confirmed reachable failure path: the previous API helper converted malformed successful JSON into `{}`, then first-selection identity checking reported a mismatch. No actual cross-task response or malformed body was observed in this live probe. The patch reports malformed data explicitly and validates IDs, turns and 304 validators before cache insertion and transcript merging. Concurrent relay and pipe tests retain per-request identity; the hub backend protocol is unchanged.
-
-Evidence and the reusable GET-only scripts are under ignored `work/thread-switch-fix/`: `probe.json`, `live-readonly-evidence.json`, `live-shape.json` and `live-ui.tap`. They retain protocol shape, identity, counts and timing, with business text and opaque cursors removed. The installed runtime was not replaced during this probe, and paired configuration, preferences, uploads and delivery/creation records were hash-checked unchanged. There were no business messages, new tasks, approvals or other mutations. Full output hydration, authenticated public-browser use and physical-phone use remain outside this source verification.
-
-Probe date: 2026-09-25. Local CLI: `codex-cli 0.156.1`.
-
-## Evidence collected
-
-- `codex app-server --help` advertises `stdio://` (default), `unix://`, `unix://PATH`, `ws://IP:PORT`, and `off` transports. `codex app-server proxy --help` describes a stdio-byte proxy to an already running app-server Unix control socket (`--sock`). The help also exposes daemon management commands, including `start`, `enable-remote-control`, and `disable-remote-control`.
-- The TypeScript and JSON Schema bundles generated for this probe are local working artifacts under `work/codex-probe/schema` when present. They are excluded from Git and release archives, so a fresh checkout does not contain them. They were generated locally with `codex app-server generate-ts --experimental` and `generate-json-schema --experimental`; no app-server was started and no model task was run.
-- Official documentation, read 2026-09-25: [Codex App Server](https://learn.chatgpt.com/docs/app-server) and its [Markdown form](https://learn.chatgpt.com/docs/app-server.md). It describes app-server as the interface for rich/custom clients, including authentication, conversation history, approvals, and streamed events. This is documentation for the general protocol, not evidence that the desktop's own server is exposed to arbitrary clients.
-- These findings describe the locally installed CLI and the evidence collected on the probe date; they are not a compatibility promise for later desktop or CLI versions.
-
-## Findings by capability
-
-| Capability | Protocol evidence | Practical reading |
-| --- | --- | --- |
-| Read a thread | `thread/read` takes `threadId` and optional `includeTurns`. Docs say it reads stored data without resuming. | Suitable for inspection; it does not itself attach to live execution. Prefer paginated turn/item reads for full histories. |
-| Find loaded threads | `thread/loaded/list` returns paginated IDs for sessions currently loaded in memory. | This is the useful discovery call for a thread already live in that app-server process. It is distinct from persisted `thread/list`. |
-| Rejoin/resume | `thread/resume` takes `threadId`. Its generated parameter docs say an ID identifying a running thread makes app-server rejoin that thread; for a non-running thread it loads the thread from disk. | The protocol explicitly supports rejoining an in-memory running thread, conditional on reaching the same app-server process. This does not prove the Codex desktop exposes a usable transport to it. |
-| Steer a running turn | `turn/steer` takes `threadId`, input, and required `expectedTurnId`; it fails if there is no active turn or the ID does not match. Docs say it adds input to the active turn and does not start a new turn. | Supports adding input to an existing execution when connected to its owning server. It is not a generic append without checking the current active turn ID. |
-| Interrupt | `turn/interrupt` takes both `threadId` and `turnId`; docs say success ends the turn with `status: "interrupted"`. | Available in the general protocol. The desktop plugin bridge checked by the parent does not expose a stop tool. |
-| Event subscription | No `notifications/subscribe` or `thread/subscribe` method appears in the generated `ClientRequest` union. Docs say `thread/start` automatically subscribes the caller to turn/item events; `thread/unsubscribe` explicitly unsubscribes **this connection**. Each transport connection must independently send `initialize`, then `initialized`. | Notifications are connection-scoped in the documented model; subscription is managed by thread lifecycle, not a standalone subscribe RPC. Exact reconnect/rejoin event delivery should be verified against the target server. |
-| Approval | Approval prompts are server-initiated JSON-RPC requests. Generated request parameter types include `threadId`, `turnId`, and `itemId` (some command requests also have an `approvalId`); the client answers the server request with a decision. | The response is correlated by the JSON-RPC request ID on the connection that received it; the protocol shows no separate cross-connection approval endpoint. A second UI should not be assumed able to answer a pending approval unless a broker forwards the original request and response on that connection. |
-| Multiple clients | Every connection has its own initialization handshake; unsubscribe is explicitly per connection. Docs show remote clients connecting to an app-server transport. | This supports a multi-connection protocol model, but the local help/docs/schema do not promise that concurrent clients can safely control the same live thread, nor do they define event fan-out semantics for two subscribers. Test this on the actual server before relying on it. |
-
-## Desktop-specific boundary
-
-Per the parent task's independent process/socket check (not re-probed here), the current desktop app-server is stdio-based and its default control socket is absent or unreachable. The desktop's `CODEX_APP_TOOLS_PIPE_PATH` named pipe answered `tools/list` using a 4-byte little-endian length prefix plus JSON-RPC, and the bundled `codex-app-tools` server exposes a limited MCP tool set: thread listing/reading, waiting, and sending a message. It does not expose stop or approval handling. This is a separate internal tools channel; do not treat it as the full app-server transport or infer live streamed event support from it.
-
-Therefore, the general app-server protocol has primitives to rejoin and steer a running thread, but this desktop instance has not been shown to expose those primitives over an attachable socket. The internal plugin pipe provides a narrower route for list/read/wait/send operations only. Sending a message through that pipe should be treated as a live state change and verified separately before using it against a real task.
-
-## Minimal verification plan
-
-Run only against a disposable, clearly named test thread and an explicitly reachable app-server instance. Do not start a model turn in a real desktop conversation for this probe.
-
-1. Open two client connections to the *same* server, initialize both, then compare `thread/loaded/list` and `thread/read` results for one already-running test thread.
-2. On client B call `thread/resume` with the test thread ID; confirm it returns the same thread ID and that B receives subsequent `turn/*` and `item/*` notifications. Record whether client A still receives them. Then call `thread/unsubscribe` on B and confirm only B stops receiving thread events.
-3. In a disposable test turn, use the observed active `turnId` with `turn/steer` from B and verify the appended input appears in that same turn. Use `turn/interrupt` only if the test turn is still active and confirm its terminal status.
-4. Exercise an approval only in an isolated throwaway workspace with a harmless, expected approval prompt. Record which connection receives the server request and whether a response from another connection is rejected; never auto-accept as part of the probe.
-5. Separately check whether the actual desktop publishes any supported control socket. If it does not, stop the protocol-attachment test there: the generic RPC behavior cannot establish desktop takeover.
-
-## Limits
-
-- Schema generation describes this installed CLI's protocol surface, including experimental methods/fields; it does not prove a running desktop server implements or exposes every generated method.
-- No model task, daemon start, live-thread mutation, config change, credential read, or desktop socket probe was performed in this subtask.
-- The official docs are mutable; retain the CLI version and generated schema bundle alongside any later retest.
+源码验证入口见[开发指南](development.md)。
