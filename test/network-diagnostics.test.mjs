@@ -28,7 +28,7 @@ test('pair fetch failure preserves token file, supplies abort signal, never retr
   try {
     const configPath = join(root, 'fixture.json'), original = '{"deviceToken":"fixture-secret"}';
     await writeFile(configPath, original);
-    for (const [raw, expected] of [[{ cause: { code: 'ENOTFOUND' } }, 'DNS'], [{ cause: { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' } }, 'TLS'], [{ name: 'TimeoutError' }, 'TIMEOUT'], [new Error('secret pairing code'), 'UNKNOWN']]) {
+    for (const [raw, expected] of [[{ cause: { code: 'ENOTFOUND' } }, 'DNS'], [{ cause: { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' } }, 'TLS'], [{ cause: { code: 'CERT_NOT_YET_VALID' } }, 'TLS_DATE'], [{ cause: { code: 'CERT_HAS_EXPIRED' } }, 'TLS_DATE'], [{ name: 'TimeoutError' }, 'TIMEOUT'], [new Error('secret pairing code'), 'UNKNOWN']]) {
       let calls = 0;
       await assert.rejects(pairConnector({ origin: 'https://hub.example', pairingCode: 'p'.repeat(43), configPath, replace: true, fetchImpl: async (_, options) => {
         calls++; assert.equal(options.method, 'POST'); assert.ok(options.signal instanceof AbortSignal); throw raw;

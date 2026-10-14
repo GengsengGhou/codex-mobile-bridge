@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { homedir } from 'node:os';
 const serverName = 'codex_mobile_computer_collaboration';
 const comparable = path => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
 const pathEqual = (a, b) => typeof a === 'string' && typeof b === 'string' && isAbsolute(a) && isAbsolute(b) && comparable(a) === comparable(b);
@@ -57,6 +58,27 @@ function toolMetadata(tools) {
   const fields = entries.filter(table).flatMap(value => Object.entries(value));
   return { present: tools !== undefined, tableShape: table(tools), fieldKeyNames: [...new Set(fields.map(([key]) => key))].sort(), fieldValueTypes: [...new Set(fields.map(([, value]) => Array.isArray(value) ? 'array' : typeof value))].sort(), officiallySupportedShape: table(tools) && entries.every(value => table(value) && Object.entries(value).every(([key, item]) => key === 'approval_mode' && ['auto', 'prompt', 'writes', 'approve'].includes(item) || key === 'output_token_limit' && Number.isSafeInteger(item) && item > 0)) };
 }
+// Keep the diagnostic executable independent: support copies frozen outside the
+// installation rather than importing code from the potentially stale view.
+function launcherDirectory(root) {
+  const appData = process.env.LOCALAPPDATA && comparable(dirname(process.env.LOCALAPPDATA)), candidate = comparable(root);
+  return appData && (candidate === appData || candidate.startsWith(appData + '\\')) ? join(homedir(), '.codex-mobile-bridge/launchers', hash(candidate).slice(0, 24)) : join(root, '.local/collaboration-launchers');
+}
+async function ownedCollaborationLaunch(root, entry) {
+  if (!entry || !pathEqual(dirname(entry.command || ''), launcherDirectory(root)) || !/^CollaborationLauncher-[a-f0-9]{64}\.exe$/.test(basename(entry.command || '')) || !isDeepStrictEqual(entry.args, ['--install-root', resolve(root)])) return false;
+  const [owner, executable] = await Promise.all([json(join(dirname(entry.command), 'owner.json')), text(entry.command)]);
+  return owner.status === 'ok' && owner.value?.version === 1 && owner.value?.application === 'codex-mobile-bridge' && pathEqual(owner.value?.root, root) && executable.status === 'ok' && executable.sha256 === basename(entry.command).slice(22, -4);
+}
+async function readCollaborationLaunch(root) {
+  const manifest = await json(join(root, '.local/collaboration-launcher.json'));
+  if (manifest.status !== 'ok' || manifest.value?.version !== 1 || !pathEqual(manifest.value?.root, root) || !/^[a-f0-9]{64}$/.test(manifest.value?.sha256 || '')) return null;
+  const entry = { command: manifest.value.command, args: ['--install-root', resolve(root)] };
+  return pathEqual(entry.command, join(launcherDirectory(root), `CollaborationLauncher-${manifest.value.sha256}.exe`)) && await ownedCollaborationLaunch(root, entry) ? entry : null;
+}
+function sameOwnedLaunchWithPreferences(current, ledgerEntry) {
+  const supported = Object.entries(current).every(([key, value]) => ['command', 'args'].includes(key) || key === 'tools' && toolMetadata(value).officiallySupportedShape || key === 'enabled' && typeof value === 'boolean' || ['startup_timeout_sec', 'tool_timeout_sec'].includes(key) && Number.isFinite(value) && value > 0 || ['enabled_tools', 'disabled_tools'].includes(key) && Array.isArray(value) && value.every(name => typeof name === 'string' && name.length > 0));
+  return supported && isDeepStrictEqual(current.command, ledgerEntry.command) && isDeepStrictEqual(current.args, ledgerEntry.args);
+}
 export async function diagnoseRegistration({ root, codexConfig } = {}) {
   if (typeof root !== 'string' || typeof codexConfig !== 'string' || !isAbsolute(root) || !isAbsolute(codexConfig) || /^(?:\\\\|\/\/)/.test(root) || /^(?:\\\\|\/\/)/.test(codexConfig)) throw new Error('Explicit ordinary local absolute paths are required.');
   root = resolve(root); codexConfig = resolve(codexConfig);
@@ -80,6 +102,8 @@ export async function diagnoseRegistration({ root, codexConfig } = {}) {
   const toolSettings = toolMetadata(entry?.tools), core = entry ? { ...entry } : null; if (core) delete core.tools;
   const ownedCoreWithTools = valid && !!entry && Object.hasOwn(entry, 'tools') && !Object.hasOwn(saved.entry, 'tools') && toolSettings.officiallySupportedShape && isDeepStrictEqual(core, saved.entry);
   const scriptPath = Array.isArray(entry?.args) && typeof entry.args[0] === 'string' && basename(entry.args[0]) === 'collaboration-mcp.mjs' ? safePath(entry.args[0], '.mjs') : null;
+  let nativeLaunch = false; try { nativeLaunch = await ownedCollaborationLaunch(root, entry); } catch {}
+  const ownedPreferences = valid && nativeLaunch && sameOwnedLaunchWithPreferences(entry, saved.entry);
   result.registration = {
     parserAvailable: true, sameNameEntryPresent: !!entry, ledgerPresent: ledger.status !== 'absent', ledgerValid: valid && !saved?.pending, ledgerPending: saved?.pending === true, ledgerChecks,
     ledgerCodexConfigPath: safePath(saved?.configPath, '.toml'), registeredCommandPath: safePath(entry?.command, '.exe'), registeredScriptPath: scriptPath,
@@ -87,22 +111,24 @@ export async function diagnoseRegistration({ root, codexConfig } = {}) {
     commandMatchesLedger: entry && saved?.entry ? isDeepStrictEqual(entry.command, saved.entry.command) : null,
     argsMatchLedger: entry && saved?.entry ? isDeepStrictEqual(entry.args, saved.entry.args) : null,
     commandSameWindowsPathAsLedger: entry && saved?.entry ? pathEqual(entry.command, saved.entry.command) : null,
-    scriptBelongsToInstallRoot: Array.isArray(entry?.args) && entry.args.length === 1 && pathEqual(scriptPath, paths.entryScript),
+    scriptBelongsToInstallRoot: nativeLaunch || Array.isArray(entry?.args) && entry.args.length === 1 && pathEqual(scriptPath, paths.entryScript),
+    sharedStateLauncher: nativeLaunch,
     currentEntryExactlyOwned: owned,
     currentEntryCoreOwnedWithSupportedTools: ownedCoreWithTools, toolSettings,
+    currentEntryCoreOwnedWithSupportedPreferences: ownedPreferences,
     changedKeyNames: changedKeys, extraKeyNames: entry && saved?.entry ? Object.keys(entry).filter(key => !Object.hasOwn(saved.entry, key)).sort() : [],
     missingKeyNames: entry && saved?.entry ? Object.keys(saved.entry).filter(key => !Object.hasOwn(entry, key)).sort() : [],
     enabledOption: typeof entry?.enabled === 'boolean' ? entry.enabled : null,
     containsEnvOption: !!entry && Object.hasOwn(entry, 'env'),
-    status: saved?.pending ? 'pending-recovery' : ledger.status !== 'absent' && !valid ? 'ownership-recovery-required' : entry && !(owned || ownedCoreWithTools) ? 'registration-conflict' : (owned || ownedCoreWithTools) && !(Array.isArray(entry.args) && entry.args.length === 1 && pathEqual(scriptPath, paths.entryScript)) ? 'owned-other-installation' : ownedCoreWithTools ? 'owned-core-with-supported-tools' : owned ? 'owned-current-installation' : 'no-same-name-entry',
+    status: saved?.pending ? 'pending-recovery' : ledger.status !== 'absent' && !valid ? 'ownership-recovery-required' : entry && !(owned || ownedCoreWithTools || ownedPreferences) ? 'registration-conflict' : (owned || ownedCoreWithTools || ownedPreferences) && !(nativeLaunch || Array.isArray(entry.args) && entry.args.length === 1 && pathEqual(scriptPath, paths.entryScript)) ? 'owned-other-installation' : ownedCoreWithTools ? 'owned-core-with-supported-tools' : owned || ownedPreferences ? 'owned-current-installation' : 'no-same-name-entry',
   };
   return result;
 }
-export async function probeCollaborationStdio({ command, script, root, timeoutMs = 5000 } = {}) {
+export async function probeCollaborationStdio({ command, script, args = [script], root, timeoutMs = 5000 } = {}) {
   const result = { probeKind: 'new-isolated-stdio-client', existingCodexTransport: 'unknown', networkRequests: 0, toolCalls: 0, initialize: false, toolsList: false, toolCount: null, delayedPing: false, exitedBeforeDelayedPing: false, exitCode: null, stdoutProtocolValid: true, stderrPresent: false };
   const environment = { ...process.env }; delete environment.NODE_OPTIONS; delete environment.NODE_PATH;
   result.nodeStartupOverridesRemoved = { nodeOptions: !!process.env.NODE_OPTIONS, nodePath: !!process.env.NODE_PATH };
-  const child = spawn(command, [script], { cwd: root, env: environment, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(command, args, { cwd: root, env: environment, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   const lines = createInterface({ input: child.stdout });
   const pending = new Map(); let nextId = 0, bytes = 0, closed = false;
   child.stdin.on('error', () => {});
@@ -154,14 +180,16 @@ export async function diagnoseCollaboration({ root, codexConfig, projectConfig }
       }
     } catch { result.configuration.projectReadStatus = 'invalid-toml'; }
   }
-  const expectedCommand = join(resolve(root), 'runtime/node.exe'), expectedScript = join(resolve(root), 'scripts/collaboration-mcp.mjs');
-  result.launch = { commandPath: safePath(entry?.command, '.exe'), scriptPath: Array.isArray(entry?.args) ? safePath(entry.args[0], '.mjs') : null, argumentCount: Array.isArray(entry?.args) ? entry.args.length : null, optionKeyNames: entry ? Object.keys(entry).sort() : [], commandBelongsToInstallRoot: pathEqual(entry?.command, expectedCommand), scriptBelongsToInstallRoot: Array.isArray(entry?.args) && entry.args.length === 1 && pathEqual(entry.args[0], expectedScript), envOptionPresent: !!entry && Object.hasOwn(entry, 'env'), envVarsOptionPresent: !!entry && Object.hasOwn(entry, 'env_vars'), cwdOptionPresent: !!entry && Object.hasOwn(entry, 'cwd'), enabled: typeof entry?.enabled === 'boolean' ? entry.enabled : null };
-  const extraOptions = entry && Object.keys(entry).some(key => !['command', 'args', 'enabled', 'tools'].includes(key));
+  let nativeLaunch; try { nativeLaunch = await readCollaborationLaunch(resolve(root)); } catch {}
+  const expectedCommand = nativeLaunch?.command || join(resolve(root), 'runtime/node.exe'), expectedScript = join(resolve(root), 'scripts/collaboration-mcp.mjs');
+  const expectedArgs = nativeLaunch?.args || [expectedScript], argsMatch = isDeepStrictEqual(entry?.args, expectedArgs);
+  result.launch = { commandPath: safePath(entry?.command, '.exe'), scriptPath: nativeLaunch && argsMatch ? expectedScript : Array.isArray(entry?.args) ? safePath(entry.args[0], '.mjs') : null, sharedStateLauncher: !!nativeLaunch && pathEqual(entry?.command, expectedCommand) && argsMatch, argumentCount: Array.isArray(entry?.args) ? entry.args.length : null, optionKeyNames: entry ? Object.keys(entry).sort() : [], commandBelongsToInstallRoot: pathEqual(entry?.command, expectedCommand), scriptBelongsToInstallRoot: argsMatch, envOptionPresent: !!entry && Object.hasOwn(entry, 'env'), envVarsOptionPresent: !!entry && Object.hasOwn(entry, 'env_vars'), cwdOptionPresent: !!entry && Object.hasOwn(entry, 'cwd'), enabled: typeof entry?.enabled === 'boolean' ? entry.enabled : null };
+  const extraOptions = entry && Object.keys(entry).some(key => !(nativeLaunch ? ['command', 'args', 'enabled', 'tools', 'startup_timeout_sec', 'tool_timeout_sec', 'enabled_tools', 'disabled_tools'] : ['command', 'args', 'enabled', 'tools']).includes(key));
   const commandStatus = { status: await ordinaryFileStatus(expectedCommand) }, scriptStatus = { status: await ordinaryFileStatus(expectedScript) };
   // Never execute shell wrappers, Node flags, alternate scripts, env/cwd overrides,
   // or a candidate project registration whose ownership has not been established.
-  const allowed = result.configuration.selectedSource === 'global' && global.registration?.ledgerValid && (global.registration.currentEntryExactlyOwned || global.registration.currentEntryCoreOwnedWithSupportedTools) && result.launch.commandBelongsToInstallRoot && result.launch.scriptBelongsToInstallRoot && !extraOptions && entry.enabled !== false && commandStatus.status === 'ok' && scriptStatus.status === 'ok';
-  result.stdio = allowed ? await probeCollaborationStdio({ command: expectedCommand, script: expectedScript, root: resolve(root) }) : { attempted: false, reason: 'UNVERIFIED_OR_NONSTANDARD_REGISTRATION', commandReadStatus: commandStatus.status, scriptReadStatus: scriptStatus.status, existingCodexTransport: 'unknown' };
+  const allowed = result.configuration.selectedSource === 'global' && global.registration?.ledgerValid && (global.registration.currentEntryExactlyOwned || global.registration.currentEntryCoreOwnedWithSupportedTools || global.registration.currentEntryCoreOwnedWithSupportedPreferences) && result.launch.commandBelongsToInstallRoot && result.launch.scriptBelongsToInstallRoot && !extraOptions && entry.enabled !== false && commandStatus.status === 'ok' && scriptStatus.status === 'ok';
+  result.stdio = allowed ? await probeCollaborationStdio({ command: expectedCommand, args: expectedArgs, root: resolve(root) }) : { attempted: false, reason: 'UNVERIFIED_OR_NONSTANDARD_REGISTRATION', commandReadStatus: commandStatus.status, scriptReadStatus: scriptStatus.status, existingCodexTransport: 'unknown' };
   return result;
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

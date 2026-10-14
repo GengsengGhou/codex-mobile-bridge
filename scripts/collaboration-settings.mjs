@@ -3,7 +3,7 @@ import { effectivePolicy, readPrivate, writePrivate, localBridge, UUID, validRoo
 import { hubCollaboration } from './collaboration-client.mjs';
 import { registerCollaboration } from './collaboration-registration.mjs';
 
-export async function collaborationSettings(command, { root, configPath = resolve(root, '.local/hub-connector.json'), fetchImpl = fetch, bridge = localBridge, register = registerCollaboration, codexHome, nodePath } = {}) {
+export async function collaborationSettings(command, { root, configPath = resolve(root, '.local/hub-connector.json'), fetchImpl, bridge = localBridge, register = registerCollaboration, codexHome, nodePath } = {}) {
   if (command.action === 'save-collaboration') {
     const generation = await collaborationResetGeneration(root);
     return withCollaborationLock(resolve(root, '.local/collaboration-settings'), async () => { await assertCollaborationResetGeneration(root, generation); return changeSettings(command, { root, configPath, fetchImpl, bridge, register, codexHome, nodePath }); });

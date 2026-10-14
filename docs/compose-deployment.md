@@ -28,7 +28,7 @@ cd /opt/codex-mobile-hub-compose
 bash deploy/install.sh codex.example.com
 ```
 
-脚本检查 Docker、端口和域名，写入私有权限的 `deploy/.env` 后构建并启动 Hub 与 Caddy 容器。它不安装 Docker、不配置 DNS；Hub 构建仍需连接 npm，Caddy 需签发受信任的 HTTPS 证书。已有 `.env` 时脚本停止，不能用于自动升级。
+脚本检查 Docker、端口和域名，写入私有权限的 `deploy/.env` 后构建并启动 Hub 与 Caddy 容器。它不安装 Docker、不配置 DNS；Hub 构建仍需连接 npm，Caddy 需签发受信任的 HTTPS 证书。已有 `.env` 时脚本停止，不能用于自动升级。已有服务升级时先确认原 Compose 项目名、数据卷和 `.env`，按[2.0.1 升级指南](upgrading-2.0.1.md#现有-docker-compose-部署)操作。
 
 ## 管理员与设备
 

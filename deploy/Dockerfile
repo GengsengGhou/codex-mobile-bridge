@@ -5,6 +5,7 @@ RUN npm ci --omit=dev --ignore-scripts && mkdir -p /data && chown node:node /dat
 COPY hub ./hub
 COPY public ./public
 COPY src/static-assets.mjs ./src/static-assets.mjs
+COPY src/clock-protocol.mjs ./src/clock-protocol.mjs
 COPY scripts/read-secret.mjs ./scripts/read-secret.mjs
 ENV NODE_ENV=production HUB_DB_PATH=/data/hub.sqlite PORT=3000
 USER node

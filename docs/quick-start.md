@@ -20,9 +20,10 @@
 | 文件 | 用途 |
 | --- | --- |
 | [CodexMobileConnector-Setup.exe](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/CodexMobileConnector-Setup.exe) | Windows x64 图形安装器，普通用户优先使用；内置 Node.js 和连接依赖 |
-| [codex-mobile-connector-windows.zip](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/codex-mobile-connector-windows.zip) | Windows 终端安装备用包 |
 | [codex-device-hub.tar.gz](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/codex-device-hub.tar.gz) | VPS 服务及部署脚本 |
-| [SHA256SUMS](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/SHA256SUMS) | 三个安装产物的 SHA-256 清单 |
+| [SHA256SUMS](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest/download/SHA256SUMS) | Windows 安装器和 Hub 部署包的 SHA-256 清单 |
+
+v2.0.1 不发布 Windows ZIP；v2.0.0 ZIP 只作为历史版本保留，不提供本次时钟兼容功能。旧版 ZIP 仍可在 Windows 系统时间正确时运行。
 
 公开仓库与 Release 可直接下载，不需要 GitHub 令牌。下载源码或安装包不会授予任何桥接账号；使用已有服务仍需管理员私下提供入口和邀请。不要把实际入口、邀请或配对码放进公开 issue 或截图。
 
@@ -61,7 +62,11 @@ Get-Content .\SHA256SUMS
 
 托盘显示“尚未绑定这台电脑”时，双击图标打开窗口，完成上面的 HTTPS 入口和配对码步骤。新安装目录不会自动继承另一个源码或 ZIP 目录里的设备配对；网页上原有设备在线，不代表新安装程序已经绑定。仍在使用原目录连接器时，可以继续使用那个设备，不必为它重新配对或复制私有凭据。
 
-电脑协作需要所有参与电脑都升级到 v2.0.0，并在同一个 Hub 和账号下配对。目标电脑需授权来源设备及允许访问的项目；来源电脑开启指挥开关并在 Codex 重新加载连接后，随包 MCP 工具即可使用。两个开关默认关闭，详细步骤和权限边界见[电脑协作](computer-collaboration.md)。
+电脑协作需要所有参与电脑都升级到 v2.0.1，并在同一个 Hub 和账号下配对。目标电脑需授权来源设备及允许访问的项目；来源电脑开启指挥开关并在 Codex 重新加载连接后，随包 MCP 工具即可使用。两个开关默认关闭，详细步骤和权限边界见[电脑协作](computer-collaboration.md)。
+
+已有 v2.0.0 Hub 的管理员和 Windows 用户按[2.0.1 升级指南](upgrading-2.0.1.md)操作：先升级 Hub，再更新参与电脑上的连接器。
+
+v2.0.1 Windows EXE 图形版连接器与 Hub 可通过可信的服务器时间兼容错误的 Windows 系统时钟。需要将 Hub 升级到 v2.0.1；Hub 自身日期和时间必须正确。兼容功能依赖 EXE 内的 `CertificateVerifier.exe`；v2.0.0 历史 ZIP 不包含此 helper，但在系统时间正确时仍可连接。此兼容覆盖连接器与 Hub 的 HTTPS、WSS 和 MCP 通信，不改变 Windows 系统时间；Codex 登录和模型服务由外部系统管理，不保证可在错误系统时间下使用。
 
 ## 托盘与自动启动
 
@@ -74,9 +79,9 @@ Get-Content .\SHA256SUMS
 
 连接器默认自动检查最新稳定版，也可在设置页手动“检查更新”，或关闭“自动检查更新”。检查不会改变连接、配对或主动断开状态，也不会后台安装。发现新版时点击“下载并升级”，程序校验下载文件后打开安装器，由你确认升级；网络检查失败时仍可使用当前版本并稍后重试，或从 Release 下载 EXE。
 
-Windows 连接器的“修复安装”会恢复应用文件，并保留本机配对与设置；它不会重置设备身份或协作授权。需要清除配对时，请在设置中单独使用“重置配对与电脑协作”，阅读原生确认并检查清理范围。普通修复不会代替重置。安装或修复后重新打开 Codex，或在 Codex 中重新加载协作连接。模型提供方、API 密钥和受支持的工具审批设置沿用原配置。若卸载提示配置冲突，按提示核对并保留无法确认归属的连接。
+Windows EXE 图形安装器的“修复安装”会恢复应用文件和协作启动入口，并保留本机配对与设置；它不会重置设备身份或协作授权。需要清除配对时，请在设置中单独使用“重置配对与电脑协作”，阅读原生确认并检查清理范围。普通修复不会代替重置。安装或修复后请完全退出并重新打开 Codex。模型提供方、API 密钥和受支持的工具审批设置沿用原配置。若卸载提示配置冲突，按提示核对并保留无法确认归属的连接。
 
-更换服务器或重新配对可能生成新的设备身份；其他电脑需重新选择该设备并明确保存授权，设备名称相同也不会迁移权限。安装目录和内置 Node 路径不要移动。详细安装、服务器切换、卸载与备用 ZIP 操作见 [Windows 安装说明](windows-installer.md)。
+更换服务器或重新配对可能生成新的设备身份；其他电脑需重新选择该设备并明确保存授权，设备名称相同也不会迁移权限。安装目录和内置 Node 路径不要移动。详细安装、服务器切换、卸载与历史 ZIP 操作见 [Windows 安装说明](windows-installer.md)。
 
 ## 需要重新开始配对时
 
@@ -101,10 +106,13 @@ Windows 连接器的“修复安装”会恢复应用文件，并保留本机配
 | Release 显示 404 或没有下载按钮 | 核对发行版本与链接，稍后刷新；下载权限与服务账号无关 |
 | 邀请注册失败 | 核对入口、邀请码、用户名和密码；邀请是否过期或已使用；勿使用配对码注册 |
 | 配对失败 | 核对安装器与网页是否使用同一个 HTTPS 入口；重新生成未过期配对码；勿粘贴邀请链接 |
+| 服务器证书有效日期校验失败 | 在 Windows **设置 > 时间和语言 > 日期和时间**开启“自动设置时间”，然后点“立即同步”。若日期和时间已正确但仍失败，请联系服务器管理员检查证书 |
+| Hub 不支持时钟兼容连接 | 请管理员将 Hub 更新到 v2.0.1；也可恢复 Windows 正确系统时间后重试 |
+| 无法验证服务器时间或可信时间校验失败 | 检查当前配对、Hub 是否已升级、网络是否可用；仍失败时请管理员检查 Hub 时间、证书和域名 |
 | 连接器提示缺少 WebView2 | 按窗口入口安装微软 WebView2 Runtime，再重新打开连接器；通常 Windows 已自带，不需要单独安装 |
 | 托盘显示尚未绑定，但网页已有设备在线 | 两者可能属于不同安装目录；在窗口完成新安装的配对，或继续使用原连接器，勿复制令牌合并设备 |
 | 设备在线，但 Codex 不可用 | 打开 Codex，等待普通本机会话可用；检查连接器状态，桌面升级后内部接口可能不兼容 |
-| 电脑协作配置已注册，但工具显示 Transport closed | 配置注册与工具连接状态分别判断；先复制诊断核对。若明确选择放弃现有配对，可使用上述重置入口；普通 Repair 不清理身份，也不证明既有 Codex 连接恢复 |
+| 电脑协作配置已注册，但工具显示 Transport closed | Microsoft Store Codex 用户先用 EXE 图形安装器“修复安装”，再完全退出并重新打开 Codex；原配对、授权和工具设置保留。仍失败时复制诊断核对。配置注册成功不代表既有工具连接恢复；无需先清缓存或重置配对 |
 | 找不到已安装的应用 | 按 Windows 键搜索“Codex Mobile Bridge”，或双击桌面“Codex Mobile Bridge”；快捷方式被删除时可从 `%LOCALAPPDATA%\CodexMobileConnector\CodexMobileConnector.exe` 打开 |
 | 设备离线 | 电脑是否开机、联网、已登录 Windows；连接器是否运行；服务器 HTTPS 是否可访问；窗口可查看状态并重试 |
 | 重启后未恢复 | 确认已开启登录后自动连接、当前 Windows 用户已登录、没有主动断开连接，且安装目录及内置 Node 未移动 |

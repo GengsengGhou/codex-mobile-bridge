@@ -7,6 +7,7 @@ import { launchWindowsBridge } from './windows-launch.mjs';
 import { writeRecoveryFile } from '../src/recovery.mjs';
 import { connectorMayRun } from './connector-control.mjs';
 import { createCollaborationExecutor } from './collaboration-executor.mjs';
+import { elapsedNow } from '../src/elapsed-time.mjs';
 
 export async function runSavedConnector({ configPath = connectorConfigPath } = {}) {
   if (!await connectorMayRun(resolve(configPath, '../..'))) throw new Error('连接器已暂停。');
@@ -36,7 +37,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       const publish = () => {
         const status = connector.status();
         if (status.state !== lastState) { console.log(`连接器状态：${status.state}`); lastState = status.state; }
-        const snapshot = { ...status, pid: process.pid, updatedAt: new Date().toISOString() };
+        const snapshot = { ...status, pid: process.pid, heartbeatMonotonicMs: elapsedNow(), updatedAt: new Date().toISOString() };
         writes = writes.catch(() => {}).then(() => writeRecoveryFile(statePath, snapshot));
         return writes;
       };

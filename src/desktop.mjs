@@ -70,9 +70,9 @@ export class DesktopBridge {
     this.sidebarPath = sidebarPath; this.metadataReader = metadataReader; this.metadata = null; this.metadataAt = 0;
   }
   async sidebarMetadata({ fresh = false } = {}) {
-    if (fresh || !this.metadata || Date.now() - this.metadataAt > 3000) {
+    if (fresh || !this.metadata || performance.now() - this.metadataAt > 3000) {
       if (!this.metadataRead) this.metadataRead = Promise.resolve().then(() => this.metadataReader(this.sidebarPath))
-        .then(metadata => { this.metadata = metadata; this.metadataAt = Date.now(); return metadata; })
+        .then(metadata => { this.metadata = metadata; this.metadataAt = performance.now(); return metadata; })
         .finally(() => { this.metadataRead = null; });
       return this.metadataRead;
     }

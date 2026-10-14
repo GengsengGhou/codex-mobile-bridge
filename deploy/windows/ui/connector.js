@@ -71,7 +71,7 @@
       : state.registration?.status === 'error' ? diagnostic(state.registration?.message || state.error) || t('电脑协作当前不可用，请检查配对状态后重试。')
       : state.featureAvailable === false ? diagnostic(state.error) || t('电脑协作当前不可用，请检查配对状态后重试。')
       : state.error ? diagnostic(state.error)
-      : state.registration?.status === 'registered' || state.registration?.status === 'ready' ? t('电脑协作配置已注册。Codex 工具连接状态尚未验证；若显示 Transport closed，请复制诊断信息。')
+      : state.registration?.status === 'registered' || state.registration?.status === 'ready' ? t(state.registration?.restartCodexRequired ? '协作连接已修复。请完全退出并重新打开 Codex，配对和授权已保留。' : '电脑协作配置已注册。Codex 工具连接状态尚未验证；若显示 Transport closed，请复制诊断信息。')
       : diagnostic(state.registration?.message) || '';
     const drawOptions = (container, items, key, selected, emptyText) => {
       container.replaceChildren();
@@ -196,6 +196,35 @@
     if (status.hubState === 'connecting') return t('正在连接服务器');
     return t('等待连接');
   }
+  const certificateDateCodes = new Set(['CERT_NOT_YET_VALID', 'CERT_HAS_EXPIRED']);
+  function certificateDateFailure(state) {
+    return state?.networkError?.category === 'TLS_DATE'
+      && Array.isArray(state.networkError.codes)
+      && state.networkError.codes.some(code => certificateDateCodes.has(code));
+  }
+  function certificateDateGuidanceVisible() {
+    return !!status && !statusError && !status.paused && !warning && status.state !== 'stopping'
+      && !status.lastError && status.hubConnected !== true && certificateDateFailure(status);
+  }
+  const certificateDateGuidance = '服务器证书有效日期校验失败。请先在 Windows“设置 → 时间和语言 → 日期和时间”中开启自动设置时间并点击“立即同步”。若日期和时间已正确但仍失败，请联系服务器管理员检查证书。';
+  function clockCompatibilityGuidance(state = status) {
+    const codes = state?.networkError?.codes;
+    if (state?.networkError?.category !== 'CLOCK' || !Array.isArray(codes)) return '';
+    if (codes.includes('CLOCK_UNSUPPORTED')) return t('服务器尚未支持时钟兼容连接。请由管理员更新 Hub，或恢复正确系统时间后连接。');
+    if (codes.some(code => ['CLOCK_AUTH_FAILED', 'CLOCK_BUSY'].includes(code))) return t('无法验证服务器时间。请检查当前配对、服务器升级和网络连接。');
+    if (codes.some(code => ['CLOCK_CERTIFICATE_INVALID', 'CLOCK_VALIDATION_UNAVAILABLE'].includes(code))) return t('服务器证书未通过可信时间校验。请联系服务器管理员检查证书与域名。');
+    return '';
+  }
+  function connectionMessage() {
+    if (statusError) return '';
+    if (status?.paused) return t('已暂停自动连接');
+    if (warning || status?.state === 'stopping') return '';
+    if (status?.hubConnected && status?.bridgeConnected) return t('手机可通过网页访问这台电脑');
+    if (status?.lastError) return diagnostic(status.lastError);
+    if (clockCompatibilityGuidance()) return clockCompatibilityGuidance();
+    if (certificateDateGuidanceVisible()) return t(certificateDateGuidance);
+    return !status?.bridgeConnected ? t('等待本机 Codex 就绪') : t('等待服务器连接');
+  }
   function render() {
     renderUpdate();
     renderCollaboration();
@@ -227,18 +256,19 @@
     $('autoStart').disabled = actionBusy;
     $('refreshStatus').hidden = !statusError;
     $('connectionHeading').textContent = description();
-    $('connectionDescription').textContent = statusError ? '' : status?.paused ? t('已暂停自动连接') : status?.hubConnected && status?.bridgeConnected ? t('手机可通过网页访问这台电脑') : !status?.bridgeConnected ? t('等待本机 Codex 就绪') : t('等待服务器连接');
+    $('connectionDescription').textContent = connectionMessage();
     $('stateMark').dataset.state = statusError ? 'error' : status?.hubConnected && status?.bridgeConnected ? 'online' : status?.state || 'waiting';
     $('stateIcon').src = '../icons/' + (statusError ? 'circle-alert' : status?.paused ? 'unplug' : status?.hubConnected && status?.bridgeConnected ? 'check' : 'plug') + '.svg';
     $('computerValue').textContent = status?.deviceName || '';
     $('serverValue').textContent = status?.origin || '';
-    $('serverStatus').textContent = statusError ? t('读取失败') : status?.paused ? t('已断开') : status?.hubConnected ? t('已连接') : status?.hubState === 'connecting' ? t('正在连接') : t('等待连接');
+    const clockVerified = status?.clockCompatible === true && status?.hubConnected === true && status?.paused !== true && !statusError;
+    $('serverStatus').textContent = statusError ? t('读取失败') : status?.paused ? t('已断开') : status?.hubConnected ? t(clockVerified ? '已连接 · 时钟兼容已验证' : '已连接') : status?.hubState === 'connecting' ? t('正在连接服务器') : t('等待连接');
     $('codexStatus').textContent = statusError ? t('读取失败') : status?.bridgeConnected ? t('已就绪') : t('未就绪');
     $('serverStatus').dataset.online = String(!statusError && !!status?.hubConnected);
     $('codexStatus').dataset.online = String(!statusError && !!status?.bridgeConnected);
     if (!actionBusy) $('autoStart').checked = status?.autoStart === true;
     $('startupSummary').textContent = t('Windows 登录后自动连接 · ') + (status?.autoStart ? t('已开启') : t('已关闭'));
-    $('diagnosticState').textContent = diagnostic(statusError) || description();
+    $('diagnosticState').textContent = diagnostic(statusError) || (status?.lastError && !status?.paused && !(status?.hubConnected && status?.bridgeConnected) && !warning && status?.state !== 'stopping' ? diagnostic(status.lastError) : '') || clockCompatibilityGuidance() || (certificateDateGuidanceVisible() ? t(certificateDateGuidance) : '') || description();
     $('footerState').textContent = statusError ? t('状态读取失败') : paired ? description() : t('尚未配对');
     feedback(pairingSourceMismatch ? t('配对信息来自 {source}，与当前选择的服务器 {target} 不一致。请在目标服务器重新生成配对信息。').replace('{source}', () => pairingSourceMismatch.source).replace('{target}', () => pairingSourceMismatch.target) : diagnostic(actionError || warning || statusError));
   }

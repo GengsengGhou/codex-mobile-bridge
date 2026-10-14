@@ -49,7 +49,7 @@ with tarfile.open(sys.argv[1], 'r:gz') as archive:
             raise SystemExit('Unsafe release member rejected')
         if any(part.startswith('.') for part in parts) and item.name != 'deploy/.env.example':
             raise SystemExit('Private release member rejected')
-        if parts[0] == 'node_modules' and (len(parts) < 2 or parts[1] != 'ws'):
+        if parts[0] == 'node_modules' and not (len(parts) >= 2 and (parts[1] == 'ws' or parts[1] == '@iarna' and (len(parts) == 2 and item.isdir() or len(parts) >= 3 and parts[2] == 'toml'))):
             raise SystemExit('Unexpected bundled dependency rejected')
         size += item.size
         if size > 100 * 1024 * 1024:

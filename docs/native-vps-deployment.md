@@ -54,7 +54,7 @@ systemctl is-active caddy
 
 ## 3. 下载、上传并校验服务器包
 
-下载 v2.0.0 的 [`codex-device-hub.tar.gz`](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v2.0.0/codex-device-hub.tar.gz) 和同一发行版的 [`SHA256SUMS`](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v2.0.0/SHA256SUMS)。可在自己的电脑用浏览器下载后上传，也可直接在 VPS 下载，不需要 GitHub 令牌；下载不授予桥接服务账号。
+下载 v2.0.1 的 [`codex-device-hub.tar.gz`](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v2.0.1/codex-device-hub.tar.gz) 和同一发行版的 [`SHA256SUMS`](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v2.0.1/SHA256SUMS)。可在自己的电脑用浏览器下载后上传，也可直接在 VPS 下载，不需要 GitHub 令牌；下载不授予桥接服务账号。
 
 先在 VPS root shell 创建上传目录：
 
@@ -72,7 +72,7 @@ scp codex-device-hub.tar.gz SHA256SUMS root@VPS_IP:/root/codex-hub-release/
 
 ```bash
 cd /root/codex-hub-release
-release_tag=v2.0.0
+release_tag=v2.0.1
 release_url="https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/$release_tag"
 curl -fL --proto '=https' --tlsv1.2 "$release_url/codex-device-hub.tar.gz" -o codex-device-hub.tar.gz
 curl -fL --proto '=https' --tlsv1.2 "$release_url/SHA256SUMS" -o SHA256SUMS
@@ -194,7 +194,7 @@ cp -a /etc/caddy/sites/codex-mobile-hub.caddy /var/backups/codex-mobile-hub/
 
 完整性检查应为 `ok`。把已校验的版本归档、私有数据库备份和对应配置保存在受控位置，另存一份到其他机器；此教程不提供自动定期数据库备份。恢复时先停止本项目 Hub，保存当前数据库及 sidecar，再还原经验证的快照并恢复 `codexhub` 所有者 / 私有权限；不要向运行中的服务覆盖数据库。配置必须仍与当前域名和应用版本匹配。
 
-安装脚本只负责首次安装，发现旧 `app` 会拒绝。升级需要先备份数据库与配置，检查新版兼容性，再明确替换应用目录并保留回滚路径。不要用删除 `/var/lib/codex-mobile-hub` 或重新初始化管理员代替升级。
+安装脚本只负责首次安装，发现旧 `app` 或配置会拒绝。升级需要先备份数据库与配置，检查新版兼容性，再明确替换应用目录并保留回滚路径。不要用删除 `/var/lib/codex-mobile-hub` 或重新初始化管理员代替升级。v2.0.1 的更新顺序、代码回滚和 Windows 客户端步骤见[升级指南](upgrading-2.0.1.md)。
 
 运行中的 Node 进程不会重新载入已导入的协议模块。升级路由、连接器或 relay 时，不能只替换磁盘文件或仅重启 Hub：还要在没有进行中转发、未知投递或待确认操作的边界，核对并刷新本项目的常驻 connector、桥接 child 和 Hub；保留原 watcher/supervisor、配对凭据、偏好、数据库及环境配置。启动时间早于新协议的 connector 可能仍按旧路由表拒绝新请求，造成断开后重连。验收必须连续读取 status、会话 context/control，并包含一次条件 304，确认同一连接保持、错误类别正确及投递账本不变；不能以健康接口或磁盘 SHA 相等代替这些运行验收。升级后不要自动重试任何聊天、审批或新建提交。
 

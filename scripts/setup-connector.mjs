@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readSecret } from './read-secret.mjs';
 import { pairingNetworkError } from './network-error.mjs';
+import { clockAwareHubFetch } from './hub-clock.mjs';
 import { resetCollaborationForPairing, withCollaborationLock, collaborationResetGeneration, assertCollaborationResetGeneration, assertNoCollaborationReset } from './collaboration-common.mjs';
 
 export const connectorConfigPath = fileURLToPath(new URL('../.local/hub-connector.json', import.meta.url));
@@ -17,14 +18,14 @@ export function hubOrigin(value, allowInsecureLocal = false) {
   if (url.username || url.password || url.pathname !== '/' || url.search || url.hash || (url.protocol !== 'https:' && !(allowInsecureLocal && url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname)))) throw new Error('需要 HTTPS 入口地址。');
   return url.origin;
 }
-export function parsePairingInformation(information, { now = Date.now() } = {}) {
+export function parsePairingInformation(information, { now = Date.now(), checkExpiry = true } = {}) {
   if (typeof information !== 'string' || Buffer.byteLength(information, 'utf8') > 4096) throw new Error('配对信息无效或过大。');
   let value;
   try { value = JSON.parse(information); } catch { throw new Error('配对信息不是有效 JSON。'); }
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== pairingFields.length || pairingFields.some(field => !Object.hasOwn(value, field))) throw new Error('配对信息字段不完整或包含不支持的字段。');
   if (value.type !== 'codex-mobile-pairing' || value.version !== 1 || typeof value.code !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(value.code) || typeof value.name !== 'string' || value.name.length > 80 || /[\x00-\x1f\x7f]/.test(value.name) || typeof value.expiresAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.expiresAt)) throw new Error('配对信息格式无效。');
   const expiry = Date.parse(value.expiresAt);
-  if (!Number.isFinite(expiry) || new Date(expiry).toISOString() !== value.expiresAt || expiry <= now) throw new Error('配对信息已过期或无效。请在网页重新生成。');
+  if (!Number.isFinite(expiry) || new Date(expiry).toISOString() !== value.expiresAt || checkExpiry && expiry <= now) throw new Error('配对信息已过期或无效。请在网页重新生成。');
   let server;
   try { server = hubOrigin(value.server); } catch { throw new Error('配对信息中的 HTTPS 服务器地址无效。'); }
   return { server, origin: server, code: value.code, name: value.name.trim(), expiresAt: new Date(expiry).toISOString() };
@@ -47,8 +48,8 @@ export async function pairConnector(options = {}) {
     return pairConnectorLocked({ ...options, configPath });
   });
 }
-async function pairConnectorLocked({ information, origin, pairingCode, name, bridgePort = 4317, configPath, replace = false, allowInsecureLocal = false, fetchImpl = fetch } = {}) {
-  const ticket = information === undefined ? null : parsePairingInformation(information);
+async function pairConnectorLocked({ information, origin, pairingCode, name, bridgePort = 4317, configPath, replace = false, allowInsecureLocal = false, fetchImpl } = {}) {
+  const ticket = information === undefined ? null : parsePairingInformation(information, { checkExpiry: false });
   const hub = hubOrigin(ticket?.server ?? origin, allowInsecureLocal);
   pairingCode = ticket?.code ?? pairingCode;
   name = ticket?.name ?? name;
@@ -57,7 +58,7 @@ async function pairConnectorLocked({ information, origin, pairingCode, name, bri
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   let response;
   try {
-    response = await fetchImpl(`${hub}/api/hub/connect`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: hub, 'X-Bridge-Client': 'mobile-v1' }, body: JSON.stringify({ pairingCode, ...(ticket && !name ? {} : { name }) }), signal: AbortSignal.timeout(15000) });
+    response = await (fetchImpl || ((endpoint, options) => clockAwareHubFetch({ hubOrigin: hub, allowInsecureLocal }, endpoint, options, pairingCode)))(`${hub}/api/hub/connect`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: hub, 'X-Bridge-Client': 'mobile-v1' }, body: JSON.stringify({ pairingCode, ...(ticket && !name ? {} : { name }) }), signal: AbortSignal.timeout(30000) });
   } catch (error) { throw pairingNetworkError(error); }
   if (!response.ok) throw new Error('设备配对失败；请在网页检查配对码并重新生成。');
   let value;

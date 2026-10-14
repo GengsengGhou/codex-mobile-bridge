@@ -47,9 +47,9 @@ export async function mcpCall(client, name, args = {}) {
   if (operation === 'download') return client.download(deviceId, request.threadId, request.path);
   return client.call(deviceId, { operation, ...request });
 }
-export function serveMcp({ root, input = process.stdin, output = process.stdout } = {}) {
+export function serveMcp({ root, input = process.stdin, output = process.stdout, fetchImpl } = {}) {
   root = resolve(root);
-  const client = createCollaborationClient({ root }); let pending = 0;
+  const client = createCollaborationClient({ root, fetchImpl }); let pending = 0;
   const lines = createInterface({ input, crlfDelay: Infinity });
   const lifecycle = setInterval(async () => {
     try {
@@ -79,7 +79,7 @@ export function serveMcp({ root, input = process.stdin, output = process.stdout 
       pending++;
       let result;
       try {
-        if (message.method === 'initialize') result = { protocolVersion: ['2024-11-05', '2025-03-26', '2025-06-18'].includes(message.params?.protocolVersion) ? message.params.protocolVersion : '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'codex-mobile-computer-collaboration', version: '2.0.0' } };
+        if (message.method === 'initialize') result = { protocolVersion: ['2024-11-05', '2025-03-26', '2025-06-18'].includes(message.params?.protocolVersion) ? message.params.protocolVersion : '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'codex-mobile-computer-collaboration', version: '2.0.1' } };
         else if (message.method === 'ping') result = {};
         else if (message.method === 'tools/list') result = { tools: collaborationTools };
         else if (message.method === 'tools/call') {

@@ -14,6 +14,12 @@ if ($marker.version -ne 1 -or [IO.Path]::GetFullPath($marker.root) -cne $Root) {
 $node = Join-Path $Root 'runtime/node.exe'
 $gui = Join-Path $Root 'scripts/connector-gui.mjs'
 $collaboration = Join-Path $Root 'scripts/collaboration-lifecycle.mjs'
+$compatibility = Join-Path $Root 'scripts/collaboration-compatibility.mjs'
+$launch = $null
+if (Test-Path -LiteralPath (Join-Path $Root '.local/collaboration-launcher.json')) {
+    $launch = & $node $compatibility --launch-info --install-root $Root | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or -not $launch.command -or $launch.args.Count -ne 2 -or $launch.args[0] -cne '--install-root' -or $launch.args[1] -cne $Root) { throw 'Collaboration launcher ownership cannot be verified.' }
+}
 if ((Test-Path -LiteralPath $node) -and (Test-Path -LiteralPath $collaboration)) {
     $cleaned = & $node $collaboration --uninstall | ConvertFrom-Json
     if (-not $cleaned.ok -or -not $cleaned.disabled) { throw ('Computer collaboration cleanup could not be confirmed. Existing Codex configuration was preserved. Uninstall was stopped. ' + $cleaned.error) }
@@ -53,6 +59,7 @@ function Owned-Processes($entries, $includeGui) {
     @(foreach ($process in Get-CimInstance Win32_Process) {
         if ($process.ProcessId -eq $PID -or -not $process.ExecutablePath) { continue }
         $owned = $includeGui -and $process.ExecutablePath -ceq (Join-Path $Root 'CodexMobileConnector.exe')
+        if ($launch -and $process.ExecutablePath -ceq $launch.command -and $process.CommandLine -match ('(?i)(?:^|\s)"?--install-root"?\s+"'+[regex]::Escape($Root)+'"(?:\s|$)')) { $owned = $true }
         if ($process.ExecutablePath -ceq $node -and $process.CommandLine) {
         foreach ($entry in $entries) {
             $script = Join-Path $Root $entry
@@ -75,6 +82,10 @@ function Stop-Owned($entries, $includeGui) {
 Stop-Owned @('scripts/connector-login.mjs','scripts/start.mjs','scripts/supervisor.mjs') $false
 Stop-Owned @('scripts/start-connector.mjs','scripts/collaboration-mcp.mjs','src/server.mjs') $true
 if (@(Owned-Processes @('scripts/connector-login.mjs','scripts/start-connector.mjs','scripts/start.mjs','scripts/supervisor.mjs','scripts/collaboration-mcp.mjs','src/server.mjs') $true).Count -ne 0) { throw 'Installation processes are still running.' }
+if ($launch) {
+    $removed = & $node $compatibility --remove-launcher --install-root $Root | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or -not $removed.removed) { throw 'Collaboration launcher cleanup could not be confirmed. Uninstall was stopped.' }
+}
 function Remove-OwnedShortcuts([string]$InstallationRoot, [string[]]$Directories) {
     $executable = Join-Path $InstallationRoot 'CodexMobileConnector.exe'
     $shell = New-Object -ComObject WScript.Shell

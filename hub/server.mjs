@@ -12,6 +12,8 @@ import { HubError } from './errors.mjs';
 import { HubRelay } from './relay.mjs';
 import { allowedBridgeRequest } from './protocol.mjs';
 import { hubResources } from './resources.mjs';
+import { createClockBootstrap } from './clock-bootstrap.mjs';
+import { CLOCK_PATH } from '../src/clock-protocol.mjs';
 import { publicAssets, assetContentType, appCsp } from '../src/static-assets.mjs';
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
@@ -54,6 +56,8 @@ export function createHubServer({ store = new HubStore(), publicOrigin, allowIns
   }, maintenanceIntervalMs);
   maintenance.unref();
   let activeHttp = 0;
+  let activeClock = 0;
+  const clockBootstrap = createClockBootstrap({ store });
   function requestOrigin(req) {
     const origin = configuredOrigin || `http://127.0.0.1:${server.address()?.port}`;
     if (req.headers.host !== new URL(origin).host) throw new HubError('入口地址不匹配。', 'FORBIDDEN', 403);
@@ -99,6 +103,13 @@ export function createHubServer({ store = new HubStore(), publicOrigin, allowIns
       const origin = requestOrigin(req);
       if (!req.url.startsWith('/') || req.url.startsWith('//') || /[\\\x00-\x20]/.test(req.url) || /%(?:2f|5c)/i.test(req.url.split('?')[0])) throw new HubError('请求地址无效。', 'INVALID_REQUEST', 400);
       const url = new URL(req.url, origin);
+      if (req.method === 'POST' && url.pathname === CLOCK_PATH && !url.search) {
+        if (req.headers.authorization || req.headers.cookie || activeClock >= 8) throw new HubError('CLOCK_BUSY', 'CLOCK_BUSY', 503);
+        activeClock++;
+        try { const body = await readJson(req, ['version', 'type', 'origin', 'subject', 'nonce', 'mac'], 4096); json(res, 200, clockBootstrap(body, origin, clientIp(req))); }
+        finally { activeClock--; }
+        return;
+      }
       if (req.method === 'GET' && url.pathname === '/healthz') { json(res, 200, { ok: true }); return; }
       if (req.method === 'GET' && ['/favicon.svg', '/favicon.png'].includes(url.pathname)) { await serveAsset(req, res, url.pathname.slice(1), sharedPublic); return; }
       if (req.method === 'GET' && ['/', '/hub.js', '/hub.css'].includes(url.pathname)) { await serveAsset(req, res, url.pathname === '/' ? 'index.html' : url.pathname.slice(1), hubPublic); return; }

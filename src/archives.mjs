@@ -6,13 +6,14 @@ const validLocal = t => t?.kind === 'codex' && t.hostId === 'local' && UUID.test
 export function createArchiveHandler({ bridge, inScope }) {
   // A restore can only target a recently listed local archive. No client-supplied host.
   const listed = new Map(), restoring = new Set();
+  const monotonicNow = () => performance.now();
   const json = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); };
   return async function handleArchives(req, res, url) {
     const restore = url.pathname.match(/^\/api\/archives\/([^/]+)\/restore$/);
     if (url.pathname !== '/api/archives' && !restore) return false;
     const names = await bridge.capabilities();
     if (!names.includes('list_archived_threads') || typeof bridge.call !== 'function') throw new BridgeError('当前桌面不支持读取归档会话', 'ARCHIVES_UNAVAILABLE', 503);
-    for (const [id, at] of listed) if (Date.now() - at > 10 * 60 * 1000) listed.delete(id);
+    for (const [id, at] of listed) if (monotonicNow() - at > 10 * 60 * 1000) listed.delete(id);
     if (!restore) {
       if (req.method !== 'GET') throw new BridgeError('不支持的操作', 'METHOD_NOT_ALLOWED', 405);
       const cursor = url.searchParams.get('cursor');
@@ -20,7 +21,7 @@ export function createArchiveHandler({ bridge, inScope }) {
       const data = await bridge.call('list_archived_threads', { source: 'codex', hostId: 'local', limit: 30, ...(cursor ? { cursor } : {}) });
       if (!Array.isArray(data?.threads) || (data.nextCursor != null && (typeof data.nextCursor !== 'string' || data.nextCursor.length > 512))) throw new BridgeError('归档列表格式不兼容', 'PROTOCOL_ERROR', 502);
       const threads = data.threads.filter(validLocal).map(t => {
-        listed.delete(t.id); listed.set(t.id, Date.now());
+        listed.delete(t.id); listed.set(t.id, monotonicNow());
         const canRestore = inScope(t.id) && !t.delegated && !isDelegatedThread(t) && names.includes('set_thread_archived');
         return { id: t.id, title: typeof t.title === 'string' && t.title ? t.title : '未命名会话', cwd: typeof t.cwd === 'string' ? t.cwd : '', updatedAt: t.updatedAt, canRestore };
       });

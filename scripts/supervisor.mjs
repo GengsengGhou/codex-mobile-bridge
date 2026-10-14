@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createConnection } from 'node:net';
 import { loadRuntimeConfig } from '../src/runtime.mjs';
 import { readRecoveryFile, writeRecoveryFile, RECOVERY_ROOT } from '../src/recovery.mjs';
+import { elapsedNow } from '../src/elapsed-time.mjs';
 import { assertNoCollaborationReset } from './collaboration-common.mjs';
 
 export const restartDelay = (failures, { baseMs = 1000, maximumMs = 30000 } = {}) => Math.min(maximumMs, baseMs * 2 ** Math.min(Math.max(0, failures - 1), 20));
@@ -21,6 +22,7 @@ export async function runSupervisor({ root = RECOVERY_ROOT, serverPath = resolve
   loadConfig = () => loadRuntimeConfig({ env: {}, configPath: resolve(root, '.local/runtime.json') }),
   isPortOccupied = portOccupied,
   sleep = ms => new Promise(done => setTimeout(done, ms)), now = Date.now,
+  monotonicNow = elapsedNow,
   heartbeatMs = 1000, stableMs = 60000, backoff = {}, writeState = writeRecoveryFile } = {}) {
   await assertNoCollaborationReset(root);
   await mkdir(resolve(root, '.local'), { recursive: true });
@@ -29,7 +31,7 @@ export async function runSupervisor({ root = RECOVERY_ROOT, serverPath = resolve
   const state = { supervisorPid: process.pid, childPid: null, state: 'waiting', restartCount: 0, lastRestartAt: null, lastError: null };
   let writeQueue = Promise.resolve();
   const publish = () => {
-    const snapshot = { ...state, updatedAt: new Date(now()).toISOString() };
+    const snapshot = { ...state, heartbeatMonotonicMs: monotonicNow(), updatedAt: new Date(now()).toISOString() };
     writeQueue = writeQueue.catch(() => {}).then(() => writeState(statePath, snapshot));
     return writeQueue;
   };
@@ -38,7 +40,7 @@ export async function runSupervisor({ root = RECOVERY_ROOT, serverPath = resolve
   try {
     while (true) {
       await assertNoCollaborationReset(root);
-      let startedAt = now();
+      let startedAt = monotonicNow();
       let stdout, stderr;
       try {
         const config = await loadConfig();
@@ -66,7 +68,7 @@ export async function runSupervisor({ root = RECOVERY_ROOT, serverPath = resolve
       state.childPid = null;
       const preferences = await readRecoveryFile(preferencePath, { autoRestart: true });
       if (!preferences.autoRestart) break;
-      failures = now() - startedAt >= stableMs ? 1 : failures + 1;
+      failures = monotonicNow() - startedAt >= stableMs ? 1 : failures + 1;
       state.state = 'waiting';
       await publish();
       await sleep(restartDelay(failures, backoff));

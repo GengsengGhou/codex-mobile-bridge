@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { readPrivate, writePrivate, fail, withCollaborationLock } from './collaboration-common.mjs';
 import { privateFile } from './setup-connector.mjs';
+import { readCollaborationLaunch, ownedCollaborationLaunch } from './collaboration-launcher.mjs';
 
 export const collaborationServerName = 'codex_mobile_computer_collaboration';
 const hash = data => createHash('sha256').update(data).digest('hex');
@@ -21,6 +22,33 @@ function sameOwnedCoreWithTools(current, ledgerEntry) {
   if (!current || !Object.hasOwn(current, 'tools') || Object.hasOwn(ledgerEntry, 'tools') || !validToolSettings(current.tools)) return false;
   const core = { ...current }; delete core.tools;
   return isDeepStrictEqual(core, ledgerEntry);
+}
+export function supportedPreferences(entry) {
+  return Object.entries(entry).every(([key, value]) => ['command', 'args'].includes(key) || key === 'tools' && validToolSettings(value) || key === 'enabled' && typeof value === 'boolean' || ['startup_timeout_sec', 'tool_timeout_sec'].includes(key) && Number.isFinite(value) && value > 0 || ['enabled_tools', 'disabled_tools'].includes(key) && Array.isArray(value) && value.every(name => typeof name === 'string' && name.length > 0));
+}
+export function sameOwnedLaunchWithPreferences(current, ledgerEntry) {
+  return !!current && supportedPreferences(current) && isDeepStrictEqual(current.command, ledgerEntry.command) && isDeepStrictEqual(current.args, ledgerEntry.args);
+}
+function replaceLaunchStatements(before, parsed, entry) {
+  let header = '', own = false, found = new Set(), after = before;
+  const spans = [];
+  for (const statement of statements(before)) {
+    const trimmed = statement.text.trimStart(); if (!trimmed || trimmed.startsWith('#')) continue;
+    if (trimmed.startsWith('[')) { header = statement.text; const value = TOML.parse(header); own = !!value.mcp_servers?.[collaborationServerName] && !Object.keys(withoutRegistration(value)).length; continue; }
+    const value = TOML.parse(header + statement.text), candidate = value.mcp_servers?.[collaborationServerName];
+    if (!candidate || !own) continue;
+    for (const key of ['command', 'args']) if (Object.hasOwn(candidate, key)) {
+      // Only replace ordinary scalar/array launch assignments. Mixed inline or
+      // dotted tables are preserved for an explicit ownership review.
+      if (Object.keys(candidate).length !== 1 || Object.keys(withoutRegistration(value)).length || found.has(key)) conflict();
+      spans.push({ ...statement, replacement: `${key} = ${JSON.stringify(entry[key])}${statement.text.endsWith('\r\n') ? '\r\n' : '\n'}` }); found.add(key);
+    }
+  }
+  if (found.size !== 2) conflict();
+  for (const span of spans.reverse()) after = after.slice(0, span.start) + span.replacement + after.slice(span.end);
+  const updated = TOML.parse(after), expected = { ...parsed.mcp_servers[collaborationServerName], command: entry.command, args: entry.args };
+  if (!isDeepStrictEqual(withoutRegistration(parsed), withoutRegistration(updated)) || !isDeepStrictEqual(updated.mcp_servers[collaborationServerName], expected)) conflict();
+  return after;
 }
 function withoutRegistration(parsed) {
   const value = structuredClone(parsed);
@@ -110,7 +138,10 @@ export async function removeCollaborationForReset({ root, codexHome = process.en
     if (!current) return { removed: false, preserved: false };
     const equalPath = (actual, expected) => typeof actual === 'string' && isAbsolute(actual) && (process.platform === 'win32' ? resolve(actual).toLowerCase() === resolve(expected).toLowerCase() : resolve(actual) === resolve(expected));
     const knownKeys = ['command', 'args', 'tools', 'enabled', 'startup_timeout_sec', 'tool_timeout_sec', 'enabled_tools', 'disabled_tools'];
-    const owned = equalPath(current.command, resolve(root, 'runtime/node.exe')) && Array.isArray(current.args) && current.args.length === 1 && equalPath(current.args[0], resolve(root, 'scripts/collaboration-mcp.mjs')) && Object.keys(current).every(key => knownKeys.includes(key));
+    const launch = await readCollaborationLaunch(root);
+    const legacy = equalPath(current.command, resolve(root, 'runtime/node.exe')) && Array.isArray(current.args) && current.args.length === 1 && equalPath(current.args[0], resolve(root, 'scripts/collaboration-mcp.mjs'));
+    const native = await ownedCollaborationLaunch(root, current);
+    const owned = (legacy || native) && Object.keys(current).every(key => knownKeys.includes(key));
     if (!owned) return { removed: false, preserved: true, code: 'MCP_RESET_REGISTRATION_UNVERIFIED' };
     const after = removeReformattedRegistration(before, parsed);
     const backup = resolve(root, `.local/collaboration-reset-config-backup-${randomUUID()}.toml`); await noLinks(backup);
@@ -119,7 +150,7 @@ export async function removeCollaborationForReset({ root, codexHome = process.en
     return { removed: true, preserved: false };
   });
 }
-async function editRegistration({ root, enabled, codexHome = process.env.CODEX_HOME || resolve(homedir(), '.codex'), nodePath, beforeReplace } = {}) {
+async function editRegistration({ root, enabled, codexHome = process.env.CODEX_HOME || resolve(homedir(), '.codex'), nodePath, beforeReplace, upgradeLaunch = false } = {}) {
   const configPath = resolve(codexHome, 'config.toml'); const ledgerPath = resolve(root, '.local/collaboration-registration.json');
   await noLinks(configPath); await noLinks(ledgerPath);
   let before = ''; try { before = await readFile(configPath, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
@@ -129,7 +160,7 @@ async function editRegistration({ root, enabled, codexHome = process.env.CODEX_H
   if (ledger?.pending) {
     let backupBytes; try { backupBytes = await readFile(backup); } catch { fail('MCP_REGISTRATION_RECOVERY_REQUIRED', 409, '电脑协作配置保存曾中断且备份不可用。请先核对 Codex 配置，切勿重复覆盖。'); }
     if (hash(backupBytes) !== ledger.beforeHash) fail('MCP_REGISTRATION_RECOVERY_REQUIRED', 409, '电脑协作配置备份已改变，请先核对本机 Codex 配置。');
-    if (hash(before) === ledger.beforeHash && ledger.pendingAction === 'enable') { await rm(ledgerPath, { force: true }); ledger = null; }
+    if (hash(before) === ledger.beforeHash && ledger.pendingAction === 'enable') { if (ledger.previousLedger) { ledger = ledger.previousLedger; await writePrivate(ledgerPath, ledger); } else { await rm(ledgerPath, { force: true }); ledger = null; } }
     else if (hash(before) === ledger.afterHash && ledger.pendingAction === 'disable') { await rm(ledgerPath, { force: true }); ledger = null; }
     else if (hash(before) === ledger.afterHash && ledger.pendingAction === 'enable' || hash(before) === ledger.beforeHash && ledger.pendingAction === 'disable') { ledger = { ...ledger, pending: false }; await writePrivate(ledgerPath, ledger); }
     else fail('MCP_REGISTRATION_RECOVERY_REQUIRED', 409, '电脑协作配置保存曾中断。已保留本机私有备份，请先核对恢复后重试；当前配置不会被自动覆盖。');
@@ -146,44 +177,53 @@ async function editRegistration({ root, enabled, codexHome = process.env.CODEX_H
   // Accept only that bounded subtree on a verified, otherwise unchanged entry;
   // never import these preferences into the ownership ledger or rewrite them.
   const ownedTools = !!ledger && sameOwnedCoreWithTools(current, ledgerEntry);
-  const owned = !!ledger && !!current && (isDeepStrictEqual(current, ledgerEntry) || ownedTools);
+  // A validated ledger plus this installation's freshly verified launch owner
+  // can repair a missing old version. An existing version must still hash-match.
+  const ledgerNative = ledger && await ownedCollaborationLaunch(root, ledgerEntry, { allowMissing: true });
+  const ownedPreferences = !!ledger && (upgradeLaunch || ledgerNative) && sameOwnedLaunchWithPreferences(current, ledgerEntry);
+  const owned = !!ledger && !!current && (isDeepStrictEqual(current, ledgerEntry) || ownedTools || ownedPreferences);
   if (current && !owned) conflict();
   if (ledger && !current) { await rm(ledgerPath, { force: true }); ledger = null; }
+  const launch = enabled ? await readCollaborationLaunch(root) : null;
+  let migrating = false;
   if (enabled && owned) {
     // A copied ledger can prove the unchanged entry yet still launch another
     // installation's pairing files. Never report this root as ready or rewrite
     // that entry automatically; explicit disable/enable uses verified ownership.
     const script = ledgerEntry.args?.[0], expected = resolve(root, 'scripts/collaboration-mcp.mjs');
     const comparable = value => process.platform === 'win32' ? value.toLowerCase() : value;
-    if (!Array.isArray(ledgerEntry.args) || ledgerEntry.args.length !== 1 || typeof script !== 'string' || !isAbsolute(script) || comparable(resolve(script)) !== comparable(expected)) fail('MCP_REGISTRATION_ROOT_MISMATCH', 409, ownedTools ? '电脑协作连接仍指向另一个安装目录。Codex 配置、工具设置和配对已完整保留，请先核对安装路径与工具限制后重试。' : '电脑协作连接仍指向另一个安装目录。已保留 Codex 配置和配对；确认是本产品的旧连接后，关闭指挥并保存，再重新开启并保存。');
-    return { status: 'registered', message: '电脑协作已就绪。请在 Codex 中重新加载连接。' };
+    const native = ledgerNative;
+    const legacy = Array.isArray(ledgerEntry.args) && ledgerEntry.args.length === 1 && typeof script === 'string' && isAbsolute(script) && comparable(resolve(script)) === comparable(expected);
+    if (!native && !legacy) fail('MCP_REGISTRATION_ROOT_MISMATCH', 409, ownedTools ? '电脑协作连接仍指向另一个安装目录。Codex 配置、工具设置和配对已完整保留，请先核对安装路径与工具限制后重试。' : '电脑协作连接仍指向另一个安装目录。已保留 Codex 配置和配对；确认是本产品的旧连接后，关闭指挥并保存，再重新开启并保存。');
+    migrating = !!launch && (!isDeepStrictEqual(ledgerEntry.command, launch.command) || !isDeepStrictEqual(ledgerEntry.args, launch.args));
+    if (!migrating) return { status: 'registered', message: '电脑协作已就绪。请在 Codex 中重新加载连接。' };
   }
   if (!enabled && !current && !ledger) return { status: 'disabled' };
   // Removing the entry would also erase the user's tool restrictions. The
   // caller has already disabled local authorization, so retain both config and
   // ownership evidence for a later explicit enable without resetting limits.
-  if (!enabled && ownedTools) return { status: 'disabled', configurationPreserved: true, ownedRegistrationRemoved: false, message: '电脑协作已关闭。Codex 中的工具设置已完整保留，重新开启不会重置工具限制。' };
+  if (!enabled && (ownedTools || ownedPreferences && Object.keys(current).some(key => !['command', 'args'].includes(key)))) return { status: 'disabled', configurationPreserved: true, ownedRegistrationRemoved: false, message: '电脑协作已关闭。Codex 中的工具设置已完整保留，重新开启不会重置工具限制。' };
   let after, block, entry;
   if (enabled) {
     nodePath ||= resolve(root, 'runtime/node.exe'); try { await access(nodePath); } catch { nodePath = process.execPath; }
-    entry = { command: nodePath, args: [resolve(root, 'scripts/collaboration-mcp.mjs')] };
-    block = `# BEGIN codex-mobile-bridge computer collaboration v1\n[mcp_servers.${collaborationServerName}]\ncommand = ${JSON.stringify(entry.command)}\nargs = ${JSON.stringify(entry.args)}\n# END codex-mobile-bridge computer collaboration v1\n`;
-    after = before + (before && !before.endsWith('\n') ? '\n' : '') + block;
+    entry = launch || { command: nodePath, args: [resolve(root, 'scripts/collaboration-mcp.mjs')] };
+    block = `# BEGIN codex-mobile-bridge computer collaboration v1\n${TOML.stringify({ mcp_servers: { [collaborationServerName]: entry } })}# END codex-mobile-bridge computer collaboration v1\n`;
+    after = migrating ? replaceLaunchStatements(before, parsed, entry) : before + (before && !before.endsWith('\n') ? '\n' : '') + block;
   } else {
     const exact = ledger.inserted || ledger.block;
     after = before.split(exact).length === 2 ? before.replace(exact, '') : removeReformattedRegistration(before, parsed);
   }
   let updated; try { updated = TOML.parse(after); } catch { conflict(); }
-  if (!isDeepStrictEqual(withoutRegistration(parsed), withoutRegistration(updated)) || enabled && !isDeepStrictEqual(updated.mcp_servers?.[collaborationServerName], entry) || !enabled && updated.mcp_servers?.[collaborationServerName]) conflict();
+  if (!isDeepStrictEqual(withoutRegistration(parsed), withoutRegistration(updated)) || enabled && !isDeepStrictEqual(updated.mcp_servers?.[collaborationServerName], migrating ? { ...current, ...entry } : entry) || !enabled && updated.mcp_servers?.[collaborationServerName]) conflict();
   await mkdir(dirname(configPath), { recursive: true }); await noLinks(configPath);
   await mkdir(dirname(backup), { recursive: true, mode: 0o700 }); await noLinks(backup);
   const backupFile = await open(backup, 'w', 0o600); try { await backupFile.writeFile(before); await backupFile.sync(); } finally { await backupFile.close(); } await privateFile(backup);
   // Save intent before editing, so a crash cannot leave an unowned entry.
-  const nextLedger = enabled ? { version: 1, configPath, entry, block, inserted: after.slice(before.length), blockHash: hash(block) } : ledger;
-  await writePrivate(ledgerPath, { ...nextLedger, pending: true, pendingAction: enabled ? 'enable' : 'disable', beforeHash: hash(before), afterHash: hash(after) });
+  const nextLedger = enabled ? { version: 1, configPath, entry, block, ...(migrating ? {} : { inserted: after.slice(before.length) }), blockHash: hash(block) } : ledger;
+  await writePrivate(ledgerPath, { ...nextLedger, ...(migrating ? { previousLedger: ledger } : {}), pending: true, pendingAction: enabled ? 'enable' : 'disable', beforeHash: hash(before), afterHash: hash(after) });
   await beforeReplace?.();
   try { await replaceLocked(configPath, before, after); }
-  catch (e) { const actual = await readFile(configPath, 'utf8').catch(() => ''); if (hash(actual) === hash(before)) { if (enabled) await rm(ledgerPath, { force: true }); else await writePrivate(ledgerPath, ledger); } throw e; }
+  catch (e) { const actual = await readFile(configPath, 'utf8').catch(() => ''); if (hash(actual) === hash(before)) { if (enabled && !migrating) await rm(ledgerPath, { force: true }); else await writePrivate(ledgerPath, ledger); } throw e; }
   if (!enabled) await rm(ledgerPath, { force: true }); else await writePrivate(ledgerPath, nextLedger);
   return { status: enabled ? 'registered' : 'disabled', ...(enabled ? { message: '电脑协作已就绪。请在 Codex 中重新加载连接。' } : {}) };
 }

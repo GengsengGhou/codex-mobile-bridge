@@ -13,7 +13,7 @@ export function createDesktopRequest({ preferredPipe, request = pipeRequest, can
   let selected = preferredPipe, discovering = null, retryAfter = 0;
   async function discover() {
     if (discovering) return discovering;
-    if (Date.now() < retryAfter) throw new BridgeError('正在等待 Codex 桌面重新连接。');
+    if (performance.now() < retryAfter) throw new BridgeError('正在等待 Codex 桌面重新连接。');
     discovering = (async () => {
       const paths = await candidates();
       const matches = [];
@@ -32,7 +32,7 @@ export function createDesktopRequest({ preferredPipe, request = pipeRequest, can
       return selected;
     })();
     try { return await discovering; }
-    catch (error) { retryAfter = Date.now() + 3000; throw error instanceof BridgeError ? error : new BridgeError('暂时无法发现 Codex 桌面连接。'); }
+    catch (error) { retryAfter = performance.now() + 3000; throw error instanceof BridgeError ? error : new BridgeError('暂时无法发现 Codex 桌面连接。'); }
     finally { discovering = null; }
   }
   return async (_path, method, params, options = {}) => {

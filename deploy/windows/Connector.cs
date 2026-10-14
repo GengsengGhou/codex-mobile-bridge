@@ -17,9 +17,9 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-[assembly: AssemblyVersion("2.0.0.0")]
-[assembly: AssemblyFileVersion("2.0.0.0")]
-[assembly: AssemblyInformationalVersion("2.0.0")]
+[assembly: AssemblyVersion("2.0.1.0")]
+[assembly: AssemblyFileVersion("2.0.1.0")]
+[assembly: AssemblyInformationalVersion("2.0.1")]
 [assembly: AssemblyTitle("Codex Mobile Bridge")]
 [assembly: AssemblyProduct("Codex Mobile Bridge")]
 [assembly: AssemblyDescription("Codex Mobile Bridge")]
@@ -100,6 +100,11 @@ static class ConnectorBootstrap {
     [MethodImpl(MethodImplOptions.NoInlining)]
     static Form InstalledWindow(string root,string[] args) { return new ConnectorWindow(root,args); }
     [STAThread] static void Main(string[] args) {
+        // Do this before reading the installation marker, locale, or pairing.
+        // Setup launched by Codex must repair the ordinary user installation.
+        try { int result;if(DesktopContext.RestartOutside(Application.ExecutablePath,args,false,out result)){Environment.ExitCode=result;return;} }
+        catch {MessageBox.Show("无法打开共享连接状态。请从下载目录运行安装包并选择修复安装，再重新启动 Codex。\nCannot open shared connector state. Run Repair installation from Downloads, then restart Codex.","Codex Mobile Bridge");Environment.ExitCode=1;return;}
+        args=args.Where(value=>value!="--desktop-context-hop"&&value!="--desktop-context-final").ToArray();
         SetCurrentProcessExplicitAppUserModelID(ShortcutIdentity.AppId);
         EnableDpiAwareness();Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
         string root=Argument(args,"--install-root")??Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"CodexMobileConnector");
@@ -255,12 +260,19 @@ class InstallerWindow : Form {
                     Directory.CreateDirectory(root);ExtractPayload(root);File.Copy(Application.ExecutablePath,Path.Combine(root,"CodexMobileConnector.exe"),true);
                     File.WriteAllText(Path.Combine(root,"installed.json"),new JavaScriptSerializer().Serialize(new{root=root,version=1,application="codex-mobile-bridge",appVersion=ConnectorBootstrap.Version}));
                 }
+                PrepareCollaborationLaunch();
                 if(ConnectorBootstrap.IsDefaultRoot(root)){ConnectorBootstrap.EnsureShortcut(root,true);Register();}
             });
             DesktopLocale.Save(root,chosenLanguage);
             NoLinks(root+".install-error.txt");if(File.Exists(root+".install-error.txt"))File.Delete(root+".install-error.txt");
+            if(!unattended)DesktopDialog.Show(this,DesktopLocale.T("安装已完成。请完全退出并重新打开 Codex，以使用已更新的协作连接。现有配对、授权和工具设置已保留。"),"Codex Mobile Bridge",MessageBoxButtons.OK,MessageBoxIcon.Information);
             if(!unattended)Process.Start(new ProcessStartInfo(Path.Combine(root,"CodexMobileConnector.exe"),"--install-root \""+root+"\""){UseShellExecute=true});Close();
         } catch(Exception error) {status.Text=DesktopLocale.T(repairing?"修复安装":upgrading?"升级":"安装")+DesktopLocale.T("失败：")+DesktopLocale.Diagnostic(error.Message);install.Enabled=true;language.Enabled=true;if(unattended){try{NoLinks(root+".install-error.txt");File.WriteAllText(root+".install-error.txt",error.Message);}catch{}Environment.ExitCode=1;Close();}}
+    }
+    void PrepareCollaborationLaunch() {
+        var info=new ProcessStartInfo(Path.Combine(root,"runtime","node.exe"),"\""+Path.Combine(root,"scripts","collaboration-compatibility.mjs")+"\" --install-root \""+root+"\""){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
+        ConnectorBootstrap.ClearRuntimeOverrides(info);info.EnvironmentVariables.Remove("NODE_OPTIONS");info.EnvironmentVariables.Remove("NODE_PATH");
+        using(var process=Process.Start(info)){var output=process.StandardOutput.ReadToEndAsync();var error=process.StandardError.ReadToEndAsync();if(!process.WaitForExit(30000)){process.Kill();throw new Exception("协作启动配置未完成，请重试修复安装。");}Task.WaitAll(output,error);if(process.ExitCode!=0)throw new Exception("协作启动配置未完成。配对、授权和 Codex 设置已保留，请重试修复安装。");}
     }
     void RunUpgradeHelper(string stage,bool recover) {
         string flags=recover?" -Recover":(Array.IndexOf(arguments,"--qa-upgrade-fail")>=0&&!ConnectorBootstrap.IsDefaultRoot(root)?" -QaFailAfterCopy":"")+(Array.IndexOf(arguments,"--qa-upgrade-abort")>=0&&!ConnectorBootstrap.IsDefaultRoot(root)?" -QaAbortAfterMove":"")+(Array.IndexOf(arguments,"--qa-upgrade-abort-committed")>=0&&!ConnectorBootstrap.IsDefaultRoot(root)?" -QaAbortCommitted":"");

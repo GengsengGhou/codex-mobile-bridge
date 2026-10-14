@@ -133,7 +133,9 @@ test('real uninstall entry helper completes only after verified stop; preserved 
   try { await link(process.execPath, resolve(f.root, 'runtime/node.exe')); }
   catch (error) { if (error.code !== 'EXDEV') throw error; await copyFile(process.execPath, resolve(f.root, 'runtime/node.exe')); }
   await mkdir(resolve(f.root, 'scripts'));
-  for (const name of ['collaboration-lifecycle.mjs', 'collaboration-common.mjs', 'collaboration-registration.mjs', 'setup-connector.mjs', 'read-secret.mjs', 'network-error.mjs']) await copyFile(new URL('../scripts/' + name, import.meta.url), resolve(f.root, 'scripts', name));
+  for (const name of ['collaboration-lifecycle.mjs', 'collaboration-common.mjs', 'collaboration-registration.mjs', 'collaboration-launcher.mjs', 'setup-connector.mjs', 'read-secret.mjs', 'network-error.mjs', 'hub-clock.mjs']) await copyFile(new URL('../scripts/' + name, import.meta.url), resolve(f.root, 'scripts', name));
+  await mkdir(resolve(f.root, 'src'));
+  await copyFile(new URL('../src/clock-protocol.mjs', import.meta.url), resolve(f.root, 'src/clock-protocol.mjs'));
   const gui = resolve(f.root, 'scripts/connector-gui.mjs');
   await writeFile(gui, 'console.log(JSON.stringify({ok:true,disconnectVerified:false}));\n');
   const helper = fileURLToPath(new URL('../deploy/uninstall-connector.ps1', import.meta.url));

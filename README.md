@@ -13,7 +13,7 @@
 
 ## 下载
 
-普通用户推荐下载 [Windows x64 图形安装器](https://github.com/GengsengGhou/codex-mobile-bridge/releases/download/v2.0.0/CodexMobileConnector-Setup.exe)，它内置 Node.js 和连接依赖；Windows 需要 WebView2 Runtime，缺少时按提示安装。Windows ZIP 是终端安装备用包；VPS 管理员可从[发行页面](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v2.0.0)下载 `codex-device-hub.tar.gz` 和 `SHA256SUMS`。
+v2.0.1 发布资产为 Windows x64 图形安装器 `CodexMobileConnector-Setup.exe`、Hub 部署包 `codex-device-hub.tar.gz` 和 `SHA256SUMS`；清单校验两个安装产物。该版本不发布 Windows ZIP；v2.0.0 ZIP 是历史资产。普通用户推荐从[最新发行页面](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest)下载图形安装器，它内置 Node.js 和连接依赖；Windows 需要 WebView2 Runtime，缺少时按提示安装。VPS 管理员从同一发行版下载 Hub 包与校验清单。
 
 安装前从同一 Release 下载 `SHA256SUMS` 并核对文件哈希。安装包未签名，Windows 可能显示发布者或信誉提示。
 
@@ -28,4 +28,6 @@
 
 电脑必须开机、联网并已登录 Windows，Codex 桌面和连接器都要运行。Hub 会中转请求和内容，因此只使用可信服务；本项目不提供端到端加密。这是非官方工具，Codex 桌面更新后可能需要适配。电脑协作需目标端明确授权来源设备和项目，任务使用目标电脑的本地 Codex 权限，不会自动批准操作或提供任意文件访问。模型提供方和 API 密钥保留在各自电脑。
 
-配对、修复和排错见[快速开始](docs/quick-start.md)与[Windows 安装说明](docs/windows-installer.md)；VPS 管理员见[部署指南](docs/native-vps-deployment.md)；其他文档和开发验证见[文档索引](docs/README.md)。
+配对、修复和排错见[快速开始](docs/quick-start.md)与[Windows 安装说明](docs/windows-installer.md)；从旧版升级见[2.0.1 升级指南](docs/upgrading-2.0.1.md)；VPS 管理员见[部署指南](docs/native-vps-deployment.md)；其他文档和开发验证见[文档索引](docs/README.md)。
+
+v2.0.1 Windows EXE 图形版支持在可信的 v2.0.1 Hub 提供服务器时间时，兼容错误的 Windows 系统日期；Hub 时间必须准确。旧版 Hub 在客户端系统时间正确时仍可连接。时钟兼容依赖 EXE 内的 `CertificateVerifier.exe`；v2.0.0 历史 ZIP 不含此 helper，但系统时间正确时仍可使用。兼容范围是连接器与 Hub 的 HTTPS、WSS 和 MCP 通信，不改变 Windows 系统时间，也不保证 Codex 登录或模型提供方的直接请求在错误系统时间下可用。

@@ -3,22 +3,30 @@ import { open, mkdir, lstat, access } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { effectivePolicy, readPrivate, reservePrivate, UUID, fail, definitiveRejection, collaborationAuthorizationMessage } from './collaboration-common.mjs';
 import { connectorMayRun } from './connector-control.mjs';
+import { collaborationNetworkError, certificateDateMessage } from './network-error.mjs';
+import { clockAwareHubFetch } from './hub-clock.mjs';
+import { performance } from 'node:perf_hooks';
 
-export async function hubCollaboration(config, targetDeviceId, request, { fetchImpl = fetch, timeoutMs = 25000 } = {}) {
+const dateGuidance = error => error.network?.category === 'TLS_DATE' ? ` ${certificateDateMessage}` : error.network?.category === 'CLOCK' ? ` ${error.message}` : '';
+
+export async function hubCollaboration(config, targetDeviceId, request, { fetchImpl, timeoutMs = 25000 } = {}) {
   const url = new URL(config.hubOrigin);
   if (url.username || url.password || url.pathname !== '/' || url.search || url.hash || !(url.protocol === 'https:' || config.allowInsecureLocal && url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname))) fail('INVALID_HUB', 400);
   if (!UUID.test(config.deviceId || '') || !/^[A-Za-z0-9_-]{43}$/.test(config.deviceToken || '')) fail('INVALID_DEVICE', 400);
-  const response = await fetchImpl(url.origin + '/api/hub/collaboration/devices' + (targetDeviceId ? '/' + targetDeviceId : ''), { method: targetDeviceId ? 'POST' : 'GET', redirect: 'error', headers: { authorization: `Bearer ${config.deviceToken}`, 'x-bridge-client': 'computer-v1', ...(targetDeviceId ? { 'content-type': 'application/json' } : {}) }, body: targetDeviceId ? JSON.stringify(request) : undefined, signal: AbortSignal.timeout(timeoutMs) });
+  let response;
+  try { response = await (fetchImpl || ((endpoint, options) => clockAwareHubFetch(config, endpoint, options)))(url.origin + '/api/hub/collaboration/devices' + (targetDeviceId ? '/' + targetDeviceId : ''), { method: targetDeviceId ? 'POST' : 'GET', redirect: 'error', headers: { authorization: `Bearer ${config.deviceToken}`, 'x-bridge-client': 'computer-v1', ...(targetDeviceId ? { 'content-type': 'application/json' } : {}) }, body: targetDeviceId ? JSON.stringify(request) : undefined, signal: AbortSignal.timeout(timeoutMs) }); }
+  catch (error) { throw collaborationNetworkError(error); }
   if ([404, 405].includes(response.status) && !targetDeviceId || response.status === 401 && !response.headers.get('content-type')?.includes('json')) fail('FEATURE_UNAVAILABLE', 503, '服务器尚未支持电脑协作，请由管理员更新服务器后重试。');
   let size = 0; const parts = [];
-  for await (const part of response.body) { size += part.length; if (size > 2 * 1024 * 1024) fail('RESULT_TOO_LARGE', 413); parts.push(part); }
+  try { for await (const part of response.body) { size += part.length; if (size > 2 * 1024 * 1024) fail('RESULT_TOO_LARGE', 413); parts.push(part); } }
+  catch (error) { if (error.code === 'RESULT_TOO_LARGE') throw error; throw collaborationNetworkError(error); }
   let result; try { result = JSON.parse(Buffer.concat(parts).toString()); } catch { fail('FEATURE_UNAVAILABLE', 503, '服务器尚未支持电脑协作，请由管理员更新服务器后重试。'); }
   if (!targetDeviceId && !response.ok && ['FORBIDDEN', 'LOGIN_REQUIRED', 'NOT_FOUND'].includes(result.code)) fail('FEATURE_UNAVAILABLE', 503, '服务器尚未支持电脑协作，请由管理员更新服务器后重试。');
   if (!response.ok) fail(result.code || 'FEATURE_UNAVAILABLE', response.status, result.code === 'DEVICE_REVOKED' ? '服务器未接受当前设备凭据。请核对当前服务器和配对身份；必要时重新配对，再明确保存电脑协作授权。' : result.error);
   if (!targetDeviceId && (result.version !== 1 || result.sourceDeviceId !== config.deviceId || !Array.isArray(result.devices))) fail('FEATURE_UNAVAILABLE', 503);
   return result;
 }
-export function createCollaborationClient({ root, fetchImpl = fetch } = {}) {
+export function createCollaborationClient({ root, fetchImpl } = {}) {
   root = resolve(root);
   const configPath = resolve(root, '.local/hub-connector.json'), policyPath = resolve(root, '.local/computer-collaboration.json'), journalPath = resolve(root, '.local/collaboration-outbox');
   let queue = Promise.resolve();
@@ -50,7 +58,7 @@ export function createCollaborationClient({ root, fetchImpl = fetch } = {}) {
       const probes = await Promise.all(data.devices.slice(0, 10).map(async item => {
         if (!UUID.test(item.id || '') || !item.online) return null;
         try { const capability = await remote(item.id, { operation: 'capabilities' }, { timeoutMs: 5000 }); if (capability.deviceId !== item.id || capability.version !== 1) fail('DESKTOP_PROTOCOL_ERROR', 502); return { id: item.id, name: item.name, online: true }; }
-        catch { return null; }
+        catch (error) { if (['TLS_DATE', 'CLOCK'].includes(error.network?.category)) throw error; return null; }
       }));
       await enabled(); return { devices: probes.filter(Boolean), authorizedOnly: true, discoveryTimeoutMs: 5000 };
     },
@@ -64,31 +72,31 @@ export function createCollaborationClient({ root, fetchImpl = fetch } = {}) {
         if (existing) {
           if (existing.deviceId !== deviceId || existing.sourceDeviceId !== config.deviceId || existing.hubOrigin !== config.hubOrigin || existing.payloadHash !== payloadHash) fail('OPERATION_CONFLICT', 409);
           try { return await remote(deviceId, { operation: 'receipt', operationId }); }
-          catch (e) { return { state: 'unknown', operationId, code: e.code || 'TRANSPORT_UNAVAILABLE', message: 'Receipt query failed. Do not resend this operation or create a replacement ID.' }; }
+          catch (e) { return { state: 'unknown', operationId, code: e.code || 'TRANSPORT_UNAVAILABLE', message: 'Receipt query failed. Do not resend this operation or create a replacement ID.' + dateGuidance(e) }; }
         }
         const entry = { deviceId, sourceDeviceId: config.deviceId, hubOrigin: config.hubOrigin, payloadHash, operation: payload.operation };
         if (!await reservePrivate(recordPath, entry)) {
           const concurrent = await readPrivate(recordPath);
           if (JSON.stringify(concurrent) !== JSON.stringify(entry)) fail('OPERATION_CONFLICT', 409);
           try { return await remote(deviceId, { operation: 'receipt', operationId }); }
-          catch (e) { return { state: 'unknown', operationId, code: e.code || 'TRANSPORT_UNAVAILABLE', message: 'Receipt query failed. Do not resend this operation.' }; }
+          catch (e) { return { state: 'unknown', operationId, code: e.code || 'TRANSPORT_UNAVAILABLE', message: 'Receipt query failed. Do not resend this operation.' + dateGuidance(e) }; }
         }
         try { return await remote(deviceId, payload); }
-        catch (e) { const rejected = !e.collaborationDispatched && definitiveRejection(e.code); return { state: rejected ? 'rejected' : 'unknown', operationId, code: e.collaborationDispatched ? 'DELIVERY_UNKNOWN' : e.code || 'TRANSPORT_UNAVAILABLE', message: rejected ? 'The request was rejected before target acceptance.' : 'Query this operation receipt. Do not resend or create a replacement ID.' }; }
+        catch (e) { const rejected = !e.collaborationDispatched && definitiveRejection(e.code); return { state: rejected ? 'rejected' : 'unknown', operationId, code: e.collaborationDispatched ? 'DELIVERY_UNKNOWN' : e.code || 'TRANSPORT_UNAVAILABLE', message: (rejected ? 'The request was rejected before target acceptance.' : 'Query this operation receipt. Do not resend or create a replacement ID.') + dateGuidance(e) }; }
       });
       return remote(deviceId, request);
     },
     async wait(deviceId, threadId, { timeoutMs = 15000, turnId } = {}) {
       if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 20000) fail('INVALID_WAIT', 400);
-      const deadline = Date.now() + timeoutMs;
+      const deadline = performance.now() + timeoutMs;
       let status;
       do {
-        try { status = await remote(deviceId, { operation: 'status', threadId }, { timeoutMs: Math.max(1, Math.min(5000, timeoutMs === 0 ? 5000 : deadline - Date.now())) }); }
-        catch (e) { return { threadId, available: false, timedOut: Date.now() >= deadline, code: e.code || 'STATUS_UNAVAILABLE' }; }
+        try { status = await remote(deviceId, { operation: 'status', threadId }, { timeoutMs: Math.max(1, Math.ceil(Math.min(5000, timeoutMs === 0 ? 5000 : deadline - performance.now()))) }); }
+        catch (e) { return { threadId, available: false, timedOut: performance.now() >= deadline, code: e.code || 'STATUS_UNAVAILABLE', ...(e.network?.category === 'TLS_DATE' ? { message: certificateDateMessage } : e.network?.category === 'CLOCK' ? { message: e.message } : {}) }; }
         if (!status.available || status.needsAttention || !status.turnId || turnId && status.turnId !== turnId) return { ...status, timedOut: false };
-        if (Date.now() >= deadline) break;
-        await new Promise(resolve => setTimeout(resolve, Math.min(1000, deadline - Date.now())));
-      } while (Date.now() <= deadline);
+        if (performance.now() >= deadline) break;
+        await new Promise(resolve => setTimeout(resolve, Math.min(1000, deadline - performance.now())));
+      } while (performance.now() <= deadline);
       return { ...status, timedOut: true };
     },
     async download(deviceId, threadId, path) {

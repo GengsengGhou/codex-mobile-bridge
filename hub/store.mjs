@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { HubError } from './errors.mjs';
+import { pairingClockSubject } from '../src/clock-protocol.mjs';
 
 export const secretHash = value => createHash('sha256').update(String(value)).digest('hex');
 const secret = () => randomBytes(32).toString('base64url');
@@ -77,6 +78,13 @@ export class HubStore {
     const invite = secret(), expiresAt = this.now() + 86400000;
     this.db.prepare('INSERT INTO invitations VALUES(?,?,?,NULL)').run(secretHash(invite), userId, expiresAt);
     return { invite, expiresAt };
+  }
+  clockKey(type, subject) {
+    if (type === 'device') return this.db.prepare('SELECT devices.token_hash FROM devices JOIN users ON users.id=devices.user_id WHERE devices.id=? AND devices.revoked=0 AND users.disabled=0').get(subject)?.token_hash || null;
+    if (type !== 'pairing') return null;
+    // Pending codes are already bounded per account; their derived locator is not the MAC key.
+    const rows = this.db.prepare('SELECT pairings.hash FROM pairings JOIN users ON users.id=pairings.user_id WHERE pairings.used_at IS NULL AND pairings.expires_at>? AND users.disabled=0 LIMIT ?').all(this.now(), this.maxUsers * 3);
+    return rows.find(row => pairingClockSubject(row.hash) === subject)?.hash || null;
   }
   pairing(userId, name = '我的电脑') {
     const validName = deviceName(name);

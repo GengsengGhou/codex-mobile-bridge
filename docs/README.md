@@ -4,6 +4,7 @@
 
 - [快速开始](quick-start.md)：下载校验、账号邀请、Windows 配对与常见问题。
 - [Windows 安装说明](windows-installer.md)：安装、升级、修复、重置与卸载。
+- [v2.0.1 升级指南](upgrading-2.0.1.md)：从旧版升级 Hub 和 Windows 连接器并保留现有数据。
 - [电脑协作](computer-collaboration.md)：跨电脑的设备与项目授权、操作范围和恢复方式。
 - [临时 HTTPS 手机访问](temporary-mobile-access.md)：源码版通过临时隧道访问一台电脑。
 - [功能与权限说明](thread-context-permissions.md)：会话上下文、下一轮权限与待处理交互。

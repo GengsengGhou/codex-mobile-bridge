@@ -3,6 +3,7 @@ import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { loadRuntimeConfig } from '../src/runtime.mjs';
+import { elapsedNow } from '../src/elapsed-time.mjs';
 import { launchWindowsBridge } from './windows-launch.mjs';
 import { assertNoCollaborationReset } from './collaboration-common.mjs';
 
@@ -38,14 +39,14 @@ export async function verifyBridge(baseUrl, fetchImpl = fetch) {
 }
 
 async function waitForBridge(baseUrl, { fetchImpl = fetch, timeoutMs = 20000 } = {}) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  const deadline = elapsedNow() + timeoutMs;
+  while (elapsedNow() < deadline) {
     try {
       const cookie = await readBridgeRoot(baseUrl, fetchImpl);
       if (cookie) {
         const response = await fetchImpl(`${baseUrl}/api/status`, {
           headers: { Cookie: cookie, 'X-Bridge-Client': 'mobile-v1' },
-          signal: AbortSignal.timeout(Math.max(1000, deadline - Date.now()))
+          signal: AbortSignal.timeout(Math.max(1000, deadline - elapsedNow()))
         });
         if (response.ok) {
           const status = await response.json();

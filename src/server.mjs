@@ -14,6 +14,7 @@ import { CreationStore } from './creation-store.mjs';
 import { listThreadFiles, serveThreadFile } from './thread-files.mjs';
 import { UploadStore, UploadManager, uploadMetadata } from './uploads.mjs';
 import { createArchiveHandler } from './archives.mjs';
+import { elapsedNow } from './elapsed-time.mjs';
 import { createRecoveryManager } from './recovery.mjs';
 import { createRemoteAccessManager } from './remote-access.mjs';
 import { advertisedModels, modelSelection, validateModelSelection } from './model-settings.mjs';
@@ -291,18 +292,18 @@ export function createBridgeServer({ bridge, enableSend = false, allowedSendThre
         } catch (error) {
           data.creationSupplement = { available: false, code: error.code === 'CREATION_STORE_UNAVAILABLE' ? error.code : 'CREATION_SUPPLEMENT_UNAVAILABLE' };
         }
-        const candidates = recentCreations.filter(r => Date.now() - (creationReadFailures.get(r.threadId) ?? 0) >= 15000);
+        const candidates = recentCreations.filter(r => elapsedNow() - (creationReadFailures.get(r.threadId) ?? 0) >= 15000);
         const reads = await Promise.allSettled(candidates.map(r => creationSupplementRead(() => bridge.read(r.threadId, undefined, { turnLimit: 1 }))));
         for (let i = 0; i < reads.length; i++) {
           const result = reads[i];
           if (result.status === 'rejected') {
-            creationReadFailures.set(candidates[i].threadId, Date.now());
+            creationReadFailures.set(candidates[i].threadId, elapsedNow());
             data.creationSupplement = { available: false, code: 'CREATION_SUPPLEMENT_UNAVAILABLE' }; continue;
           }
           const thread = result.value.thread;
           if (thread?.id === candidates[i].threadId && thread.kind === 'codex' && (!thread.hostId || thread.hostId === 'local') && !thread.archived) data.threads.push(thread);
         }
-        for (const [id, at] of creationReadFailures) if (Date.now() - at > 300000) creationReadFailures.delete(id);
+        for (const [id, at] of creationReadFailures) if (elapsedNow() - at > 300000) creationReadFailures.delete(id);
         // A newly created task may not appear in the desktop's cached/recent sidebar list yet.
         // Keep the configured test target reachable from search and task switching.
         if (enableSend && sendScope === 'single' && !data.threads.some(t => t.id === allowedSendThreadId)) {

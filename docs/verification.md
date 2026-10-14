@@ -21,4 +21,4 @@ npm test
 
 ## 发布前检查
 
-发行包通过 `npm run release:package` 构建到 `dist/`，命令和完整依赖必须来自源码仓库。构建结果应按对应平台核对文件清单与 SHA-256；服务端或 Windows 安装器的验证以各自部署文档列出的运行条件为准。自动化测试、隔离模拟与真实设备试用属于不同检查范围，应分别记录，不要把模拟结果描述成实体设备验证。
+`npm run release:package` 在 Windows 开发环境通常会在 `dist/` 生成 ZIP；这是开发打包行为，不代表该文件一定属于 GitHub Release。v2.0.1 官方资产为 `CodexMobileConnector-Setup.exe`、`codex-device-hub.tar.gz` 和 `SHA256SUMS`，清单包含两个安装产物的哈希，不包含自身。构建结果应按对应平台核对文件清单与 SHA-256；服务端或 Windows 安装器的验证以各自部署文档列出的运行条件为准。自动化测试、隔离模拟与真实设备试用属于不同检查范围，应分别记录，不要把模拟结果描述成实体设备验证。

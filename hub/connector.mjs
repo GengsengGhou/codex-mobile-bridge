@@ -1,8 +1,10 @@
 import http from 'node:http';
 import WebSocket from 'ws';
+import { classifyNetworkError, networkErrorMessage } from '../scripts/network-error.mjs';
+import { hubClockTransport } from '../scripts/hub-clock.mjs';
 import { allowedBridgeRequest, control, binary, decode, FRAME_BYTES, MAX_PAYLOAD, UPLOAD_LIMIT, DOWNLOAD_LIMIT, selectHeaders, REQUEST_HEADERS, RESPONSE_HEADERS } from './protocol.mjs';
 
-export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 4317, allowInsecureLocal = false, WebSocketImpl = WebSocket, reconnectMinMs = 500, reconnectMaxMs = 30000, handshakeTimeoutMs = 10000, requestTimeoutMs = 120000, maxInFlight = 8, collaborationExecutor } = {}) {
+export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 4317, allowInsecureLocal = false, WebSocketImpl = WebSocket, reconnectMinMs = 500, reconnectMaxMs = 30000, handshakeTimeoutMs = 10000, requestTimeoutMs = 120000, maxInFlight = 8, collaborationExecutor, clockTransport: suppliedClockTransport } = {}) {
   const hub = new URL(hubOrigin);
   if (hub.username || hub.password || hub.pathname !== '/' || hub.search || hub.hash || !(hub.protocol === 'https:' || allowInsecureLocal && hub.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(hub.hostname))) throw new Error('Invalid hub origin');
   if (!Number.isInteger(bridgePort) || bridgePort < 1 || bridgePort > 65535 || typeof deviceId !== 'string' || !deviceId || typeof deviceToken !== 'string' || !deviceToken || /[\r\n]/.test(deviceToken)) throw new Error('Invalid connector configuration');
@@ -10,7 +12,8 @@ export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 
   const backend = new URL(`http://127.0.0.1:${bridgePort}`), endpoint = new URL('/api/hub/connector', hub);
   endpoint.protocol = hub.protocol === 'https:' ? 'wss:' : 'ws:';
   endpoint.searchParams.set('deviceId', deviceId);
-  let stopped = false, ws = null, timer, attempt = 0, cookie = null, acquiring = null, acquiringHttp = null, state = 'connecting';
+  let stopped = false, ws = null, timer, attempt = 0, cookie = null, acquiring = null, acquiringHttp = null, state = 'connecting', networkError = null, clockCompatible = false;
+  const clockTransport = suppliedClockTransport || (hub.protocol === 'https:' && WebSocketImpl === WebSocket ? hubClockTransport({ hubOrigin: hub.origin, deviceId, deviceToken }) : null);
   const requests = new Map();
   function acquire() {
     if (!acquiring) acquiring = new Promise((resolve, reject) => {
@@ -105,10 +108,10 @@ export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 
     state = 'connecting';
     try { await acquire(); } catch { if (!stopped) { state = 'offline'; timer = setTimeout(connect, Math.min(reconnectMaxMs, reconnectMinMs * 2 ** Math.min(attempt++, 10))); } return; }
     if (stopped) return;
-    const socket = new WebSocketImpl(endpoint, { headers: { Authorization: `Bearer ${deviceToken}`, 'X-Bridge-Protocol': '1' }, maxPayload: MAX_PAYLOAD, handshakeTimeout: handshakeTimeoutMs });
+    const socket = new WebSocketImpl(endpoint, { headers: { Authorization: `Bearer ${deviceToken}`, 'X-Bridge-Protocol': '1' }, maxPayload: MAX_PAYLOAD, handshakeTimeout: handshakeTimeoutMs + (clockTransport ? 25000 : 0), ...(clockTransport ? { agent: clockTransport.agent } : {}) });
     ws = socket;
-    socket.on('open', () => { if (ws === socket) { state = 'online'; attempt = 0; } });
-    socket.on('close', () => disconnect(socket)); socket.on('error', () => disconnect(socket));
+    socket.on('open', () => { if (ws === socket) { state = 'online'; attempt = 0; networkError = null; clockCompatible = socket._socket?.bridgeClockCompatible === true; } });
+    socket.on('close', () => disconnect(socket)); socket.on('error', error => { if (ws === socket && !stopped) networkError = classifyNetworkError(error); disconnect(socket); });
     socket.on('message', (data, isBinary) => {
       try {
         if (ws !== socket || stopped) return;
@@ -152,6 +155,6 @@ export function startConnector({ hubOrigin, deviceId, deviceToken, bridgePort = 
   void connect();
   return {
     stop() { stopped = true; clearTimeout(timer); acquiringHttp?.destroy(new Error('Connector stopped')); state = 'stopped'; for (const request of [...requests.values()]) dispose(request); ws?.close(1000, 'Connector stopped'); ws = null; },
-    status() { return { state, connected: state === 'online', inFlight: requests.size }; },
+    status() { return { state, connected: state === 'online', inFlight: requests.size, clockCompatible: state === 'online' && clockCompatible, networkError: stopped ? null : networkError, lastError: !stopped && networkError ? networkErrorMessage(networkError) : null }; },
   };
 }

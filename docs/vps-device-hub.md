@@ -49,15 +49,15 @@
 
 部署向导需要入口域名、首次管理员初始化和持久化目录。首次管理员仅能通过服务器端一次性初始化建立，不能由公网访问者抢先认领；密码和设备密钥不写入仓库或安装脚本。
 
-`npm run release:package` 生成服务器 tar.gz、Windows ZIP、Windows EXE 及 `SHA256SUMS`，均在 `dist/`。不包含 `.local`、数据库、设备密钥或本地工作文件。v2.0.0 发行资源见[发行页面](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v2.0.0)，下载无需桥接账号。受邀用户先用管理员私下提供的网址和邀请注册，之后再生成电脑配对码；自行部署者准备自己的 VPS 和域名。升级前核对版本和哈希，并保留数据库备份。
+v2.0.1 GitHub Release 正式资产为 Windows 图形安装器 `CodexMobileConnector-Setup.exe`、Hub 部署包 `codex-device-hub.tar.gz` 和 `SHA256SUMS`；清单包含两个安装产物的哈希，不包含自身。本次不发布 Windows ZIP，v2.0.0 ZIP 仅为历史资源。Windows 上运行 `npm run release:package` 时，开发打包可能在 `dist/` 生成 ZIP；这不表示 ZIP 属于正式 Release。查看[v2.0.1 发行页面](https://github.com/GengsengGhou/codex-mobile-bridge/releases/tag/v2.0.1)，下载无需桥接账号。受邀用户先用管理员私下提供的网址和邀请注册，之后再生成电脑配对码；自行部署者准备自己的 VPS 和域名。升级前核对版本和哈希，并保留数据库备份。
 
 ## Windows 首次安装与再次启动
 
-普通 Windows 用户优先使用中文 EXE，按 [简易教程](quick-start.md#配对-windows-电脑) 下载校验并配对。下面是备用 ZIP 的终端流程，两者不要同时安装到同一目录。
+普通 Windows 用户优先使用中文 EXE，按 [简易教程](quick-start.md#配对-windows-电脑) 下载校验并配对。下面仅说明历史 ZIP 的高级终端流程；v2.0.1 不发布 ZIP。两种安装方式不要同时安装到同一目录。
 
 EXE 首次配对默认开启当前 Windows 用户登录后自动连接；配对前明确关闭该设置时会保留关闭状态。窗口 X 隐藏到托盘；主动退出停止本安装的监测和连接器，不停止独立桥接或 Codex 任务。手动再次打开后可明确连接；已开启自动连接时，下次 Windows 登录会隐藏启动到托盘并恢复。详见[托盘与自动启动](quick-start.md#托盘与自动启动)。
 
-解压 Windows ZIP，双击 `deploy/install-connector.cmd`。安装器优先使用已有 Node.js 22.16+；否则下载官方 Windows x64 Node.js，验证 SHA256，并保存在包内 `.local/tools`，不修改系统 PATH。包包含 ws，不需要 npm 下载运行依赖。
+解压历史 Windows ZIP，双击 `deploy/install-connector.cmd`。安装器优先使用已有 Node.js 22.16+；否则下载官方 Windows x64 Node.js，验证 SHA256，并保存在包内 `.local/tools`，不修改系统 PATH。包包含 ws，不需要 npm 下载运行依赖。
 
 安装器先确认本机桥接和 Codex 桌面已连接。若没有已有桥接，会让用户从本机普通会话中明确选择启动身份；桌面离线或身份有歧义时停止，不消费配对码。然后输入配对码，设备凭据以 Windows 私有 ACL 保存到 `.local/hub-connector.json`，账号密码不落盘。连接器提交后台启动后，应在 Hub 核对在线状态。
 

@@ -114,9 +114,13 @@ test('pairing information validates strictly and validation result never exposes
     JSON.stringify({type:'codex-mobile-pairing',version:1,server:'https://hub.example/path',code,name:'PC',expiresAt}),
     JSON.stringify({type:'codex-mobile-pairing',version:1,server:'https://hub.example/?x=1',code,name:'PC',expiresAt}),
     JSON.stringify({type:'codex-mobile-pairing',version:2,server:'https://hub.example',code,name:'PC',expiresAt}),
-    JSON.stringify({type:'codex-mobile-pairing',version:1,server:'https://hub.example',code,name:'PC',expiresAt:'2000-01-01T00:00:00.000Z'}),
     'x'.repeat(4097),
   ]) { await assert.rejects(guiCommand({action:'validate-pairing',information:invalid}),error=>!error.message.includes(code)); }
+  const oldTicket=JSON.stringify({type:'codex-mobile-pairing',version:1,server:'https://hub.example',code,name:'PC',expiresAt:'2000-01-01T00:00:00.000Z'});
+  assert.throws(()=>parsePairingInformation(oldTicket));
+  const fail=()=>{throw Error('structural validation must not read state or contact Hub');};
+  const oldValidated=await guiCommand({action:'validate-pairing',information:oldTicket},{read:fail,pair:fail,watch:fail});
+  assert.equal(oldValidated.expiresAt,'2000-01-01T00:00:00.000Z'); assert.equal(JSON.stringify(oldValidated).includes(code),false);
 });
 test('invalid pairing information is rejected before reading or changing connector intent/config',async()=>{
   let read=false, paired=false, configured=false;

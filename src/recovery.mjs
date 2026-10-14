@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { BridgeError } from './desktop.mjs';
+import { heartbeatAge } from './elapsed-time.mjs';
 
 export const RECOVERY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const recoveryIdentity = root => createHash('sha256').update(resolve(root).toLowerCase()).digest('hex').slice(0, 24);
@@ -62,9 +63,8 @@ export function createRecoveryManager({ root = RECOVERY_ROOT, platform = process
       try { registered = await startup.read(); }
       catch { throw new BridgeError('无法读取 Windows 登录启动设置，请稍后刷新。', 'RECOVERY_UNAVAILABLE', 503); }
     }
-    const heartbeatAge = now() - Date.parse(state.updatedAt);
-    const supervisorRunning = supported && Number.isFinite(Date.parse(state.updatedAt))
-      && heartbeatAge >= 0 && heartbeatAge < staleMs && state.state !== 'stopped';
+    const age = heartbeatAge(state, { nowWall: now() });
+    const supervisorRunning = supported && age >= 0 && age < staleMs && state.state !== 'stopped';
     return {
       supported, autoStart: registered.enabled === true, autoRestart: preferences.autoRestart === true,
       supervisorRunning, state: supervisorRunning ? state.state : supported ? 'unmanaged' : 'unsupported',

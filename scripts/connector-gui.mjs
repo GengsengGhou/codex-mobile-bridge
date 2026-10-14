@@ -10,6 +10,8 @@ import { createConnectorUpdater } from './connector-updates.mjs';
 import { collaborationSettings } from './collaboration-settings.mjs';
 import { readCollaborationDiagnostics } from './collaboration-diagnostics.mjs';
 import { resetCollaborationPairing } from './collaboration-reset.mjs';
+import { sanitizeNetworkDiagnosis, networkErrorMessage } from './network-error.mjs';
+import { heartbeatAge } from '../src/elapsed-time.mjs';
 import { withCollaborationLock, collaborationResetGeneration, assertCollaborationResetGeneration } from './collaboration-common.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -42,21 +44,22 @@ export async function guiCommand(command, deps = {}) {
     const intent = await control.read();
     let state = {};
     try { state = deps.readState ? await deps.readState() : JSON.parse(await readFile(resolve(appRoot, '.local/hub-connector-state.json'), 'utf8')); } catch {}
-    const age = Date.now() - Date.parse(state?.updatedAt);
+    const age = heartbeatAge(state);
     const fresh = !!config && typeof config.hubOrigin === 'string' && typeof config.deviceId === 'string' && state?.hubOrigin === config.hubOrigin && state?.deviceId === config.deviceId && Number.isFinite(age) && age >= 0 && age < 6000;
     const hubState = intent.paused ? 'paused' : fresh && ['online','connected','connecting','offline','stopped'].includes(state.state) ? state.state : 'waiting';
     const hubConnected = !intent.paused && fresh && (state.state === 'online' || state.state === 'connected');
-    return { paired: !!config, origin: config?.hubOrigin, deviceId: config?.deviceId, deviceName: config?.deviceName || process.env.COMPUTERNAME || hostname(), bridgeConnected, hubConnected, hubState, paused: intent.paused, pauseScope: intent.pauseScope, persistentPaused: intent.pauseScope === 'persistent', autoStart: intent.autoStart === true, lastError: intent.lastError, state: intent.paused ? (intent.disconnectVerified ? 'paused' : 'stopping') : fresh && bridgeConnected ? state.state : 'waiting' };
+    const networkError = !intent.paused && fresh && !hubConnected && ['connecting', 'offline'].includes(state.state) ? sanitizeNetworkDiagnosis(state.networkError) : null;
+    return { paired: !!config, origin: config?.hubOrigin, deviceId: config?.deviceId, deviceName: config?.deviceName || process.env.COMPUTERNAME || hostname(), bridgeConnected, hubConnected, hubState, clockCompatible: hubConnected && state.clockCompatible === true, paused: intent.paused, pauseScope: intent.pauseScope, persistentPaused: intent.pauseScope === 'persistent', autoStart: intent.autoStart === true, networkError, lastError: intent.lastError || (networkError ? networkErrorMessage(networkError) : null), state: intent.paused ? (intent.disconnectVerified ? 'paused' : 'stopping') : fresh && bridgeConnected ? state.state : 'waiting' };
   }
   if (command.action === 'initialize') return control.initialize();
   if (command.action === 'validate-pairing') {
-    const ticket = parsePairingInformation(command.information);
+    const ticket = parsePairingInformation(command.information, { checkExpiry: false });
     return { origin: ticket.origin, name: ticket.name, expiresAt: ticket.expiresAt };
   }
   if (command.action === 'disconnect' || command.action === 'quit') return { ...await control.pause(command.action === 'disconnect' ? 'persistent' : 'session'), state: 'paused' };
   if (command.action === 'autostart') return control.configure(command.enabled);
   if (command.action === 'pair') {
-    const ticket = command.information === undefined ? null : parsePairingInformation(command.information);
+    const ticket = command.information === undefined ? null : parsePairingInformation(command.information, { checkExpiry: false });
     const pairing = ticket ? { information: command.information } : {
       origin: hubOrigin(command.origin, deps.allowInsecureLocal === true),
       name: (typeof command.name === 'string' ? command.name.trim() : '') || process.env.COMPUTERNAME || hostname(),

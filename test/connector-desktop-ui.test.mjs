@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
+import { pairingNetworkError } from '../scripts/network-error.mjs';
 const html=await readFile(new URL('../deploy/windows/ui/index.html',import.meta.url),'utf8');
 // Mirror the page's declared defer order: locale catalog must precede the desktop controller.
 const scripts=await Promise.all([...html.matchAll(/<script\s+src="([^"]+)"\s+defer><\/script>/g)].map(async ([,source])=>({source,code:await readFile(new URL('../deploy/windows/ui/'+source,import.meta.url),'utf8')})));
@@ -105,6 +106,58 @@ test('failed language persistence restores the select and keeps the existing loc
   assert.equal(ui.window.document.documentElement.lang,'en');assert.equal(ui.$('language').value,'en');assert.equal(ui.$('pairingHeading').textContent,'Pair this computer');
   assert.equal(ui.$('deviceName').value,'已连接');assert.equal(ui.$('pairingCode').value,'f'.repeat(43));assert.equal(ui.$('feedback').textContent,'Fixture preference write denied');
   assert.deepEqual(ui.calls.map(call=>call.action),['ready','set-language']);
+});
+test('certificate validity-date guidance is localized, cleared on recovery, and yields to pause and status errors',async t=>{
+  const ui=mount(t,{language:'en'});await tick();ui.send({type:'status',status:online});
+  const dateError={category:'TLS_DATE',codes:['CERT_NOT_YET_VALID']};
+  ui.send({type:'status',status:{...online,hubConnected:false,bridgeConnected:false,state:'waiting',hubState:'connecting',networkError:dateError}});
+  assert.match(ui.$('connectionDescription').textContent,/certificate's validity dates could not be validated.*Set time automatically, then Sync now.*date and time are already correct.*server administrator/s);
+  assert.doesNotMatch(ui.$('connectionDescription').textContent,/clock is definitely wrong/i);
+  ui.send({type:'status',status:{...online,hubConnected:false,bridgeConnected:false,state:'waiting',hubState:'connecting',networkError:dateError,lastError:'Authentication failed'}});
+  assert.equal(ui.$('connectionDescription').textContent,'Authentication failed');
+  ui.send({type:'status',status:{...online,hubConnected:false,bridgeConnected:false,state:'waiting',hubState:'connecting',networkError:dateError,lastError:'服务器证书有效日期校验失败。请先在 Windows“设置 → 时间和语言 → 日期和时间”中开启自动设置时间并点击“立即同步”。若日期和时间已正确但仍失败，请联系服务器管理员检查证书。'}});
+  assert.match(ui.$('connectionDescription').textContent,/Set time automatically, then Sync now/);
+  ui.send({type:'status',status:{...online,paused:true,hubConnected:false,bridgeConnected:false,state:'paused',networkError:dateError}});
+  assert.equal(ui.$('connectionDescription').textContent,'Automatic connection paused');
+  assert.doesNotMatch(ui.$('connectionDescription').textContent,/Sync now/);
+  ui.send({type:'status',status:{...online,hubConnected:false,bridgeConnected:false,state:'waiting',hubState:'connecting',networkError:{category:'TLS',codes:['CERT_AUTHORITY_INVALID']}}});
+  assert.doesNotMatch(ui.$('connectionDescription').textContent,/validity dates|Sync now/);
+  ui.send({type:'status',status:online});assert.doesNotMatch(ui.$('connectionDescription').textContent,/validity dates|Sync now/);
+});
+test('clock compatibility guidance uses sanitized codes and shows its indicator only on an active verified connection',async t=>{
+  const ui=mount(t,{language:'en'});await tick();
+  const clockError={category:'CLOCK',codes:['CLOCK_UNSUPPORTED']};
+  ui.send({type:'status',status:{...online,hubConnected:false,bridgeConnected:false,state:'waiting',networkError:clockError}});
+  assert.match(ui.$('connectionDescription').textContent,/does not support clock-compatible connections.*update the Hub.*correct system time/);
+  ui.send({type:'status',status:{...online,hubConnected:false,bridgeConnected:false,state:'waiting',networkError:{category:'CLOCK',codes:['CLOCK_AUTH_FAILED']}}});
+  assert.match(ui.$('connectionDescription').textContent,/server time could not be verified.*current pairing.*server version.*network connection/);
+  ui.send({type:'status',status:{...online,hubConnected:false,bridgeConnected:false,state:'waiting',networkError:{category:'CLOCK',codes:['CLOCK_CERTIFICATE_INVALID']}}});
+  assert.match(ui.$('connectionDescription').textContent,/did not pass trusted-time validation.*certificate and hostname/);
+  ui.send({type:'status',status:{...online,clockCompatible:true}});
+  assert.equal(ui.$('serverStatus').textContent,'Connected · clock compatibility verified');
+  ui.send({type:'status',status:{...online,clockCompatible:true,paused:true}});
+  assert.equal(ui.$('serverStatus').textContent,'Disconnected');
+  ui.send({type:'status',status:{...online,clockCompatible:false}});
+  assert.equal(ui.$('serverStatus').textContent,'Connected');
+});
+test('TLS_DATE pairing backend text is translated through desktop diagnostics',async t=>{
+  const ui=mount(t,{language:'en'});await tick();ui.send({type:'status',status:online});ui.$('changeServer').click();
+  ui.input('pairingCode','p'.repeat(43));ui.input('deviceName','Fixture PC');ui.$('pairingForm').dispatchEvent(new ui.window.Event('submit',{bubbles:true,cancelable:true}));
+  const request=ui.calls.at(-1);
+  ui.answer(request,'配对网络失败 [TLS_DATE]：服务器证书有效日期校验失败。请先在 Windows“设置 → 时间和语言 → 日期和时间”中开启自动设置时间并点击“立即同步”。若日期和时间已正确但仍失败，请联系服务器管理员检查证书。',false);await tick();
+  assert.match(ui.$('feedback').textContent,/Pairing network failure \[TLS_DATE\].*Set time automatically, then Sync now.*server administrator/);
+});
+test('CLOCK pairing errors translate the full guidance and uncertain-outcome suffix',async t=>{
+  const cases=[
+    ['CLOCK_UNSUPPORTED',/does not support clock-compatible connections.*update the Hub.*correct system time.*may have reached the server.*device list.*generate new pairing information/s],
+    ['CLOCK_AUTH_FAILED',/server time could not be verified.*current pairing.*server version.*network connection.*may have reached the server.*device list.*generate new pairing information/s],
+    ['CLOCK_CERTIFICATE_INVALID',/certificate did not pass trusted-time validation.*certificate and hostname.*may have reached the server.*device list.*generate new pairing information/s],
+  ];
+  for(const [code,expected] of cases){
+    const ui=mount(t,{language:'en'});await tick();ui.send({type:'status',status:online});ui.$('changeServer').click();
+    ui.input('pairingCode','p'.repeat(43));ui.input('deviceName','Fixture PC');ui.$('pairingForm').dispatchEvent(new ui.window.Event('submit',{bubbles:true,cancelable:true}));
+    ui.answer(ui.calls.at(-1),pairingNetworkError({code}).message,false);await tick();assert.match(ui.$('feedback').textContent,expected);
+  }
 });
 test('bare hostname opens setup in system browser and Enter/duplicate submission consumes at most one code',async t=>{
   const ui=mount(t);await tick();ui.input('server','new.example:8443');ui.$('openSetup').click();

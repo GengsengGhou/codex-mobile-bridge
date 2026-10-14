@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { recoveryIdentity, writeRecoveryFile, readRecoveryFile } from '../src/recovery.mjs';
+import { heartbeatAge } from '../src/elapsed-time.mjs';
 import { loadRuntimeConfig } from '../src/runtime.mjs';
 import { probeLocalBridge, chooseFreePort, ensureLocalBridge, selectOrdinaryLocalThread } from './bootstrap-bridge.mjs';
 import { startBridge, verifyBridge } from './start.mjs';
@@ -185,7 +186,7 @@ export async function startConnectorLoginAtLogon({ root = defaultRoot, registrat
   return value;
 }
 
-export async function restoreConnectorLogin({ root = defaultRoot, ensureBridge, bootstrap = ensureLocalBridge, finishBootstrap = registerConnectorLogin, probe = probeLocalBridge, verify = verifyBridge, start = startBridge, choosePort = chooseFreePort, launch = launchWindowsBridge, sleep = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms)), signal, output = console, monitor = false, now = Date.now, readState = readRecoveryFile, mayRun = connectorMayRun } = {}) {
+export async function restoreConnectorLogin({ root = defaultRoot, ensureBridge, bootstrap = ensureLocalBridge, finishBootstrap = registerConnectorLogin, probe = probeLocalBridge, verify = verifyBridge, start = startBridge, choosePort = chooseFreePort, launch = launchWindowsBridge, sleep = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms)), signal, output = console, monitor = false, now = Date.now, getHeartbeatAge = heartbeatAge, readState = readRecoveryFile, mayRun = connectorMayRun } = {}) {
   root = resolve(root);
   if (!await mayRun(root)) return { submitted: false, paused: true };
   const config = await savedConnector(root);
@@ -251,7 +252,7 @@ export async function restoreConnectorLogin({ root = defaultRoot, ensureBridge, 
         }
         if (!state || typeof state !== 'object' || Array.isArray(state)) state = {};
       }
-      const age = now() - Date.parse(state.updatedAt);
+      const age = getHeartbeatAge(state, { nowWall: now() });
       const currentBinding = monitor ? await savedConnector(root) : config;
       if (monitor && state.hubOrigin === currentBinding.hubOrigin && state.deviceId === currentBinding.deviceId && Number.isFinite(age) && age >= 0 && age < 6000 && state.state !== 'stopped') {
         await sleep(10000); continue;
