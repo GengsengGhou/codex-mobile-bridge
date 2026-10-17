@@ -3,6 +3,7 @@ import { resolve, dirname, basename } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { performance } from 'node:perf_hooks';
 import { privateFile } from './setup-connector.mjs';
 
 const repository = 'GengsengGhou/codex-mobile-bridge';
@@ -11,6 +12,7 @@ export const UPDATE_API = `https://api.github.com/repos/${repository}/releases/l
 export const UPDATE_INSTALLER = 'CodexMobileConnector-Setup.exe';
 const day = 86400000, retryDelay = 3600000;
 const flights = new Map();
+const attempts = new Map();
 const execute = promisify(execFile);
 
 export function stableVersion(value) {
@@ -53,7 +55,7 @@ async function privateDirectory(path) {
 
 // No Hub address, device credential, executable argument, or caller-selected URL is accepted here.
 export function createConnectorUpdater({ root, fetchImpl = fetch, now = Date.now, secureFile = privateFile, secureDirectory = privateDirectory,
-  checkTimeoutMs = 15000, downloadTimeoutMs = 180000, maxInstallerBytes = 250 * 1024 * 1024 } = {}) {
+  monotonicNow = () => performance.now(), checkTimeoutMs = 15000, downloadTimeoutMs = 180000, maxInstallerBytes = 250 * 1024 * 1024 } = {}) {
   root = resolve(root);
   const local = resolve(root, '.local'), directory = resolve(local, 'updates');
   const statePath = resolve(local, 'connector-updates.json'), prefsPath = resolve(local, 'connector-update-preferences.json');
@@ -81,23 +83,43 @@ export function createConnectorUpdater({ root, fetchImpl = fetch, now = Date.now
     try { await writeFile(temporary, JSON.stringify(value), { flag: 'wx', mode: 0o600 }); await secureFile(temporary); await rename(temporary, path); }
     finally { await unlink(temporary).catch(() => {}); }
   }
-  async function load() {
+  async function load({ ownsOperation = false } = {}) {
     const raw = await json(statePath, {}), prefs = await json(prefsPath, { automatic: true });
     if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !prefs || typeof prefs.automatic !== 'boolean') throw new Error('更新设置无效，请重试。');
     const packageValue = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
     // Development/prerelease builds must never be replaced by a stable installer automatically.
     const currentVersion = typeof packageValue.version === 'string' ? packageValue.version.slice(0, 80) : 'unknown';
-    return { currentVersion, automatic: prefs.automatic, release: safeRelease(raw.release), status: ['idle','checking','current','available','error','downloading','ready'].includes(raw.status) ? raw.status : 'idle',
+    let status = ['idle','checking','current','available','error','downloading','ready'].includes(raw.status) ? raw.status : 'idle';
+    // An interrupted operation cannot stay "checking" just because the wall clock moved back.
+    if (['checking','downloading'].includes(status) && (ownsOperation || !flights.has(root))) {
+      let lock; if (!ownsOperation) try { lock = await json(lockPath, null); } catch {}
+      if (ownsOperation || !livePid(lock?.pid)) status = 'error';
+    }
+    return { currentVersion, automatic: prefs.automatic, release: safeRelease(raw.release), status,
+      interrupted: status === 'error' && ['checking','downloading'].includes(raw.status),
       lastAttemptAt: timestamp(raw.lastAttemptAt), lastCheckedAt: timestamp(raw.lastCheckedAt), error: typeof raw.error === 'string' ? raw.error.slice(0, 240) : null };
+  }
+  function retryAfter(value) {
+    if (value.interrupted || !value.lastAttemptAt) return 0;
+    const interval = value.status === 'error' ? retryDelay : day;
+    const age = now() - Date.parse(value.lastAttemptAt), memo = attempts.get(root);
+    if (!Number.isFinite(age) || age < 0) return 0;
+    if (memo?.at === value.lastAttemptAt) {
+      const elapsed = monotonicNow() - memo.mono;
+      // Clock corrections trigger a new automatic attempt rather than stretching a deadline.
+      if (elapsed < 0 || Math.abs(age - elapsed) > 60000) return 0;
+      return Math.max(0, interval - elapsed);
+    }
+    return Math.max(0, interval - age);
   }
   function publicState(value) {
     const latestVersion = value.release?.version || null;
     const available = !!latestVersion && !!stableVersion(value.currentVersion) && compareVersions(latestVersion, value.currentVersion) > 0;
     let status = value.status;
     if (['current','available','ready'].includes(status) && !available) status = 'current';
-    if (['checking','downloading'].includes(status) && now() - Date.parse(value.lastAttemptAt) > downloadTimeoutMs + 60000) status = 'error';
     return { currentVersion: value.currentVersion, latestVersion, available, automatic: value.automatic, status,
       lastAttemptAt: value.lastAttemptAt, lastCheckedAt: value.lastCheckedAt, error: status === 'error' ? value.error || '上次更新操作未完成，请重试。' : null,
+      nextCheckDelayMs: retryAfter(value),
       source: 'github', releaseUrl: value.release ? `${github}/releases/tag/${encodeURIComponent(value.release.tag)}` : null };
   }
   async function persist(value) {
@@ -110,30 +132,44 @@ export function createConnectorUpdater({ root, fetchImpl = fetch, now = Date.now
     await save(prefsPath, { version: 1, automatic });
     return state();
   }
+  function livePid(pid) {
+    if (!Number.isSafeInteger(pid) || pid < 1) return false;
+    try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; }
+  }
+  async function removeOwnedLock(owner, dead = false) {
+    let current; try { current = await json(lockPath, null); } catch { return false; }
+    if (!current || JSON.stringify(current) !== JSON.stringify(owner) || dead && livePid(current.pid)) return false;
+    try { await unlink(lockPath); return true; } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  }
   async function acquire() {
     await prepare();
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try { const file = await open(lockPath, 'wx', 0o600); try { await file.writeFile(JSON.stringify({ pid: process.pid, id: randomUUID() })); await secureFile(lockPath); } catch (error) { await file.close(); await unlink(lockPath).catch(() => {}); throw error; } finally { await file.close().catch(() => {}); } return true; }
+    const owner = { pid: process.pid, id: randomUUID() };
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try { const file = await open(lockPath, 'wx', 0o600); try { await file.writeFile(JSON.stringify(owner)); await secureFile(lockPath); } catch (error) { await file.close(); await removeOwnedLock(owner).catch(() => {}); throw error; } finally { await file.close().catch(() => {}); } return owner; }
       catch (error) {
         if (error.code !== 'EEXIST') throw error;
-        const lock = await json(lockPath, null);
-        if (!Number.isSafeInteger(lock?.pid) || lock.pid < 1) return false;
-        let alive = true; try { process.kill(lock.pid, 0); } catch (error) { alive = error.code !== 'ESRCH'; }
-        if (alive) return false;
-        await unlink(lockPath).catch(() => {});
+        let lock; try { lock = await json(lockPath, null); } catch { return null; }
+        if (!lock) continue; // Another owner may have just released it.
+        if (!Number.isSafeInteger(lock.pid) || lock.pid < 1 || livePid(lock.pid)) return null;
+        // Re-read ownership before reclaiming; never use wall-clock age or kill an owner.
+        if (!await removeOwnedLock(lock, true)) continue;
       }
     }
-    return false;
+    return null;
   }
-  async function run(kind, operation) {
-    const key = `${root}:${kind}`;
-    if (flights.has(key)) return flights.get(key);
+  async function run(kind, operation, manual = true) {
+    const previous = flights.get(root);
+    if (previous) {
+      if (manual || previous.kind !== kind) throw new Error('已有更新操作正在进行，请稍后重试。');
+      return previous.promise;
+    }
     const promise = (async () => {
-      if (!await acquire()) { if (kind === 'check') return state(); throw new Error('已有更新操作正在进行，请稍后重试。'); }
-      try { return await operation(); } finally { await unlink(lockPath).catch(() => {}); }
+      const owner = await acquire();
+      if (!owner) throw new Error('已有更新操作正在进行，请稍后重试。');
+      try { return await operation(); } finally { await removeOwnedLock(owner).catch(() => {}); }
     })();
-    flights.set(key, promise);
-    try { return await promise; } finally { if (flights.get(key) === promise) flights.delete(key); }
+    flights.set(root, { kind, promise });
+    try { return await promise; } finally { if (flights.get(root)?.promise === promise) flights.delete(root); }
   }
   async function request(url, signal, accept, tag, name) {
     for (let redirects = 0; redirects <= 4; redirects++) {
@@ -185,9 +221,13 @@ export function createConnectorUpdater({ root, fetchImpl = fetch, now = Date.now
       return release;
     }
     if (!response.ok) { await response.body?.cancel().catch(() => {}); throw new Error(`更新服务请求失败（HTTP ${response.status}），请重试。`); }
-    let value; try { value = JSON.parse((await bytes(response, 1024 * 1024)).toString('utf8')); } catch { throw new Error('官方版本信息无效。'); }
+    const contents = await bytes(response, 1024 * 1024);
+    let value; try { value = JSON.parse(contents.toString('utf8')); } catch { throw new Error('官方版本信息无效。'); }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('官方版本信息无效。');
     const tag = value.tag_name, version = stableVersion(tag);
-    if (!version || value.draft !== false || value.prerelease !== false || !timestamp(value.published_at) || Date.parse(value.published_at) > now() + 60000) throw new Error('官方稳定版本信息无效。');
+    // Publication time is descriptive metadata, not an authorization clock. TLS and
+    // exact official asset URLs plus SHA-256 still authenticate the download.
+    if (!version || value.draft !== false || value.prerelease !== false || !timestamp(value.published_at)) throw new Error('官方稳定版本信息无效。');
     if (!Array.isArray(value.assets)) throw new Error('官方安装包信息无效。');
     const installers = value.assets.filter(asset => asset.name === UPDATE_INSTALLER);
     const sums = value.assets.filter(asset => asset.name === 'SHA256SUMS');
@@ -199,11 +239,19 @@ export function createConnectorUpdater({ root, fetchImpl = fetch, now = Date.now
   }
   function friendly(error) {
     if (error?.name === 'AbortError' || error?.name === 'TimeoutError') return '更新请求已取消或超时，请重试。';
+    let cause = error;
+    for (let i = 0; cause && i < 8; i++, cause = cause.cause) {
+      if (['CERT_HAS_EXPIRED','CERT_NOT_YET_VALID'].includes(cause.code)) return '官方更新服务证书有效日期校验失败。请核对 Windows 日期和时间，恢复网络或 VPN 后重新检查；若时间正确仍失败，请稍后重试。';
+    }
     // Never echo provider bodies, URL query strings, tokens, or filesystem errors to the UI.
-    return /^([官方更新上已有]|GitHub)/.test(error?.message || '') ? error.message.slice(0, 240) : '无法连接官方更新服务，请检查网络后重试。';
+    const messages = new Set(['更新下载跳转无效。','GitHub 更新服务暂时限制访问，请稍后重试。','更新下载跳转过多，请重试。','更新响应过大。','更新响应为空。',
+      '官方安装包校验信息无效，请重试。','更新服务地址无效。','官方稳定版本信息无效。','官方版本信息无效。','官方安装包信息无效。','官方安装包缺少 SHA256 校验信息。',
+      '更新安装包过大。','更新安装包为空。','官方安装包 SHA256 校验失败，请重试。']);
+    return messages.has(error?.message) || /^更新服务请求失败（HTTP [1-5]\d{2}），请重试。$/.test(error?.message || '') ? error.message : '无法连接官方更新服务，请检查网络或 VPN，恢复后重新检查。';
   }
   async function refresh(value, signal) {
     value = { ...value, status: 'checking', lastAttemptAt: iso(), error: null };
+    attempts.set(root, { at: value.lastAttemptAt, mono: monotonicNow() });
     await persist(value);
     try { value.release = await metadata(signal); value.lastCheckedAt = iso(); value.status = stableVersion(value.currentVersion) && compareVersions(value.release.version, value.currentVersion) > 0 ? 'available' : 'current'; }
     catch (error) { value.status = 'error'; value.error = friendly(error); }
@@ -212,18 +260,16 @@ export function createConnectorUpdater({ root, fetchImpl = fetch, now = Date.now
   async function check({ manual = true, signal } = {}) {
     if (typeof manual !== 'boolean') throw new Error('更新检查请求无效。');
     return run('check', async () => {
-      let value = await load();
-      const interval = value.status === 'error' ? retryDelay : day;
-      const age = now() - Date.parse(value.lastAttemptAt);
-      if (!manual && (!value.automatic || Number.isFinite(age) && age >= 0 && age < interval)) return { update: publicState(value) };
+      let value = await load({ ownsOperation: true });
+      if (!manual && (!value.automatic || retryAfter(value) > 0)) return { update: publicState(value) };
       value = await refresh(value, signal ? AbortSignal.any([signal, AbortSignal.timeout(checkTimeoutMs)]) : AbortSignal.timeout(checkTimeoutMs));
       value.automatic = (await load()).automatic;
       return { update: publicState(value) };
-    });
+    }, manual);
   }
   async function download({ signal } = {}) {
     return run('download', async () => {
-      let value = await load();
+      let value = await load({ ownsOperation: true });
       const combined = signal ? AbortSignal.any([signal, AbortSignal.timeout(downloadTimeoutMs)]) : AbortSignal.timeout(downloadTimeoutMs);
       // Revalidate stable release metadata on every user-requested upgrade, including cached downloads.
       value = await refresh(value, AbortSignal.any([combined, AbortSignal.timeout(checkTimeoutMs)]));

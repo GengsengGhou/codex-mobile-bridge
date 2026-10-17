@@ -3,7 +3,7 @@ using System.IO;
 using System.Reflection;
 
 [assembly: AssemblyTitle("Codex Mobile Bridge Collaboration Launcher")]
-[assembly: AssemblyVersion("2.0.1.0")]
+[assembly: AssemblyVersion("3.0.0.0")]
 static class CollaborationLauncher {
     static int Main(string[] args) {
         try {

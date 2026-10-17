@@ -21,7 +21,8 @@ import { localBridge, readPrivate, writePrivate, withCollaborationLock } from '.
 import { disableCollaborationForUninstall } from '../scripts/collaboration-lifecycle.mjs';
 const base = fileURLToPath(new URL('../work/computer-collaboration/', import.meta.url));
 const checks = [];
-const evidence = async () => { await mkdir(base, { recursive: true }); await writePrivate(resolve(base, 'evidence.json'), { version: '2.0.1', executedAt: new Date().toISOString(), mode: 'isolated local dual connectors with native desktop fixtures', checks, realPhysicalComputersTested: false, productionConfigTouched: false, published: false }); };
+const packageVersion = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
+const evidence = async () => { await mkdir(base, { recursive: true }); await writePrivate(resolve(base, 'evidence.json'), { version: packageVersion, executedAt: new Date().toISOString(), mode: 'isolated local dual connectors with native desktop fixtures', checks, realPhysicalComputersTested: false, productionConfigTouched: false, published: false }); };
 async function fixtureRoot(name) { await mkdir(base, { recursive: true }); return mkdtemp(resolve(base, name + '-')); }
 async function listen(server) { await new Promise(yes => server.listen(0, '127.0.0.1', yes)); return server.address().port; }
 async function close(server) { server.closeAllConnections?.(); await new Promise(yes => server.close(yes)); }
@@ -100,14 +101,16 @@ test('real Hub + dual connectors + MCP stdio: authorized native tasks, durable r
   const spoof = await fetch(f.origin + '/api/hub/collaboration/devices/' + B.config.deviceId, { method: 'POST', headers: { authorization: 'Bearer ' + A.config.deviceToken, 'x-bridge-client': 'computer-v1', 'content-type': 'application/json' }, body: JSON.stringify({ sourceDeviceId: cross.deviceId, operation: 'projects' }) }); assert.equal(spoof.status, 400);
   const mcpModule = new URL('../scripts/collaboration-mcp.mjs', import.meta.url).href;
   const child = spawn(process.execPath, ['--input-type=module', '-e', `import {serveMcp} from ${JSON.stringify(mcpModule)};serveMcp({root:${JSON.stringify(A.root)}});`], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  try {
   let buffer = ''; const answers = new Map(), waiters = new Map();
   child.stdout.on('data', bytes => { buffer += bytes.toString(); while (buffer.includes('\n')) { const index = buffer.indexOf('\n'), item = JSON.parse(buffer.slice(0, index)); buffer = buffer.slice(index + 1); answers.set(item.id, item); waiters.get(item.id)?.(item); } });
   let nextId = 0;
   const rpc = (method, params) => { const rpcId = ++nextId; return new Promise((yes, no) => { const timer = setTimeout(() => no(new Error('MCP timeout')), 30000); waiters.set(rpcId, item => { clearTimeout(timer); waiters.delete(rpcId); yes(item); }); child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: rpcId, method, params }) + '\n'); }); };
-  assert.equal((await rpc('initialize', { protocolVersion: '2025-03-26' })).result.serverInfo.version, '2.0.1');
+  assert.equal((await rpc('initialize', { protocolVersion: '2025-03-26' })).result.serverInfo.version, packageVersion);
   const tools = (await rpc('tools/list', {})).result.tools; assert.equal(tools.length, 12); assert.ok(!tools.some(t => /approve|http|proxy/.test(t.name)));
   const transcript = await rpc('tools/call', { name: 'collaboration_read', arguments: { deviceId: B.config.deviceId, threadId: id } }); assert.equal(JSON.parse(transcript.result.content[0].text).thread.id, id);
   child.stdin.end(); await new Promise(yes => child.on('exit', yes));
+  } finally { if (child.exitCode === null) child.kill(); }
   const policyPath = resolve(B.root, '.local/computer-collaboration.json'), policy = await readPrivate(policyPath);
   await writePrivate(policyPath, { ...policy, allowedDeviceIds: [] });
   await assert.rejects(clientA.call(B.config.deviceId, { operation: 'read', threadId: id }), e => e.code === 'COLLABORATION_NOT_AUTHORIZED');

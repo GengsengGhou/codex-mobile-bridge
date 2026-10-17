@@ -79,7 +79,7 @@ export function serveMcp({ root, input = process.stdin, output = process.stdout,
       pending++;
       let result;
       try {
-        if (message.method === 'initialize') result = { protocolVersion: ['2024-11-05', '2025-03-26', '2025-06-18'].includes(message.params?.protocolVersion) ? message.params.protocolVersion : '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'codex-mobile-computer-collaboration', version: '2.0.1' } };
+        if (message.method === 'initialize') result = { protocolVersion: ['2024-11-05', '2025-03-26', '2025-06-18'].includes(message.params?.protocolVersion) ? message.params.protocolVersion : '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'codex-mobile-computer-collaboration', version: '3.0.0' } };
         else if (message.method === 'ping') result = {};
         else if (message.method === 'tools/list') result = { tools: collaborationTools };
         else if (message.method === 'tools/call') {

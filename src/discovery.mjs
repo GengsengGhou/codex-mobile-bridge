@@ -1,11 +1,16 @@
 import { readdir } from 'node:fs/promises';
 import { BridgeError, pipeRequest } from './desktop.mjs';
 
-export async function desktopPipeCandidates() {
-  if (process.platform !== 'win32') return [];
-  const names = await readdir('\\\\.\\pipe\\');
-  return names.filter(name => /^codex-browser-use-[0-9a-f-]{36}$/i.test(name))
-    .slice(0, 64).map(name => `\\\\.\\pipe\\${name}`);
+export async function desktopPipeCandidates({ platform = process.platform, readDirectory = readdir } = {}) {
+  if (platform !== 'win32') return [];
+  const names = await readDirectory('\\\\.\\pipe\\');
+  // Probe the current app transport first. Do not truncate a mixed list: old
+  // browser pipes must neither hide the app pipe nor hide another desktop.
+  const paths = names.filter(name => /^codex-(?:app-tools|browser-use)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name))
+    .sort((a, b) => Number(/^codex-app-tools-/i.test(b)) - Number(/^codex-app-tools-/i.test(a)) || a.localeCompare(b))
+    .map(name => `\\\\.\\pipe\\${name}`);
+  if (paths.length > 128) throw new BridgeError('Codex 桌面连接入口过多，请关闭多余桌面后重试。');
+  return paths;
 }
 
 // Discovery only reads tool catalogs. Writes never retry, even after reconnect.
@@ -20,7 +25,7 @@ export function createDesktopRequest({ preferredPipe, request = pipeRequest, can
       for (let start = 0; start < paths.length; start += 8) {
         const results = await Promise.allSettled(paths.slice(start, start + 8).map(async path => {
           const catalog = await request(path, 'tools/list', { threadStartKind: 'all' }, { timeoutMs: 1000 });
-          const tools = catalog?.tools?.filter(tool => tool.namespace === 'codex_app').map(tool => tool.name) ?? [];
+          const tools = Array.isArray(catalog?.tools) ? catalog.tools.filter(tool => tool?.namespace === 'codex_app').map(tool => tool.name) : [];
           return ['list_threads', 'read_thread'].every(name => tools.includes(name)) ? path : null;
         }));
         for (const result of results) if (result.status === 'fulfilled' && result.value) matches.push(result.value);
@@ -39,10 +44,10 @@ export function createDesktopRequest({ preferredPipe, request = pipeRequest, can
     const path = selected || await discover();
     try { return await request(path, method, params, options); }
     catch (error) {
-      if (error.code !== 'DESKTOP_UNAVAILABLE') throw error;
+      if (!['DESKTOP_UNAVAILABLE', 'PROTOCOL_ERROR', 'DESKTOP_REJECTED'].includes(error.code)) throw error;
       if (selected === path) selected = null;
       if (options.mutation) throw error;
-      return request(await discover(), method, params, options);
+      return request(selected || await discover(), method, params, options);
     }
   };
 }

@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink } from 'node:
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { createConnectorUpdater, stableVersion, compareVersions, UPDATE_API, UPDATE_INSTALLER } from '../scripts/connector-updates.mjs';
 
 const github = 'https://github.com/GengsengGhou/codex-mobile-bridge';
@@ -21,7 +22,7 @@ async function fixture(t, options = {}) {
   await writeFile(join(root, 'package.json'), JSON.stringify({ version: options.version || '1.0.0' }));
   let clock = instant, calls = [];
   const defaultFetch = async (url, init) => { calls.push({ url, init }); return url === UPDATE_API ? Response.json(release()) : new Response(installer); };
-  const settings = { root, now: () => clock, fetchImpl: defaultFetch,
+  const settings = { root, now: () => clock, monotonicNow: () => clock - instant, fetchImpl: defaultFetch,
     secureFile: async () => {}, secureDirectory: path => mkdir(path, { recursive: true, mode: 0o700 }), ...options };
   const updater = createConnectorUpdater(settings);
   return { root, updater, calls, settings, setClock: value => { clock = value; } };
@@ -91,8 +92,8 @@ test('rate-limit without verifiable fallback stays an error, including redirecte
   }
 });
 
-test('malformed, draft, prerelease, future and unofficial metadata cannot authorize an installer', async t => {
-  const variants = [release('v2.0.0',{draft:true}),release('v2.0.0',{prerelease:true}),release('v2.0.0-beta'),release('v2.0.0',{published_at:null}),release('v2.0.0',{published_at:'2099-01-01T00:00:00Z'}),
+test('malformed, draft, prerelease and unofficial metadata cannot authorize an installer', async t => {
+  const variants = [release('v2.0.0',{draft:true}),release('v2.0.0',{prerelease:true}),release('v2.0.0-beta'),release('v2.0.0',{published_at:null}),release('v2.0.0',{published_at:'invalid'}),
     release('v2.0.0',{assets:[{name:UPDATE_INSTALLER,size:3,digest:`sha256:${sha}`,browser_download_url:'https://evil.invalid/setup.exe'}]})];
   for(const metadata of variants){const f=await fixture(t,{fetchImpl:async()=>Response.json(metadata)});const result=await f.updater.download();assert.equal(result.update.status,'error');assert.equal(result.installerVerified,undefined);}
 });
@@ -104,20 +105,112 @@ test('no downgrade, equal-version upgrade or development-build replacement is of
   }
 });
 
-test('in-flight checks deduplicate across updater objects and preserve preference changes during network wait', async t => {
+test('automatic flights coalesce; a concurrent manual intent explicitly reports busy and retries fresh', async t => {
   let releaseFetch, startedResolve, requests=0;
   const started=new Promise(r=>{startedResolve=r;});
   const f=await fixture(t,{fetchImpl:async()=>{requests++;startedResolve();await new Promise(r=>{releaseFetch=r;});return Response.json(release());}});
-  const first=f.updater.check(); await started;
-  const second=createConnectorUpdater(f.settings).check();
+  const first=f.updater.check({manual:false}); await started;
+  const second=createConnectorUpdater(f.settings).check({manual:false});
+  await assert.rejects(createConnectorUpdater(f.settings).check({manual:true}), /已有更新操作/);
   await f.updater.preferences(false);releaseFetch();
   const [one,two]=await Promise.all([first,second]); assert.equal(requests,1);assert.deepEqual(one,two);assert.equal(one.update.automatic,false);
+  const retry=createConnectorUpdater({...f.settings,fetchImpl:async()=>{requests++;return Response.json(release());}});
+  assert.equal((await retry.check({manual:true})).update.status,'available');assert.equal(requests,2);
 });
 
-test('another live process operation lock suppresses duplicate automatic check', async t => {
+test('another live process lock explicitly reports busy instead of returning a cached error', async t => {
   const f=await fixture(t);await mkdir(join(f.root,'.local'));await writeFile(join(f.root,'.local/connector-update.lock'),JSON.stringify({pid:process.pid}));
-  const result=await f.updater.check({manual:false});assert.equal(result.update.status,'idle');assert.equal(f.calls.length,0);
+  await assert.rejects(f.updater.check({manual:false}),/已有更新操作/);assert.equal(f.calls.length,0);
+  await assert.rejects(f.updater.check({manual:true}),/已有更新操作/);assert.equal(f.calls.length,0);
   await assert.rejects(f.updater.download(),/已有更新操作/);
+});
+
+test('wall-clock publication differences do not reject otherwise authenticated stable metadata', async t => {
+  const f=await fixture(t);f.setClock(Date.parse('2024-05-25T00:00:00Z'));
+  const checked=await f.updater.check();assert.equal(checked.update.status,'available');
+  assert.equal((await f.updater.download()).installerVerified,true);
+});
+
+test('certificate-date/network failure then restored clock and VPN recover in the same process on manual retry', async t => {
+  let failing=true,requests=0;
+  const f=await fixture(t,{fetchImpl:async()=>{requests++;if(failing)throw new TypeError('secret-provider', {cause:Object.assign(new Error('private-url'),{code:'CERT_NOT_YET_VALID'})});return Response.json(release());}});
+  f.setClock(Date.parse('2024-05-25T00:00:00Z'));
+  const failed=await f.updater.check();assert.equal(failed.update.status,'error');assert.match(failed.update.error,/证书有效日期.*Windows.*VPN/);
+  assert.doesNotMatch(JSON.stringify(failed),/secret-provider|private-url/);
+  f.setClock(instant);failing=false;
+  const result=await f.updater.check({manual:true});assert.equal(result.update.status,'available');assert.equal(result.update.error,null);assert.equal(requests,2);
+  assert.equal(result.update.lastCheckedAt,new Date(instant).toISOString());
+});
+
+test('network errors with provider-controlled product-looking prefixes are still redacted', async t => {
+  const f=await fixture(t,{fetchImpl:async()=>{throw Error('官方 secret-query-token');}});
+  const result=await f.updater.check();assert.match(result.update.error,/网络或 VPN/);assert.doesNotMatch(JSON.stringify(result),/secret-query/);
+});
+
+test('response-body failures distinguish network or timeout from malformed official metadata', async t => {
+  for(const [error,pattern] of [[new TypeError('private-stream-token'),/网络或 VPN/],[new DOMException('private-timeout','TimeoutError'),/超时/]]) {
+    const f=await fixture(t,{fetchImpl:async()=>new Response(new ReadableStream({start(controller){controller.error(error);}}))});
+    const result=await f.updater.check();assert.match(result.update.error,pattern);assert.doesNotMatch(JSON.stringify(result),/private-stream|private-timeout|官方版本信息无效/);
+  }
+  for(const body of ['{invalid', 'null', '[]']) {const f=await fixture(t,{fetchImpl:async()=>new Response(body)});assert.equal((await f.updater.check()).update.error,'官方版本信息无效。');}
+});
+
+test('restoring connectivity during an active failing check requires explicit busy then a fresh retry', async t => {
+  let startedResolve,finish,requests=0,failing=true;
+  const started=new Promise(r=>startedResolve=r);
+  const f=await fixture(t,{fetchImpl:async()=>{requests++;if(failing){startedResolve();await new Promise(r=>finish=r);throw Error('offline');}return Response.json(release());}});
+  const first=f.updater.check({manual:false});await started;failing=false;f.setClock(instant+86400000);
+  await assert.rejects(f.updater.check({manual:true}),/已有更新操作/);finish();assert.equal((await first).update.status,'error');
+  assert.equal((await f.updater.check({manual:true})).update.status,'available');assert.equal(requests,2);
+});
+
+test('dead PID locks are reclaimed but invalid owner locks remain busy and external replacements survive release', async t => {
+  const exited=spawnSync(process.execPath,['-p','process.pid'],{encoding:'utf8'});assert.equal(exited.status,0);const dead=Number(exited.stdout.trim());
+  assert.throws(()=>process.kill(dead,0),e=>e.code==='ESRCH');
+  const f=await fixture(t);await mkdir(join(f.root,'.local'));const lock=join(f.root,'.local/connector-update.lock');
+  await writeFile(lock,JSON.stringify({pid:dead,id:'dead-owner'}));assert.equal((await f.updater.check()).update.status,'available');
+  await assert.rejects(readFile(lock),e=>e.code==='ENOENT');
+  for(const owner of [{pid:0,id:'invalid'},{}]){const bytes=JSON.stringify(owner);await writeFile(lock,bytes);await assert.rejects(f.updater.check(),/已有更新操作/);assert.equal(await readFile(lock,'utf8'),bytes);}
+  await rm(lock);
+  const replacement={pid:process.pid,id:'different-owner'};
+  const g=createConnectorUpdater({...f.settings,fetchImpl:async()=>{await writeFile(lock,JSON.stringify(replacement));return Response.json(release());}});
+  await g.check();assert.deepEqual(JSON.parse(await readFile(lock,'utf8')),replacement);
+});
+
+test('automatic scheduling uses elapsed time and clock correction cannot wedge cached or interrupted state', async t => {
+  let mono=0;
+  const f=await fixture(t,{monotonicNow:()=>mono});await f.updater.check();
+  mono=1000;f.setClock(instant+1000);await f.updater.check({manual:false});assert.equal(f.calls.length,1);
+  f.setClock(instant-86400000);await f.updater.check({manual:false});assert.equal(f.calls.length,2);
+  f.setClock(instant+86400000*365);await f.updater.check({manual:false});assert.equal(f.calls.length,3);
+  await writeFile(join(f.root,'.local/connector-updates.json'),JSON.stringify({status:'checking',lastAttemptAt:'2099-01-01T00:00:00Z'}));
+  const restarted=createConnectorUpdater(f.settings);assert.equal((await restarted.state()).update.status,'error');
+  await restarted.check({manual:false});assert.equal(f.calls.length,4);
+  const future={status:'error',lastAttemptAt:'2099-01-01T00:00:00Z',error:'old'};await writeFile(join(f.root,'.local/connector-updates.json'),JSON.stringify(future));
+  await restarted.check({manual:false});assert.equal(f.calls.length,5);
+  await writeFile(join(f.root,'.local/connector-updates.json'),JSON.stringify({status:'checking',lastAttemptAt:new Date(instant+86400000*365).toISOString()}));
+  // Do not call state() first: acquiring our new lock must not make the crashed cache look live.
+  await createConnectorUpdater(f.settings).check({manual:false});assert.equal(f.calls.length,6);
+});
+
+test('an active download cannot swallow a manual check and a matching hash alone cannot authorize non-MZ bytes', async t => {
+  let startedResolve,finish;const started=new Promise(r=>startedResolve=r);
+  const f=await fixture(t,{fetchImpl:async url=>{if(url===UPDATE_API)return Response.json(release());startedResolve();await new Promise(r=>finish=r);return new Response(installer);}});
+  const downloading=f.updater.download();await started;
+  await assert.rejects(createConnectorUpdater(f.settings).check({manual:true}),/已有更新操作/);
+  finish();assert.equal((await downloading).installerVerified,true);
+  const bad=Buffer.from('NOT-AN-EXECUTABLE'),metadata=release();metadata.assets[0].size=bad.length;metadata.assets[0].digest='sha256:'+createHash('sha256').update(bad).digest('hex');
+  const g=await fixture(t,{fetchImpl:async url=>url===UPDATE_API?Response.json(metadata):new Response(bad)});
+  assert.equal((await g.updater.download()).installerVerified,undefined);assert.deepEqual(await readdir(join(g.root,'.local/updates')),[]);
+});
+
+test('a fresh process manually replaces a legacy cached error without changing private fixture data', async t => {
+  const f=await fixture(t);await mkdir(join(f.root,'.local'));const state=join(f.root,'.local/connector-updates.json');
+  await writeFile(state,JSON.stringify({status:'error',lastAttemptAt:'2024-05-25T00:00:00Z',lastCheckedAt:'2026-10-02T00:00:00Z',error:'官方稳定版本信息无效。'}));
+  const privatePath=join(f.root,'.local/hub-connector.json'),privateBytes='fixture-private-data';await writeFile(privatePath,privateBytes);
+  const script=`import {mkdir} from 'node:fs/promises';import {createConnectorUpdater} from ${JSON.stringify(new URL('../scripts/connector-updates.mjs',import.meta.url).href)};let calls=0;const updater=createConnectorUpdater({root:process.argv[1],secureFile:async()=>{},secureDirectory:p=>mkdir(p,{recursive:true}),fetchImpl:async()=>{calls++;return Response.json(${JSON.stringify(release())});}});const r=await updater.check({manual:true});console.log(JSON.stringify({calls,status:r.update.status,error:r.update.error}));`;
+  const child=spawnSync(process.execPath,['--input-type=module','-e',script,f.root],{encoding:'utf8',timeout:10000});
+  assert.equal(child.status,0,child.stderr);assert.deepEqual(JSON.parse(child.stdout),{calls:1,status:'available',error:null});assert.equal(await readFile(privatePath,'utf8'),privateBytes);
 });
 
 test('timeouts and cancellation report retryable errors and do not leave operation locks', async t => {

@@ -102,6 +102,8 @@ window.desktopTranslations = {
   "官方安装包缺少 SHA256 校验信息。": "The official installer is missing SHA256 verification information.",
   "更新请求已取消或超时，请重试。": "The update request was cancelled or timed out. Try again.",
   "无法连接官方更新服务，请检查网络后重试。": "Unable to reach the official update service. Check your network and retry.",
+  "官方更新服务证书有效日期校验失败。请核对 Windows 日期和时间，恢复网络或 VPN 后重新检查；若时间正确仍失败，请稍后重试。": "The official update service certificate validity dates could not be validated. Check Windows date and time, restore your network or VPN, then check again. If the time is correct and this persists, try again later.",
+  "无法连接官方更新服务，请检查网络或 VPN，恢复后重新检查。": "Unable to reach the official update service. Check your network or VPN, then check again after it recovers.",
   "更新检查请求无效。": "The update check request is invalid.",
   "当前没有可安装的稳定更新。": "No stable update is currently available to install.",
   "更新安装包过大。": "The update installer is too large.",

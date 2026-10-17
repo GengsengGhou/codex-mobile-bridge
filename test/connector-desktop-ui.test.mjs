@@ -219,6 +219,33 @@ test('partial enrollment retry remains connect-only until explicit recovery succ
   ui.$('retryButton').click();ui.answer(ui.calls.at(-1),{recoveryCompleted:false,paused:true});await tick();assert.match(ui.$('feedback').textContent,/Pending/);
   ui.$('retryButton').click();ui.answer(ui.calls.at(-1),{recoveryCompleted:true,paused:false});await tick();assert.equal(ui.$('feedback').hidden,true);assert.equal(ui.calls.filter(call=>call.action==='pair').length,0);assert.equal(ui.calls.filter(call=>call.action==='disconnect').length,0);
 });
+test('cached update errors yield to local and native checking and manual recovery clears them in both languages',async t=>{
+  for(const language of ['zh-CN','en']) {
+    const ui=mount(t,{language});await tick();
+    const cached={currentVersion:'2.0.1',automatic:true,status:'error',error:'官方稳定版本信息无效。'};
+    ui.send({type:'update',update:cached});
+    assert.match(ui.$('updateMessage').textContent,language==='en'?/Official stable/:/官方稳定/);
+    ui.$('checkUpdate').click();const request=ui.calls.at(-1);
+    assert.match(ui.$('updateMessage').textContent,language==='en'?/Checking/:/正在检查/);
+    ui.send({type:'update',checking:true});
+    assert.doesNotMatch(ui.$('updateMessage').textContent,/Official stable|官方稳定/);
+    const count=ui.calls.length;ui.$('checkUpdate').click();assert.equal(ui.calls.length,count);
+    ui.answer(request,{update:{...cached,error:'无法连接官方更新服务，请检查网络或 VPN，恢复后重新检查。'}});await tick();
+    // The native transient remains authoritative until completion is posted.
+    assert.match(ui.$('updateMessage').textContent,language==='en'?/Checking/:/正在检查/);
+    ui.send({type:'update',checking:false,update:{...cached,error:'无法连接官方更新服务，请检查网络或 VPN，恢复后重新检查。'}});
+    assert.match(ui.$('updateMessage').textContent,/VPN/);
+    ui.$('checkUpdate').click();const retry=ui.calls.at(-1);assert.equal(retry.payload.manual,true);
+    assert.match(ui.$('updateMessage').textContent,language==='en'?/Checking/:/正在检查/);
+    const recovered={currentVersion:'2.0.1',latestVersion:'2.0.2',available:true,automatic:true,status:'available',error:null};
+    ui.send({type:'update',checking:false,update:recovered});ui.answer(retry,{update:recovered});await tick();
+    assert.match(ui.$('updateMessage').textContent,language==='en'?/new version/:/发现新版本/);assert.equal(ui.$('checkUpdate').disabled,false);
+    ui.send({type:'update',checking:true});assert.match(ui.$('updateMessage').textContent,language==='en'?/Checking/:/正在检查/);
+    ui.send({type:'update',checking:false,error:'已有更新操作正在进行，请稍后重试。'});
+    assert.match(ui.$('updateMessage').textContent,language==='en'?/in progress.*Try again/:/已有更新操作.*重试/);
+  }
+});
+
 test('update failure and download controls remain independent of pairing drafts and connection errors',async t=>{
   const ui=mount(t,{language:'en'});await tick();ui.send({type:'status',status:online,error:'Status fixture error'});
   ui.$('settingsButton').click();ui.$('changeServer').click();ui.input('server','draft.example');ui.input('pairingCode','u'.repeat(43));ui.$('settingsButton').click();

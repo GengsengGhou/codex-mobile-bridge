@@ -1,6 +1,6 @@
 # Windows 安装说明
 
-下载、校验、账号登录和首次配对步骤见[快速开始](quick-start.md)。从[最新 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest)下载 Windows x64 图形安装器和同一发行版的 `SHA256SUMS`，安装前核对哈希。v2.0.1 发布 EXE、Hub tar.gz 和校验清单，不发布 ZIP；v2.0.0 ZIP 是历史资产。安装器内置 Node.js 和连接器依赖，无需手动安装 Node.js。Windows 需要 WebView2 Runtime；缺少时按安装器提示安装微软运行时。安装程序当前未签名，Windows 可能显示发布者或信誉提示。
+下载、校验、账号登录和首次配对步骤见[快速开始](quick-start.md)。从[最新 Release](https://github.com/GengsengGhou/codex-mobile-bridge/releases/latest)下载 Windows x64 图形安装器和同一发行版的 `SHA256SUMS`，安装前核对哈希。正式发行版发布 EXE、Hub tar.gz 和校验清单，不发布 ZIP；v2.0.0 ZIP 是历史资产。安装器内置 Node.js 和连接器依赖，无需手动安装 Node.js。Windows 需要 WebView2 Runtime；缺少时按安装器提示安装微软运行时。安装程序当前未签名，Windows 可能显示发布者或信誉提示。
 
 ## 安装与配对
 
@@ -19,6 +19,10 @@
 
 连接器设置支持自动检查更新、手动检查和“下载并升级”。检查不会自动安装；发现较新版本后，下载经过 SHA-256 校验，再由用户确认打开安装器。也可从 Release 页面手动下载并核对哈希。
 
+GitHub 更新需要正确的 Windows 日期和时间，以及可访问 GitHub 的网络；需要 VPN 时，也应先恢复 VPN。连接器与 Hub 的时钟兼容不覆盖 GitHub 或 VPN。恢复后到设置点击“检查更新”；如果提示已有检查或下载正在进行，请等待完成后再点一次，不要删除更新锁或 `.local` 数据。
+
+v3.0.0 兼容新版 Codex 桌面入口，并保留旧版入口支持。遇到多个可用桌面时不会任意选择，请从目标 Codex 桌面任务重新启动连接。原目录升级保留配对、授权、项目、模型提供方与工具偏好；现有 v2.0.1 Hub 无需升级。本版同时修复系统时间与网络恢复后的更新重试和旧错误显示，操作说明见[更新恢复说明](update-recovery.md)。
+
 同版本安装器选择“修复安装 / Repair”可恢复可验证归属的程序文件、内置运行时和 SDK 文件，同时保留本机配对、设置、权限、回执和暂停状态。普通修复不会清理 Codex 配置、模型提供方或 API 密钥。更换服务器或设备身份改变时，电脑协作授权仍需重新确认。修复或升级会停止本安装的 MCP 进程；完成后请完全退出并重新打开 Codex。
 
 Microsoft Store 安装的 Codex 曾可能读到连接器的旧副本，出现连接器已经连接、电脑协作却提示断开或配对改变的情况。图形安装器现在会让连接器与协作连接使用同一份本机状态。已有图形安装的用户只需运行相应版本安装器并选择“修复安装”，然后完全退出并重新打开 Codex；无需重新配对、删除文件或清理 Codex 缓存。原来的接收电脑、项目选择、暂停状态，以及 Codex 中的工具审批、限制和其他配置会保留；已经手动删除或禁用的协作连接不会被重新开启。
@@ -29,7 +33,7 @@ Microsoft Store 安装的 Codex 曾可能读到连接器的旧副本，出现连
 
 若连接或配对提示服务器证书有效日期校验失败，先到 Windows **设置 > 时间和语言 > 日期和时间**开启“自动设置时间”，再点“立即同步”。这表示日期校验未通过，不一定是本机时钟错误；若日期和时间已正确但问题仍在，请联系服务器管理员检查证书。
 
-Windows EXE 图形版连接器 v2.0.1 支持在 Hub 提供可信服务器时间时兼容错误的 Windows 系统日期。Hub 也必须升级到 v2.0.1，且其系统时间和证书域名必须正确；旧版 Hub 在本机时间正确时仍可连接。该功能依赖 EXE 内的 `CertificateVerifier.exe`。本次发布没有 ZIP；v2.0.0 历史 ZIP 不含此 helper，但系统时间正确时仍可使用。此兼容覆盖连接器与 Hub 的 HTTPS、WSS 和 MCP 通信，不改变 Windows 系统时间；不保证 Codex 登录或模型提供方的直接请求能在错误系统时间下使用。升级顺序和保留数据要求见[2.0.1 升级指南](upgrading-2.0.1.md)。
+Windows EXE 图形版连接器从 v2.0.1 起支持在 Hub 提供可信服务器时间时兼容错误的 Windows 系统日期。使用时钟兼容时 Hub 至少为 v2.0.1，且其系统时间和证书域名必须正确；旧版 Hub 在本机时间正确时仍可连接。该功能依赖 EXE 内的 `CertificateVerifier.exe`。本次发布没有 ZIP；v2.0.0 历史 ZIP 不含此 helper，但系统时间正确时仍可使用。此兼容覆盖连接器与 Hub 的 HTTPS、WSS 和 MCP 通信，不改变 Windows 系统时间；不保证 Codex 登录或模型提供方的直接请求能在错误系统时间下使用。升级顺序和保留数据要求见[2.0.1 升级指南](upgrading-2.0.1.md)。
 
 ## 明确重置配对与电脑协作
 
@@ -45,7 +49,7 @@ Windows EXE 图形版连接器 v2.0.1 支持在 Hub 提供可信服务器时间�
 
 ## 历史 ZIP 安装方式
 
-v2.0.1 不发布 Windows ZIP。以下仅适用于已下载的历史版本：Windows ZIP 是需要终端操作的安装方式。解压到固定目录，在该目录运行 `deploy/install-connector.cmd`。安装脚本优先使用已有 Node.js 22.16 或更新版本；否则下载官方 Windows x64 Node.js 并校验 SHA-256，将运行时保存在包内 `.local/tools`，不修改系统 PATH。安装目录和 Node 路径不要移动。
+当前发行版不发布 Windows ZIP。以下仅适用于已下载的历史版本：Windows ZIP 是需要终端操作的安装方式。解压到固定目录，在该目录运行 `deploy/install-connector.cmd`。安装脚本优先使用已有 Node.js 22.16 或更新版本；否则下载官方 Windows x64 Node.js 并校验 SHA-256，将运行时保存在包内 `.local/tools`，不修改系统 PATH。安装目录和 Node 路径不要移动。
 
 上述 Microsoft Store Codex 兼容修复和时钟兼容随 v2.0.1 EXE 图形安装和修复提供；历史 ZIP 不含 `CertificateVerifier.exe`，不提供时钟兼容。普通用户推荐使用 EXE。EXE 默认安装不会自动接管其他目录中的 ZIP 配对或授权；请保留旧部署数据，不要把“重置配对”当作修复。
 

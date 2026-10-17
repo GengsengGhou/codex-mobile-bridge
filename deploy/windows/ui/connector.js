@@ -16,7 +16,7 @@
   let actionBusy = false, nativeBusy = false, mutationPending = 0, busyReason = '', statusError = '', actionError = '', warning = '', viewBeforeSettings = 'pairing';
   let serverTouched = false, nameTouched = false, defaultsApplied = false;
   let pairingTarget = null, importedPairingOrigin = null, pairingFlow = 0, pairingSourceMismatch = null;
-  let update = null, updateBusy = false, updateError = '';
+  let update = null, updateBusy = false, nativeUpdateBusy = false, updateError = '';
   let collaboration = null, collaborationDirty = false, collaborationBusy = false, collaborationError = '', collaborationMessage = '';
   let collaborationDraft = { controlEnabled: false, receiveEnabled: false, allowedDeviceIds: [], allowedProjectRoots: [] };
   let collaborationGeneration = 0, collaborationRequest = 0;
@@ -33,16 +33,17 @@
   }
   function updateDiagnostic(text) { return diagnostic(text)?.replace(/更新服务请求失败（HTTP (\d+)），请重试。/g,(_,code)=>language==='en'?`The update service returned HTTP ${code}. Try again.`:`更新服务请求失败（HTTP ${code}），请重试。`); }
   function renderUpdate() {
+    const updating = updateBusy || nativeUpdateBusy;
     $('currentVersion').textContent = update?.currentVersion ? 'v'+update.currentVersion : $('versionLabel').textContent;
     $('latestVersion').textContent = update?.latestVersion ? 'v'+update.latestVersion : '—';
     $('lastUpdateCheck').textContent = update?.lastCheckedAt ? new Date(update.lastCheckedAt).toLocaleString(language) : '—';
     $('automaticUpdates').checked = update?.automatic !== false;
-    $('automaticUpdates').disabled = updateBusy;
-    $('checkUpdate').disabled = updateBusy;
+    $('automaticUpdates').disabled = updating;
+    $('checkUpdate').disabled = updating;
     $('downloadUpdate').hidden = !update?.available;
     $('updateNotice').hidden = !update?.available;
-    $('downloadUpdate').disabled = updateBusy || actionBusy;
-    $('updateMessage').textContent = updateDiagnostic(updateError || update?.error) || t(updateBusy ? '正在检查或下载更新…' : update?.available ? '发现新版本，可下载并升级。' : update?.status === 'current' ? '已是最新版本。' : '启动时及每天自动检查更新。');
+    $('downloadUpdate').disabled = updating || actionBusy;
+    $('updateMessage').textContent = updating ? t('正在检查或下载更新…') : updateDiagnostic(updateError || update?.error) || t(update?.available ? '发现新版本，可下载并升级。' : update?.status === 'current' ? '已是最新版本。' : '启动时及每天自动检查更新。');
   }
   function renderCollaboration() {
     const state = collaboration;
@@ -386,7 +387,7 @@
       }
       if (data.warning !== undefined) warning = data.warning || '';
       render();
-    } else if (data.type === 'update') { if(data.update)update=data.update; updateError=data.error||'';renderUpdate(); }
+    } else if (data.type === 'update') { if(data.update)update=data.update; if(typeof data.checking==='boolean')nativeUpdateBusy=data.checking;updateError=data.error||'';renderUpdate(); }
     else if (data.type === 'busy') { nativeBusy = data.value; busyReason=data.reason; actionBusy = nativeBusy || mutationPending > 0; render(); }
   });
   command('ready').then(info => {

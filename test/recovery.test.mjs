@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadRuntimeConfig } from '../src/runtime.mjs';
-import { createDesktopRequest } from '../src/discovery.mjs';
+import { createDesktopRequest, desktopPipeCandidates } from '../src/discovery.mjs';
 import { BridgeError } from '../src/desktop.mjs';
 
 const CALLER = '11111111-1111-4111-8111-111111111111';
@@ -29,6 +29,78 @@ test('saved startup config works without desktop environment and excludes privat
 });
 
 const appCatalog = { tools: ['list_threads', 'read_thread'].map(name => ({ namespace: 'codex_app', name })) };
+
+test('new and legacy strict UUID pipes survive a crowded mixed inventory', async () => {
+  const old = Array.from({ length: 70 }, (_, i) => `codex-browser-use-${String(i).padStart(8, '0')}-1111-4111-8111-111111111111`);
+  const current = 'codex-app-tools-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const names = [...old, current, 'codex-app-tools-------------------------------------', `${current}-extra`, 'codex-app-tools-aaa', 'unrelated'];
+  const paths = await desktopPipeCandidates({ platform: 'win32', readDirectory: async path => { assert.equal(path, '\\\\.\\pipe\\'); return names; } });
+  assert.equal(paths.length, 71);
+  assert.equal(paths[0], `\\\\.\\pipe\\${current}`);
+  assert.deepEqual(new Set(paths.slice(1)), new Set(old.map(name => `\\\\.\\pipe\\${name}`)));
+  assert.deepEqual(await desktopPipeCandidates({ platform: 'linux', readDirectory: () => assert.fail('must not enumerate Windows pipes') }), []);
+  await assert.rejects(desktopPipeCandidates({ platform: 'win32', readDirectory: async () => Array.from({ length: 129 }, (_, i) => `codex-app-tools-${String(i).padStart(8, '0')}-1111-4111-8111-111111111111`) }), /入口过多/);
+});
+
+test('discovery ignores rejected, malformed, partial and non-app catalogs', async () => {
+  const catalogs = [null, { tools: {} }, { tools: [null] }, { tools: [{ namespace: 'codex_app', name: 'list_threads' }] },
+    { tools: ['list_threads', 'read_thread'].map(name => ({ namespace: 'browser', name })) }];
+  const request = createDesktopRequest({ candidates: async () => ['rejected', ...catalogs.map((_, i) => String(i)), 'app'], request: async (path, method) => {
+    if (method !== 'tools/list') { assert.equal(path, 'app'); return 'read'; }
+    if (path === 'rejected') throw new BridgeError('rejected', 'DESKTOP_REJECTED');
+    return path === 'app' ? appCatalog : catalogs[Number(path)];
+  } });
+  assert.equal(await request(null, 'tools/call', { tool: 'read_thread' }), 'read');
+});
+
+test('unavailable discovery backs off instead of dispatching to an unverified pipe', async () => {
+  let inventories = 0, calls = 0;
+  const request = createDesktopRequest({ candidates: async () => { inventories++; return ['browser']; }, request: async (_path, method) => { calls++; assert.equal(method, 'tools/list'); return { tools: [] }; } });
+  await assert.rejects(request(null, 'tools/call', {}), /未找到可用/);
+  await assert.rejects(request(null, 'tools/call', {}), /正在等待/);
+  assert.equal(inventories, 1); assert.equal(calls, 1);
+});
+
+test('read failures on stale preferred protocols rediscover once without replaying indefinitely', async () => {
+  for (const code of ['PROTOCOL_ERROR', 'DESKTOP_REJECTED']) {
+    const calls = [];
+    const request = createDesktopRequest({ preferredPipe: 'old', candidates: async () => ['old', 'new'], request: async (path, method) => {
+      calls.push([path, method]);
+      if (path === 'old') throw new BridgeError('old transport', code);
+      if (method === 'tools/list') return appCatalog;
+      return 'read';
+    } });
+    assert.equal(await request(null, 'tools/call', { tool: 'read_thread' }), 'read');
+    assert.equal(calls.filter(([path, method]) => path === 'old' && method === 'tools/call').length, 1);
+    assert.equal(calls.filter(([path, method]) => path === 'new' && method === 'tools/call').length, 1);
+  }
+});
+
+test('concurrent stale reads coalesce rediscovery and each retry only once', async () => {
+  let discoveries = 0, probes = 0, reads = 0;
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const request = createDesktopRequest({ preferredPipe: 'old', candidates: async () => { discoveries++; return ['new']; }, request: async (path, method) => {
+    if (path === 'old') throw new BridgeError('gone');
+    if (method === 'tools/list') { probes++; await pending; return appCatalog; }
+    reads++; return 'read';
+  } });
+  const results = [request(null, 'tools/call', {}), request(null, 'tools/call', {})];
+  await new Promise(resolve => setImmediate(resolve)); release();
+  assert.deepEqual(await Promise.all(results), ['read', 'read']);
+  assert.equal(discoveries, 1); assert.equal(probes, 1); assert.equal(reads, 2);
+});
+
+test('a failed mutation clears stale selection for a later independent read', async () => {
+  let writes = 0, inventories = 0;
+  const request = createDesktopRequest({ preferredPipe: 'old', candidates: async () => { inventories++; return ['new']; }, request: async (path, method, _params, options) => {
+    if (options?.mutation) { writes++; throw new BridgeError('changed', 'PROTOCOL_ERROR'); }
+    assert.equal(path, 'new'); return method === 'tools/list' ? appCatalog : 'read';
+  } });
+  await assert.rejects(request(null, 'tools/call', {}, { mutation: true }), { code: 'PROTOCOL_ERROR' });
+  assert.equal(inventories, 0); assert.equal(writes, 1);
+  assert.equal(await request(null, 'tools/call', {}), 'read'); assert.equal(writes, 1);
+});
 
 test('stale pipe reconnects through a read-only catalog probe, ignoring non-app pipes', async () => {
   const calls = [];

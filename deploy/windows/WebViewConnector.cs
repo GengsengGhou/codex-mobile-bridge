@@ -26,6 +26,7 @@ class ConnectorWindow : Form,IConnectorWindow {
     readonly object processLock=new object();readonly List<Process> activeReads=new List<Process>();
     int actionEpoch,uninstallRequests;string statusError,actionWarning;
     bool updateInFlight,updateAutomatic=true;DateTime nextUpdateCheck=DateTime.MinValue;string notifiedVersion;
+    readonly Stopwatch updateClock=Stopwatch.StartNew();double updateDueMs,updateClockSample;DateTime updateWallSample=DateTime.UtcNow;
     readonly string lifecycleEvidence,statusEvidence,capturePath;readonly int qaDebugPort;
     public ConnectorWindow(string destination,string[] options) {
         root=destination;args=options;uninstallMode=Array.IndexOf(args,"--uninstall")>=0;
@@ -41,7 +42,7 @@ class ConnectorWindow : Form,IConnectorWindow {
         bool isolatedQa=!ConnectorBootstrap.IsDefaultRoot(root)&&Array.Exists(args,item=>item.StartsWith("--qa-",StringComparison.Ordinal));
         bool showTray=lifecycleEvidence!=null||(!isolatedQa&&capturePath==null);
         tray=new NotifyIcon{Icon=Icon,Text="Codex Mobile Bridge",ContextMenuStrip=menu,Visible=showTray};tray.DoubleClick+=(s,e)=>Wake();
-        timer.Interval=3000;timer.Tick+=async(s,e)=>{await RefreshStatus();if(!updateInFlight&&DateTime.UtcNow>=nextUpdateCheck)try{await CheckUpdate(false);}catch{}};
+        timer.Interval=3000;timer.Tick+=async(s,e)=>{await RefreshStatus();if(!updateInFlight&&UpdateDue())try{await CheckUpdate(false);}catch{}};
         FormClosing+=(s,e)=>{if(e.CloseReason==CloseReason.WindowsShutDown||e.CloseReason==CloseReason.TaskManagerClosing){exiting=true;timer.Stop();tray.Visible=false;return;}if(!exiting){e.Cancel=true;Hide();}};
         FormClosed+=(s,e)=>{timer.Stop();tray.Dispose();browser.Dispose();if(recoveryWindow!=null&&!recoveryWindow.IsDisposed)recoveryWindow.Close();};
         Shown+=async(s,e)=>await InitializeView();
@@ -95,17 +96,29 @@ class ConnectorWindow : Form,IConnectorWindow {
         catch(Exception error){if(epoch==actionEpoch){statusError=DesktopLocale.T("连接状态读取失败：")+error.Message;PublishStatus();}}
         finally {statusReadInFlight=false;if(refreshQueued&&!exiting&&!IsDisposed){refreshQueued=false;BeginInvoke(new Action(async()=>await RefreshStatus()));}}
     }
-    void PublishUpdate(Dictionary<string,object> result) {object state;if(!result.TryGetValue("update",out state)||!(state is Dictionary<string,object>))throw new Exception(DesktopLocale.T("后台响应无效。"));Post(new{type="update",update=state});var data=(Dictionary<string,object>)state;object available,version;if(data.TryGetValue("available",out available)&&available is bool&&(bool)available&&data.TryGetValue("latestVersion",out version)&&version is string&&notifiedVersion!=(string)version){notifiedVersion=(string)version;if(!Visible&&tray.Visible)tray.ShowBalloonTip(8000,Text,DesktopLocale.T("发现新版本，可在设置中下载并升级。"),ToolTipIcon.Info);}}
+    void PublishUpdate(Dictionary<string,object> result) {object state;if(!result.TryGetValue("update",out state)||!(state is Dictionary<string,object>))throw new Exception(DesktopLocale.T("后台响应无效。"));Post(new{type="update",update=state,checking=false});var data=(Dictionary<string,object>)state;object available,version;if(data.TryGetValue("available",out available)&&available is bool&&(bool)available&&data.TryGetValue("latestVersion",out version)&&version is string&&notifiedVersion!=(string)version){notifiedVersion=(string)version;if(!Visible&&tray.Visible)tray.ShowBalloonTip(8000,Text,DesktopLocale.T("发现新版本，可在设置中下载并升级。"),ToolTipIcon.Info);}}
+    void SetUpdateDelay(double delay) {
+        updateWallSample=DateTime.UtcNow;updateClockSample=updateClock.Elapsed.TotalMilliseconds;
+        if(!updateAutomatic){updateDueMs=double.PositiveInfinity;nextUpdateCheck=DateTime.MaxValue;return;}
+        delay=double.IsNaN(delay)||double.IsInfinity(delay)?0:Math.Max(0,Math.Min(86400000,delay));
+        updateDueMs=updateClockSample+delay;nextUpdateCheck=updateWallSample.AddMilliseconds(delay);
+    }
+    bool UpdateDue() {
+        if(!updateAutomatic)return false;
+        double mono=updateClock.Elapsed.TotalMilliseconds;DateTime wall=DateTime.UtcNow;
+        if(Math.Abs((wall-updateWallSample).TotalMilliseconds-(mono-updateClockSample))>60000)updateDueMs=mono;
+        updateClockSample=mono;updateWallSample=wall;return mono>=updateDueMs;
+    }
     void ScheduleUpdate(Dictionary<string,object> state,bool enabledNow=false) {
         object raw;updateAutomatic=!state.TryGetValue("automatic",out raw)||!(raw is bool)||(bool)raw;
         string status=state.TryGetValue("status",out raw)?Convert.ToString(raw):"idle";
-        DateTime attempt;if(!state.TryGetValue("lastAttemptAt",out raw)||!DateTime.TryParse(Convert.ToString(raw),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out attempt))attempt=DateTime.UtcNow;
-        nextUpdateCheck=!updateAutomatic?DateTime.MaxValue:enabledNow?DateTime.UtcNow:attempt.ToUniversalTime().AddHours(status=="error"?1:24);
-        if(updateAutomatic&&status=="idle"&&!state.ContainsKey("lastAttemptAt"))nextUpdateCheck=DateTime.UtcNow;
+        double delay=0;
+        if(!enabledNow&&state.TryGetValue("nextCheckDelayMs",out raw))try{delay=Convert.ToDouble(raw,CultureInfo.InvariantCulture);}catch{}
+        SetUpdateDelay(delay);
         RecordUpdateSchedule(status);
     }
     void RecordUpdateSchedule(string status) {string evidence=QaArgument("--qa-update-evidence");if(evidence!=null)File.AppendAllText(evidence,json.Serialize(new{observedAt=DateTime.UtcNow.ToString("o"),nextCheckAt=nextUpdateCheck.ToString("o"),automatic=updateAutomatic,status=status,inFlight=updateInFlight})+Environment.NewLine);}
-    async Task<Dictionary<string,object>> CheckUpdate(bool manual) {if(updateInFlight)throw new Exception(DesktopLocale.T("正在检查或下载更新，请稍后重试。"));updateInFlight=true;nextUpdateCheck=DateTime.MaxValue;RecordUpdateSchedule("checking");try{var result=await Run(new{action="check-update",manual=manual});PublishUpdate(result);ScheduleUpdate((Dictionary<string,object>)result["update"]);return result;}catch(Exception error){nextUpdateCheck=updateAutomatic?DateTime.UtcNow.AddHours(1):DateTime.MaxValue;RecordUpdateSchedule("error");Post(new{type="update",error=DesktopLocale.Diagnostic(error.Message)});throw;}finally{updateInFlight=false;}}
+    async Task<Dictionary<string,object>> CheckUpdate(bool manual) {if(updateInFlight)throw new Exception(DesktopLocale.T("正在检查或下载更新，请稍后重试。"));updateInFlight=true;Post(new{type="update",checking=true});RecordUpdateSchedule("checking");try{var result=await Run(new{action="check-update",manual=manual},60000);PublishUpdate(result);ScheduleUpdate((Dictionary<string,object>)result["update"]);return result;}catch(Exception error){SetUpdateDelay(3600000);RecordUpdateSchedule("error");Post(new{type="update",checking=false,error=DesktopLocale.Diagnostic(error.Message)});throw;}finally{updateInFlight=false;}}
     void LaunchVerifiedInstaller(Dictionary<string,object> result) {
         if(busy||initializing||confirmingPair||uninstallPending||exiting)throw new Exception(DesktopLocale.T("正在完成上一操作，请稍后重试。"));
         object verified;if(!result.TryGetValue("installerVerified",out verified)||!(verified is bool)||!(bool)verified)throw new Exception(DesktopLocale.T("后台响应无效。"));
@@ -164,7 +177,7 @@ class ConnectorWindow : Form,IConnectorWindow {
             else if(action=="get-collaboration-state"){Fields(payload);result=await Run(new{action=action});}
             else if(action=="save-collaboration"){if(busy||confirmingPair||collaborationSaveInFlight||uninstallPending)throw new Exception(DesktopLocale.T("正在完成上一操作，请稍后重试。"));collaborationSaveInFlight=true;try{result=await Run(CollaborationSaveRequest(payload));}finally{collaborationSaveInFlight=false;}}
             else if(action=="update-preferences"){Fields(payload,"automatic");bool wasEnabled=updateAutomatic;var data=await Run(new{action=action,automatic=BoolField(payload,"automatic")});PublishUpdate(data);ScheduleUpdate((Dictionary<string,object>)data["update"],!wasEnabled);result=data;}
-            else if(action=="download-update"){Fields(payload);if(updateInFlight)throw new Exception(DesktopLocale.T("正在检查或下载更新，请稍后重试。"));if(busy||initializing||confirmingPair||uninstallPending)throw new Exception(DesktopLocale.T("正在完成上一操作，请稍后重试。"));updateInFlight=true;try{var data=await Run(new{action=action},300000);PublishUpdate(data);var state=(Dictionary<string,object>)data["update"];ScheduleUpdate(state);object verified,error;if(data.TryGetValue("installerVerified",out verified)&&verified is bool&&(bool)verified)LaunchVerifiedInstaller(data);else if(!state.TryGetValue("error",out error)||!(error is string)||string.IsNullOrWhiteSpace((string)error))throw new Exception(DesktopLocale.T("后台响应无效。"));result=data;}finally{updateInFlight=false;}}
+            else if(action=="download-update"){Fields(payload);if(updateInFlight)throw new Exception(DesktopLocale.T("正在检查或下载更新，请稍后重试。"));if(busy||initializing||confirmingPair||uninstallPending)throw new Exception(DesktopLocale.T("正在完成上一操作，请稍后重试。"));updateInFlight=true;Post(new{type="update",checking=true});try{var data=await Run(new{action=action},300000);PublishUpdate(data);var state=(Dictionary<string,object>)data["update"];ScheduleUpdate(state);object verified,error;if(data.TryGetValue("installerVerified",out verified)&&verified is bool&&(bool)verified)LaunchVerifiedInstaller(data);else if(!state.TryGetValue("error",out error)||!(error is string)||string.IsNullOrWhiteSpace((string)error))throw new Exception(DesktopLocale.T("后台响应无效。"));result=data;}finally{updateInFlight=false;Post(new{type="update",checking=false});}}
             else if(action=="status"){Fields(payload);await RefreshStatus();result=new{refreshed=true};}
             else if(action=="open-web"){Fields(payload,"origin","setup");string origin=ConnectorBootstrap.ValidatedHub(TextField(payload,"origin",2048));OpenExternal(origin+(BoolField(payload,"setup")?"?setup=connector":""));result=new{opened=true};}
             else if(action=="open-device-management"){Fields(payload,"origin");string origin=ConnectorBootstrap.ValidatedHub(TextField(payload,"origin",2048));OpenExternal(origin+"#dashboard");result=new{opened=true};}
