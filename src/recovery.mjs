@@ -1,9 +1,10 @@
-import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, rename, unlink } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { setTimeout as delay } from 'node:timers/promises';
 import { BridgeError } from './desktop.mjs';
 import { heartbeatAge } from './elapsed-time.mjs';
 
@@ -13,11 +14,32 @@ export async function readRecoveryFile(path, fallback) {
   try { return JSON.parse(await readFile(path, 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return fallback; throw error; }
 }
-export async function writeRecoveryFile(path, value) {
+const transientWindowsRenameErrors = new Set(['EPERM', 'EACCES', 'EBUSY']);
+const windowsRenameRetries = 5;
+export async function writeRecoveryFile(path, value, { platform = process.platform, renameFile = rename } = {}) {
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temporary, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
-  await rename(temporary, path);
+  let failure;
+  try {
+    await writeFile(temporary, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await renameFile(temporary, path);
+        break;
+      } catch (error) {
+        if (platform !== 'win32' || !transientWindowsRenameErrors.has(error.code) || attempt >= windowsRenameRetries) throw error;
+        await delay(10 * (2 ** attempt));
+      }
+    }
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    try { await unlink(temporary); }
+    catch (error) {
+      if (error.code !== 'ENOENT' && !failure) throw error;
+    }
+  }
 }
 
 const psLiteral = value => `'${String(value).replaceAll("'", "''")}'`;

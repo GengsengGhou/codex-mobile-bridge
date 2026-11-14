@@ -17,9 +17,9 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-[assembly: AssemblyVersion("3.0.0.0")]
-[assembly: AssemblyFileVersion("3.0.0.0")]
-[assembly: AssemblyInformationalVersion("3.0.0")]
+[assembly: AssemblyVersion("3.0.1.0")]
+[assembly: AssemblyFileVersion("3.0.1.0")]
+[assembly: AssemblyInformationalVersion("3.0.1")]
 [assembly: AssemblyTitle("Codex Mobile Bridge")]
 [assembly: AssemblyProduct("Codex Mobile Bridge")]
 [assembly: AssemblyDescription("Codex Mobile Bridge")]
